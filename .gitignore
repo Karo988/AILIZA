@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+deps/
+node_modules/
+.npm-cache/
+.next/
+.wrangler/
+*.egg-info/
+dist/
+build/
+
+# Umgebung
+.env
+apps/backend/.env
+*.env.local
+
+# Datenbanken (lokale Entwicklung)
+*.db
+*.sqlite
+data/
+
+# Logs
+*.log
+logs/
+apps/new-hire-portal/.start-job-id
+apps/new-hire-portal/.start*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# WICHTIG: Niemals API Keys committen!
+secrets/
+*.key
+*.pem
+
+# Lokale Merge-Sicherungen
+.merge-backups/
+.env 

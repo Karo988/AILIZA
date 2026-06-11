@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AILIZA Approval Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: #0f1117; color: #e2e8f0; font-family: system-ui, sans-serif; }
+    header { display: flex; align-items: center; gap: 12px; padding: 16px 32px; background: #1a1d27; border-bottom: 1px solid #2d3148; }
+    h1 { font-size: 18px; font-weight: 650; letter-spacing: 0; }
+    main { width: min(960px, 100%); margin: 32px auto; padding: 0 24px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+    .filter-btn, .refresh, .btn { border-radius: 6px; cursor: pointer; font: inherit; }
+    .filter-btn { padding: 7px 16px; border: 1px solid #2d3148; background: #1a1d27; color: #94a3b8; font-size: 13px; }
+    .filter-btn.active { border-color: #6366f1; background: #1e1f3a; color: #a5b4fc; }
+    .refresh { margin-left: auto; padding: 6px 14px; border: 1px solid #2d3148; background: transparent; color: #94a3b8; font-size: 12px; }
+    .refresh:hover, .filter-btn:hover { border-color: #6366f1; color: #c7d2fe; }
+    .card { padding: 20px; margin-bottom: 12px; border: 1px solid #2d3148; border-radius: 8px; background: #1a1d27; }
+    .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .tool { font-size: 14px; font-weight: 650; }
+    .spacer { margin-left: auto; color: #64748b; font-size: 12px; }
+    .badge { border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 650; }
+    .badge-pending, .badge-medium { background: #78350f; color: #fde68a; }
+    .badge-approved, .badge-low { background: #064e3b; color: #6ee7b7; }
+    .badge-rejected, .badge-high { background: #7f1d1d; color: #fca5a5; }
+    .meta { margin-bottom: 8px; color: #64748b; font-size: 12px; }
+    .reason { margin-bottom: 14px; padding: 9px 12px; border-left: 3px solid #6366f1; border-radius: 6px; background: #0f1117; color: #cbd5e1; font-size: 13px; }
+    .params { margin-bottom: 14px; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+    .actions { display: flex; gap: 8px; }
+    .btn { padding: 8px 18px; border: 0; font-size: 13px; font-weight: 650; }
+    .btn-approve { background: #047857; color: #d1fae5; }
+    .btn-reject { background: #991b1b; color: #fee2e2; }
+    .empty { padding: 48px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AILIZA Approval Dashboard</h1>
+    <button class="refresh" onclick="loadApprovals()">Aktualisieren</button>
+  </header>
+  <main>
+    <div class="filters">
+      <button class="filter-btn active" onclick="setFilter(event, 'pending')">Ausstehend</button>
+      <button class="filter-btn" onclick="setFilter(event, 'approved')">Freigegeben</button>
+      <button class="filter-btn" onclick="setFilter(event, 'rejected')">Abgelehnt</button>
+      <button class="filter-btn" onclick="setFilter(event, '')">Alle</button>
+    </div>
+    <div id="list"></div>
+  </main>
+  <script>
+    const API = "http://localhost:8000";
+    let currentFilter = "pending";
+
+    function setFilter(event, filter) {
+      currentFilter = filter;
+      document.querySelectorAll(".filter-btn").forEach((button) => button.classList.remove("active"));
+      event.currentTarget.classList.add("active");
+      loadApprovals();
+    }
+
+    async function loadApprovals() {
+      const suffix = currentFilter ? `?status=${encodeURIComponent(currentFilter)}` : "";
+      try {
+        const response = await fetch(`${API}/approvals${suffix}`);
+        const data = await response.json();
+        render(data);
+      } catch (error) {
+        document.getElementById("list").innerHTML = '<div class="empty">Backend nicht erreichbar. Laeuft uvicorn?</div>';
+      }
+    }
+
+    function render(items) {
+      const list = document.getElementById("list");
+      if (!items.length) {
+        list.innerHTML = '<div class="empty">Keine Eintraege</div>';
+        return;
+      }
+
+      list.innerHTML = items.map((item) => `
+        <section class="card">
+          <div class="card-header">
+            <span class="tool">${item.tool.toUpperCase()}</span>
+            <span class="badge badge-${item.status}">${item.status}</span>
+            <span class="badge badge-${item.risk_level}">${item.risk_level} risk</span>
+            <span class="spacer">#${item.id}</span>
+          </div>
+          <div class="meta">${new Date(item.created_at).toLocaleString("de-DE")}</div>
+          <div class="reason">${item.risk_reason}</div>
+          <div class="params">${JSON.stringify(item.input_params)}</div>
+          ${item.status === "pending" ? `
+            <div class="actions">
+              <button class="btn btn-approve" onclick="resolveApproval(${item.id}, 'approve')">Freigeben</button>
+              <button class="btn btn-reject" onclick="resolveApproval(${item.id}, 'reject')">Ablehnen</button>
+            </div>
+          ` : `<div class="meta">Entschieden: ${item.resolved_at ? new Date(item.resolved_at).toLocaleString("de-DE") : "-"}</div>`}
+        </section>
+      `).join("");
+    }
+
+    async function resolveApproval(id, action) {
+      await fetch(`${API}/approvals/${id}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      loadApprovals();
+    }
+
+    loadApprovals();
+    setInterval(loadApprovals, 10000);
+  </script>
+</body>
+</html>

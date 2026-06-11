@@ -1,0 +1,271 @@
+from dotenv import load_dotenv
+load_dotenv(dotenv_path="apps/backend/.env")
+
+import json
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
+
+try:
+    from .agent_runtime import AgentRuntime
+    from .database import get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry
+    from .gateway import guarded_tool_call
+    from .routers.approvals import router as approvals_router
+except ImportError:
+    from agent_runtime import AgentRuntime
+    from database import get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry
+    from gateway import guarded_tool_call
+    from routers.approvals import router as approvals_router
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    init_db()
+    yield
+
+
+app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(approvals_router)
+
+
+class AuditLogCreate(BaseModel):
+    action: str = Field(..., min_length=1, max_length=255)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+
+
+class ToolFetchRequest(BaseModel):
+    url: str = Field(..., min_length=1)
+
+
+class AgentRunRequest(BaseModel):
+    task: str = Field(..., min_length=1)
+
+    @field_validator("task")
+    @classmethod
+    def validate_task(cls, value: str) -> str:
+        task = value.strip()
+        if not task:
+            raise ValueError("task is required")
+        return task
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/audit-logs", status_code=201)
+def create_audit_log(payload: AuditLogCreate) -> dict[str, Any]:
+    return write_audit_entry(action=payload.action, metadata=payload.metadata)
+
+
+@app.get("/audit-logs")
+def get_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
+    return list_audit_entries(limit=limit)
+
+
+def sse_response(events: Iterable[dict[str, Any]]) -> StreamingResponse:
+    return StreamingResponse(
+        encode_sse(events),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def encode_sse(events: Iterable[dict[str, Any]]):
+    for event in events:
+        event_name = str(event.get("event", "message"))
+        data = json.dumps(event.get("data", {}), ensure_ascii=True, default=str)
+        yield f"event: {event_name}\ndata: {data}\n\n"
+
+
+def serialize_agent_run(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": entry["id"],
+        "created_at": entry["created_at"],
+        "updated_at": entry["updated_at"],
+        "task": entry["task"],
+        "status": entry["status"],
+        "pending_approval_id": entry["pending_approval_id"],
+        "result": entry["result"],
+        "metadata": entry["run_metadata"],
+    }
+
+
+@app.post("/tools/search")
+def search_tools(
+    query: str | None = Query(default=None, min_length=1),
+    payload: ToolSearchRequest | None = Body(default=None),
+) -> dict[str, Any]:
+    search_query = query or (payload.query if payload else None)
+    if search_query is None:
+        raise HTTPException(status_code=422, detail="query is required")
+    write_audit_entry(action="tools.search", metadata={"query": search_query})
+    parameters = {"query": search_query}
+    response = guarded_tool_call("search", parameters)
+    if response.get("status") == "completed":
+        return response["result"]
+    return response
+
+
+@app.post("/tools/fetch")
+def fetch_tool(
+    url: str | None = Query(default=None, min_length=1),
+    payload: ToolFetchRequest | None = Body(default=None),
+) -> dict[str, Any]:
+    fetch_url = url or (payload.url if payload else None)
+    if fetch_url is None:
+        raise HTTPException(status_code=422, detail="url is required")
+    write_audit_entry(action="tools.fetch", metadata={"url": fetch_url})
+    parameters = {"url": fetch_url}
+    response = guarded_tool_call("fetch", parameters)
+    if response.get("status") == "completed":
+        return response["result"]
+    return response
+
+
+@app.post("/agent/run")
+def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
+    import os, urllib.request, json as _json
+    runtime = AgentRuntime()
+    result = runtime.run(payload.task)
+
+    # Suchergebnisse extrahieren
+    search_text = ""
+    if isinstance(result, dict) and "results" in result:
+        for step in result.get("results", []):
+            summary = step.get("result", {}) or step.get("summary", {})
+            if isinstance(summary, dict):
+                if "summary" in summary:
+                    search_text += summary["summary"] + "\n"
+                elif "top_results" in summary:
+                    for top in summary["top_results"][:3]:
+                        search_text += f"{top.get('title','')}: {top.get('content','')[:300]}\n"
+
+    # Durch Groq zusammenfassen
+    api_key = os.getenv("GROQ_API_KEY")
+    if search_text.strip() and api_key:
+        sys_prompt = "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. Antworte kurz und direkt auf Deutsch. Bei einfachen Fragen 1-2 Saetze. Keine Auflistung."
+        user_msg = f'Frage: "{payload.task}"\n\nSuchergebnis:\n{search_text}\n\nFormuliere eine kurze direkte Antwort.'
+        try:
+            req_data = _json.dumps({
+                "model": "llama3-70b-8192",
+                "messages": [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                "max_tokens": 600,
+                "temperature": 0.3,
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.groq.com/openai/v1/chat/completions",
+                data=req_data,
+                headers={"Content-Type":"application/json","Authorization":f"Bearer {api_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = _json.loads(r.read())
+                result["message"] = data["choices"][0]["message"]["content"]
+        except Exception as e:
+            result["message"] = search_text + f"\n(LLM-Fehler: {e})"
+
+    return result
+
+@app.get("/agent/runs")
+def get_agent_runs(
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return [serialize_agent_run(entry) for entry in list_agent_runs(status=status, limit=limit)]
+
+
+@app.get("/agent/runs/{run_id}")
+def get_agent_run_status(run_id: str) -> dict[str, Any]:
+    entry = get_agent_run(run_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    return serialize_agent_run(entry)
+
+
+@app.get("/agent/run/stream")
+def stream_agent_run(
+    task: str = Query(..., min_length=1),
+    wait_for_approval: bool = Query(default=False),
+    approval_poll_interval: float = Query(default=1.0, ge=0.1, le=30.0),
+    approval_timeout: float = Query(default=300.0, ge=1.0, le=3600.0),
+) -> StreamingResponse:
+    task = task.strip()
+    if not task:
+        raise HTTPException(status_code=422, detail="task is required")
+    runtime = AgentRuntime()
+    return sse_response(
+        runtime.stream(
+            task,
+            wait_for_approval=wait_for_approval,
+            approval_poll_interval=approval_poll_interval,
+            approval_timeout=approval_timeout,
+        )
+    )
+
+
+@app.post("/agent/run/stream")
+def stream_agent_run_post(
+    payload: AgentRunRequest,
+    wait_for_approval: bool = Query(default=False),
+    approval_poll_interval: float = Query(default=1.0, ge=0.1, le=30.0),
+    approval_timeout: float = Query(default=300.0, ge=1.0, le=3600.0),
+) -> StreamingResponse:
+    runtime = AgentRuntime()
+    return sse_response(
+        runtime.stream(
+            payload.task,
+            wait_for_approval=wait_for_approval,
+            approval_poll_interval=approval_poll_interval,
+            approval_timeout=approval_timeout,
+        )
+    )
+
+
+@app.post("/agent/approvals/{approval_id}/continue")
+def continue_agent_after_approval(approval_id: int) -> dict[str, Any]:
+    runtime = AgentRuntime()
+    return runtime.continue_after_approval(approval_id)
+
+
+@app.get("/agent/approvals/{approval_id}/continue/stream")
+def stream_agent_after_approval(approval_id: int) -> StreamingResponse:
+    runtime = AgentRuntime()
+    return sse_response(runtime.stream_after_approval(approval_id))
+
+
+@app.post("/agent/approvals/{approval_id}/continue/stream")
+def stream_agent_after_approval_post(approval_id: int) -> StreamingResponse:
+    runtime = AgentRuntime()
+    return sse_response(runtime.stream_after_approval(approval_id))
+
+
+app.mount("/static", StaticFiles(directory="apps/frontend"), name="static")
+
+
+@app.get("/dashboard")
+def dashboard():
+    return FileResponse("apps/frontend/index.html")
