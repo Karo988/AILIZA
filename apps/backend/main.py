@@ -55,8 +55,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         from .maintenance.retention_cleanup import run_cleanup
     except ImportError:
         from maintenance.retention_cleanup import run_cleanup
+
     run_cleanup()
+
+    from apscheduler.schedulers.background import BackgroundScheduler
+    _scheduler = BackgroundScheduler(timezone="UTC")
+    _cleanup_interval_hours = int(os.getenv("AILIZA_CLEANUP_INTERVAL_HOURS", "24"))
+    _scheduler.add_job(run_cleanup, "interval", hours=_cleanup_interval_hours,
+                       id="retention_cleanup", replace_existing=True)
+    _scheduler.start()
+
     yield
+
+    _scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
@@ -133,14 +144,26 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _tenant_id(token: TokenData | None) -> str:
+    """Liest tenant_id aus dem JWT-Token oder gibt DEFAULT_TENANT_ID zurück."""
+    return token.tenant_id if token is not None else DEFAULT_TENANT_ID
+
+
 @app.post("/audit-logs", status_code=201)
-def create_audit_log(payload: AuditLogCreate) -> dict[str, Any]:
-    return write_audit_entry(action=payload.action, metadata=payload.metadata)
+def create_audit_log(
+    payload: AuditLogCreate,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    return write_audit_entry(action=payload.action, metadata=payload.metadata,
+                             tenant_id=_tenant_id(token))
 
 
 @app.get("/audit-logs")
-def get_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
-    return list_audit_entries(limit=limit)
+def get_audit_logs(
+    limit: int = 100,
+    token: TokenData | None = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    return list_audit_entries(limit=limit, tenant_id=_tenant_id(token))
 
 
 def sse_response(events: Iterable[dict[str, Any]]) -> StreamingResponse:
@@ -305,7 +328,10 @@ def _summarize_with_llm(task: str, search_text: str) -> tuple[str | None, str | 
 
 
 @app.post("/agent/run")
-def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
+def run_agent(
+    payload: AgentRunRequest,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
     simple_answer = answer_simple_question(payload.task)
     if simple_answer is not None:
         return {
@@ -321,12 +347,12 @@ def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
 
     search_text = extract_agent_answer(result)
 
+    tenant = _tenant_id(token)
     if search_text:
         answer, error_code = _summarize_with_llm(payload.task, search_text)
         if answer is not None:
             result["message"] = answer
         else:
-            # Fail-closed: lokal vorhandenes Suchergebnis als Antwort verwenden.
             result["message"] = search_text
             if error_code:
                 result["llm_notice"] = MESSAGES.get(error_code, "")
@@ -334,6 +360,7 @@ def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
         result["message"] = search_text
 
     result["ai_response"] = result.get("message", "")
+    result["tenant_id"] = tenant
     return result
 @app.get("/agent/runs")
 def get_agent_runs(
@@ -412,31 +439,34 @@ class FeedbackRequest(BaseModel):
     run_id: str | None = None
     rating: str = Field(..., pattern="^(helpful|not_helpful)$")
     reason: str | None = None
-    tenant_id: str = Field(default=DEFAULT_TENANT_ID)
+    tenant_id: str | None = None
 
 
 @app.post("/feedback", status_code=201)
-def submit_feedback(payload: FeedbackRequest) -> dict[str, Any]:
+def submit_feedback(
+    payload: FeedbackRequest,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    tenant = payload.tenant_id or _tenant_id(token)
     delta = 0.1 if payload.rating == "helpful" else -0.2
     entry = insert_feedback(
-        tenant_id=payload.tenant_id, run_id=payload.run_id,
+        tenant_id=tenant, run_id=payload.run_id,
         rating=payload.rating, reason=payload.reason, quality_score_delta=delta)
     if payload.run_id:
         adjust_fact_quality_for_run(payload.run_id, delta, tenant_id=payload.tenant_id)
 
     admin_suggestion = None
     if payload.rating == "not_helpful":
-        negatives = count_negative_feedback(payload.tenant_id, payload.run_id)
-        # Ab 3 negativen Ratings: Admin-Vorschlag erzeugen (keine automatische Aenderung).
+        negatives = count_negative_feedback(tenant, payload.run_id)
         if negatives >= 3:
             proposal = insert_routing_proposal(
-                tenant_id=payload.tenant_id, trigger_type="negative_feedback",
+                tenant_id=tenant, trigger_type="negative_feedback",
                 description=f"{negatives} negative Bewertungen fuer run {payload.run_id}.",
                 reason="Schwellwert von 3 negativen Bewertungen erreicht.")
             admin_suggestion = proposal["id"]
     write_audit_entry(action="feedback.submitted",
                       metadata={"rating": payload.rating, "run_id": payload.run_id},
-                      tenant_id=payload.tenant_id)
+                      tenant_id=tenant)
     return {"status": "ok", "feedback_id": entry["id"], "admin_proposal_id": admin_suggestion}
 
 
