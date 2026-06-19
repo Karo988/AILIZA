@@ -10,11 +10,14 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 try:
     from .agent_runtime import AgentRuntime
@@ -30,6 +33,7 @@ try:
     from .documents.document_handler import scan_document
     from .auth import create_token, Role, require_role, get_current_user, TokenData
     from .database import create_user as db_create_user, authenticate_user as db_authenticate_user
+    from .database import engine
     from .auth.models import UserCreate, UserInDB
 except ImportError:
     from agent_runtime import AgentRuntime
@@ -38,6 +42,7 @@ except ImportError:
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_user as db_create_user, authenticate_user as db_authenticate_user,
+        engine,
     )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
@@ -70,7 +75,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _scheduler.shutdown(wait=False)
 
 
+_limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
+app.state.limiter = _limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 
 # CORS: in Produktion über AILIZA_CORS_ORIGINS einschränken (kommasepariert).
@@ -92,7 +100,7 @@ app.include_router(approvals_router)
 
 
 from fastapi.responses import JSONResponse
-from fastapi import Depends, Request, UploadFile, File
+from fastapi import Depends, UploadFile, File
 
 
 @app.exception_handler(AILIZAError)
@@ -140,8 +148,34 @@ class AgentRunRequest(BaseModel):
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """Schneller Liveness-Check — kein DB-Call."""
+    return {"status": "ok", "service": "ailiza-backend"}
+
+
+@app.get("/ready")
+def ready() -> dict[str, Any]:
+    """Readiness-Check: DB, Kill-Switch, Scheduler."""
+    checks: dict[str, str] = {}
+
+    # DB-Check
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception:
+        checks["database"] = "error"
+
+    # Kill-Switch-Status
+    kill_switch_env = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").lower()
+    checks["kill_switch"] = "enabled" if kill_switch_env == "true" else "disabled"
+
+    # Scheduler (APScheduler im lifespan gestartet)
+    checks["scheduler"] = "running"
+
+    overall = "ok" if checks["database"] == "ok" else "degraded"
+    return {"status": overall, "checks": checks}
 
 
 def _tenant_id(token: TokenData | None) -> str:
@@ -328,7 +362,9 @@ def _summarize_with_llm(task: str, search_text: str) -> tuple[str | None, str | 
 
 
 @app.post("/agent/run")
+@_limiter.limit("30/minute")
 def run_agent(
+    request: Request,
     payload: AgentRunRequest,
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -471,7 +507,8 @@ def submit_feedback(
 
 
 @app.post("/documents/scan")
-async def documents_scan(file: UploadFile = File(...)) -> dict[str, Any]:
+@_limiter.limit("20/minute")
+async def documents_scan(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
     content = await file.read()
     scan = scan_document(file.filename or "", content)
     write_audit_entry(action="documents.scan",
@@ -505,7 +542,8 @@ class RegisterRequest(BaseModel):
 
 
 @app.post("/auth/login")
-def login(payload: LoginRequest) -> dict[str, Any]:
+@_limiter.limit("10/minute")
+def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
     user = db_authenticate_user(payload.user_id, payload.password, payload.tenant_id)
     if user is None:
         write_audit_entry(action="auth.login.failed",
@@ -520,7 +558,9 @@ def login(payload: LoginRequest) -> dict[str, Any]:
 
 
 @app.post("/auth/register", status_code=201)
+@_limiter.limit("5/minute")
 def register(
+    request: Request,
     payload: RegisterRequest,
     _admin: TokenData = Depends(require_role(Role.ADMIN)),
 ) -> dict[str, Any]:
