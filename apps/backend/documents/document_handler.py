@@ -40,7 +40,44 @@ def _extract_text(ext: str, content: bytes) -> str:
             return content.decode("utf-8", errors="ignore")
         except Exception:
             return ""
-    # PDF/DOCX/XLSX: Platzhalter im MVP (kein Heavy-Parsing erzwungen)
+
+    if ext == ".pdf":
+        try:
+            import io
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                return "\n".join(page.extract_text() or "" for page in pdf.pages)
+        except ImportError:
+            pass  # pdfplumber nicht installiert — Fallback
+        except Exception:
+            return ""
+
+    if ext == ".docx":
+        try:
+            import io
+            from docx import Document
+            doc = Document(io.BytesIO(content))
+            return "\n".join(p.text for p in doc.paragraphs)
+        except ImportError:
+            pass  # python-docx nicht installiert — Fallback
+        except Exception:
+            return ""
+
+    if ext == ".xlsx":
+        try:
+            import io
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            parts: list[str] = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    parts.append(" ".join(str(c) for c in row if c is not None))
+            return "\n".join(parts)
+        except ImportError:
+            pass  # openpyxl nicht installiert — Fallback
+        except Exception:
+            return ""
+
     return ""
 
 

@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 import json
+import os
 import re
 from datetime import datetime
 from collections.abc import AsyncIterator, Iterable
@@ -44,17 +45,31 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()
+    try:
+        from .maintenance.retention_cleanup import run_cleanup
+    except ImportError:
+        from maintenance.retention_cleanup import run_cleanup
+    run_cleanup()
     yield
 
 
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+
+# CORS: in Produktion über AILIZA_CORS_ORIGINS einschränken (kommasepariert).
+# Default bleibt "*" für lokale Entwicklung — nie in Produktion so lassen.
+_raw_origins = os.getenv("AILIZA_CORS_ORIGINS", "*")
+_cors_origins: list[str] | str = (
+    [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    if _raw_origins != "*"
+    else ["*"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(approvals_router)
 
@@ -439,13 +454,36 @@ async def documents_scan(file: UploadFile = File(...)) -> dict[str, Any]:
     }
 
 
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+@app.post("/admin/cleanup")
+def admin_cleanup() -> dict[str, Any]:
+    """Retention-Cleanup manuell auslösen — löscht abgelaufene Einträge."""
+    try:
+        from .maintenance.retention_cleanup import run_cleanup
+    except ImportError:
+        from maintenance.retention_cleanup import run_cleanup
+    result = run_cleanup()
+    write_audit_entry(action="admin.cleanup", metadata={"total_deleted": result["total_deleted"]})
+    return result
 
+
+@app.get("/admin/provider-profiles")
+def list_provider_profiles() -> list[dict[str, Any]]:
+    """Gibt alle konfigurierten ProviderProfile zurück (ohne API-Keys)."""
+    try:
+        from .providers.provider_profiles import get_active_profiles, profile_to_dict
+    except ImportError:
+        from providers.provider_profiles import get_active_profiles, profile_to_dict
+    return [profile_to_dict(p) for p in get_active_profiles()]
+
+
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
 @app.get("/")
 def index():
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
 @app.get("/dashboard")
 def dashboard():
     return FileResponse(FRONTEND_DIR / "index.html")
