@@ -17,14 +17,28 @@ from pydantic import BaseModel, Field, field_validator
 
 try:
     from .agent_runtime import AgentRuntime
-    from .database import get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry
+    from .database import (
+        get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
+        insert_feedback, count_negative_feedback, insert_routing_proposal,
+        adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
+    )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
+    from .errors import AILIZAError, MESSAGES
+    from .providers.orchestrator import ProviderOrchestrator
+    from .documents.document_handler import scan_document
 except ImportError:
     from agent_runtime import AgentRuntime
-    from database import get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry
+    from database import (
+        get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
+        insert_feedback, count_negative_feedback, insert_routing_proposal,
+        adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
+    )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
+    from errors import AILIZAError, MESSAGES
+    from providers.orchestrator import ProviderOrchestrator
+    from documents.document_handler import scan_document
 
 
 @asynccontextmanager
@@ -43,6 +57,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(approvals_router)
+
+
+from fastapi.responses import JSONResponse
+from fastapi import Request, UploadFile, File
+
+
+@app.exception_handler(AILIZAError)
+async def ailiza_error_handler(_request: Request, exc: AILIZAError) -> JSONResponse:
+    # Niemals Stack-Trace zum Client. Nur saubere deutsche Meldung.
+    return JSONResponse(status_code=400, content=exc.to_dict())
+
+
+@app.exception_handler(Exception)
+async def generic_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": True,
+            "code": "internal_error",
+            "message": MESSAGES["internal_error"],
+            "safe_alternatives": [],
+        },
+    )
 
 
 class AuditLogCreate(BaseModel):
@@ -218,9 +255,36 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
                             parts.append(line.strip())
 
     return "\n".join(parts).strip()
+_orchestrator = ProviderOrchestrator()
+
+
+def _summarize_with_llm(task: str, search_text: str) -> tuple[str | None, str | None]:
+    """
+    Fasst ein Suchergebnis ueber den Provider-Orchestrator zusammen.
+    Kein direkter Provider-Call hier. Kill-Switch/Governance liegen im Orchestrator.
+    Gibt (antwort, fehler_code) zurueck.
+    """
+    sys_prompt = (
+        "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. Antworte kurz und direkt "
+        "auf Deutsch. Bei einfachen Fragen 1-2 Saetze. Keine Auflistung."
+    )
+    user_msg = (
+        f'Frage: "{task}"\n\nSuchergebnis:\n{search_text}\n\n'
+        "Formuliere eine kurze direkte Antwort."
+    )
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": user_msg},
+    ]
+    try:
+        answer = _orchestrator.generate(messages, context=None)
+        return answer, None
+    except AILIZAError as exc:
+        return None, exc.code
+
+
 @app.post("/agent/run")
 def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
-    import os, urllib.request, json as _json
     simple_answer = answer_simple_question(payload.task)
     if simple_answer is not None:
         return {
@@ -236,38 +300,15 @@ def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
 
     search_text = extract_agent_answer(result)
 
-    api_key = os.getenv("GROQ_API_KEY")
-    if search_text and api_key:
-        sys_prompt = "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. Antworte kurz und direkt auf Deutsch. Bei einfachen Fragen 1-2 Saetze. Keine Auflistung."
-        user_msg = f'Frage: "{payload.task}"\n\nSuchergebnis:\n{search_text}\n\nFormuliere eine kurze direkte Antwort.'
-        last_error = None
-        for model in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
-            try:
-                req_data = _json.dumps({
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": user_msg},
-                    ],
-                    "max_tokens": 600,
-                    "temperature": 0.3,
-                }).encode()
-                req = urllib.request.Request(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    data=req_data,
-                    headers={"Content-Type":"application/json","Authorization":f"Bearer {api_key}"},
-                )
-                with urllib.request.urlopen(req, timeout=20) as r:
-                    data = _json.loads(r.read())
-                    result["message"] = data["choices"][0]["message"]["content"]
-                    result["model"] = model
-                    last_error = None
-                    break
-            except Exception as e:
-                last_error = e
+    if search_text:
+        answer, error_code = _summarize_with_llm(payload.task, search_text)
+        if answer is not None:
+            result["message"] = answer
         else:
+            # Fail-closed: lokal vorhandenes Suchergebnis als Antwort verwenden.
             result["message"] = search_text
-            result["llm_error"] = str(last_error) if last_error else "Groq request failed"
+            if error_code:
+                result["llm_notice"] = MESSAGES.get(error_code, "")
     elif result.get("message") == "Agent run completed" and search_text:
         result["message"] = search_text
 
@@ -344,6 +385,58 @@ def stream_agent_after_approval(approval_id: int) -> StreamingResponse:
 def stream_agent_after_approval_post(approval_id: int) -> StreamingResponse:
     runtime = AgentRuntime()
     return sse_response(runtime.stream_after_approval(approval_id))
+
+
+class FeedbackRequest(BaseModel):
+    run_id: str | None = None
+    rating: str = Field(..., pattern="^(helpful|not_helpful)$")
+    reason: str | None = None
+    tenant_id: str = Field(default=DEFAULT_TENANT_ID)
+
+
+@app.post("/feedback", status_code=201)
+def submit_feedback(payload: FeedbackRequest) -> dict[str, Any]:
+    delta = 0.1 if payload.rating == "helpful" else -0.2
+    entry = insert_feedback(
+        tenant_id=payload.tenant_id, run_id=payload.run_id,
+        rating=payload.rating, reason=payload.reason, quality_score_delta=delta)
+    if payload.run_id:
+        adjust_fact_quality_for_run(payload.run_id, delta, tenant_id=payload.tenant_id)
+
+    admin_suggestion = None
+    if payload.rating == "not_helpful":
+        negatives = count_negative_feedback(payload.tenant_id, payload.run_id)
+        # Ab 3 negativen Ratings: Admin-Vorschlag erzeugen (keine automatische Aenderung).
+        if negatives >= 3:
+            proposal = insert_routing_proposal(
+                tenant_id=payload.tenant_id, trigger_type="negative_feedback",
+                description=f"{negatives} negative Bewertungen fuer run {payload.run_id}.",
+                reason="Schwellwert von 3 negativen Bewertungen erreicht.")
+            admin_suggestion = proposal["id"]
+    write_audit_entry(action="feedback.submitted",
+                      metadata={"rating": payload.rating, "run_id": payload.run_id},
+                      tenant_id=payload.tenant_id)
+    return {"status": "ok", "feedback_id": entry["id"], "admin_proposal_id": admin_suggestion}
+
+
+@app.post("/documents/scan")
+async def documents_scan(file: UploadFile = File(...)) -> dict[str, Any]:
+    content = await file.read()
+    scan = scan_document(file.filename or "", content)
+    write_audit_entry(action="documents.scan",
+                      metadata={"file_type": scan.file_type, "decision": scan.decision,
+                                "size_bytes": scan.size_bytes})
+    return {
+        "allowed": scan.allowed,
+        "file_type": scan.file_type,
+        "size_bytes": scan.size_bytes,
+        "decision": scan.decision,
+        "reason": scan.reason,
+        "expires_at": scan.expires_at,
+        "data_classes": [c.value for c in scan.classification.data_classes],
+        "highest_risk_class": scan.classification.highest_risk_class.value,
+        "needs_review": scan.classification.needs_review,
+    }
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")

@@ -70,3 +70,80 @@ def check_tool_call(tool: str, params: dict) -> PolicyResult:
     elif tool == "search":
         return check_search(params.get("query", ""))
     return PolicyResult(Decision.BLOCKED, f"Unbekanntes Tool: {tool}", tool, str(params)[:80])
+
+
+# ── Erweitertes Policy-Gateway (governance-basiert) ─────────────────────────
+
+try:
+    from .governance.data_governance import DataClass, DataTarget
+    from .governance.data_matrix import PolicyDecision, check_data_target
+except ImportError:  # pragma: no cover
+    from governance.data_governance import DataClass, DataTarget
+    from governance.data_matrix import PolicyDecision, check_data_target
+
+
+@dataclass
+class PolicyContext:
+    tenant_id: str = "default"
+    user_id: str | None = None
+    purpose: str = ""
+    target: "DataTarget" = None  # type: ignore
+    data_classes: list = field(default_factory=list)
+    highest_risk_class: "DataClass" = None  # type: ignore
+    provider_profile_id: str | None = None
+    redaction_applied: bool = False
+    approval_id: int | None = None
+    approval_given: bool = False
+    policy_version: str = "1.0"
+    tool: str | None = None
+    parameters: dict = field(default_factory=dict)
+
+
+@dataclass
+class PolicyResultV2:
+    decision: "PolicyDecision"
+    reason: str
+    context_summary: dict = field(default_factory=dict)
+
+    @property
+    def allowed(self) -> bool:
+        return self.decision in {PolicyDecision.ALLOW, PolicyDecision.ALLOW_WITH_NOTICE}
+
+
+_REASONS = {
+    PolicyDecision.ALLOW: "Verarbeitung zulaessig.",
+    PolicyDecision.ALLOW_WITH_NOTICE: "Verarbeitung zulaessig (mit Hinweis/Protokollierung).",
+    PolicyDecision.REDACT_REQUIRED: "Anonymisierung erforderlich, bevor extern verarbeitet wird.",
+    PolicyDecision.APPROVAL_REQUIRED: "Freigabe durch einen Administrator erforderlich.",
+    PolicyDecision.BLOCK: "Verarbeitung dieser Datenklasse am gewuenschten Ziel ist untersagt.",
+}
+
+
+def evaluate_policy(context: PolicyContext) -> PolicyResultV2:
+    """Governance-basierte Policy-Bewertung. Fail-closed bei Unklarheit."""
+    try:
+        if context.target is None:
+            return PolicyResultV2(PolicyDecision.BLOCK, "Kein Datenziel angegeben.")
+        provider_active = context.provider_profile_id is not None
+        decision = check_data_target(
+            data_classes=list(context.data_classes),
+            target=context.target,
+            redaction_applied=context.redaction_applied,
+            approval_given=context.approval_given,
+            provider_profile_active=provider_active,
+        )
+        return PolicyResultV2(
+            decision=decision,
+            reason=_REASONS.get(decision, "Unklar — blockiert."),
+            context_summary={
+                "tenant_id": context.tenant_id,
+                "target": context.target.value if context.target else None,
+                "data_classes": [c.value for c in context.data_classes],
+                "redaction_applied": context.redaction_applied,
+                "approval_given": context.approval_given,
+                "provider_profile_active": provider_active,
+                "policy_version": context.policy_version,
+            },
+        )
+    except Exception:
+        return PolicyResultV2(PolicyDecision.BLOCK, "Fehler bei der Policy-Bewertung — fail-closed.")
