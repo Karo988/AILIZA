@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="700" viewBox="0 0 900 700" font-family="Arial, sans-serif">
+
+  <!-- Background -->
+  <rect width="900" height="700" fill="#f5f5f0"/>
+  
+  <!-- Title -->
+  <text x="450" y="30" text-anchor="middle" font-size="16" font-weight="bold" fill="#2c2c2c">AMUN CAFÉ — THRESENBEREICH GRUNDRISS (Draufsicht)</text>
+  <text x="450" y="50" text-anchor="middle" font-size="11" fill="#666">Maßstab: 1 cm = 0,10 m | Gesamtbreite: 2,40 m | Gesamtlänge: ~4,15 m</text>
+
+  <!-- Scale: 1m = 200px, origin at (80, 100) -->
+  <!-- Room outline: 2.40m wide (480px), 4.15m long (830px) -->
+  <!-- But we scale differently: width=240px for 2.40m (1m=100px), length=415px for 4.15m -->
+  <!-- Let's use: 1m = 150px -->
+  <!-- Width 2.40m = 360px, Length 4.15m = 622px -->
+  <!-- Centered: x_start=270, y_start=80 -->
+
+  <!-- OUTER WALLS -->
+  <rect x="100" y="80" width="700" height="560" fill="none" stroke="#333" stroke-width="4" rx="2"/>
+  
+  <!-- === KOPFSEITE (top wall) === -->
+  <!-- Eis-Vitrine Emma: 1.20m of 2.40m total = 50% = 350px -->
+  <rect x="100" y="80" width="292" height="90" fill="#cce5ff" stroke="#0066cc" stroke-width="2"/>
+  <text x="246" y="118" text-anchor="middle" font-size="11" font-weight="bold" fill="#003380">EIS-VITRINE</text>
+  <text x="246" y="132" text-anchor="middle" font-size="10" fill="#003380">"EMMA"</text>
+  <text x="246" y="146" text-anchor="middle" font-size="9" fill="#003380">1,20 m × 0,60 m</text>
+  
+  <!-- Durchgang: 0.60m = 146px -->
+  <rect x="392" y="80" width="146" height="90" fill="#f0f0f0" stroke="#999" stroke-width="1" stroke-dasharray="5,3"/>
+  <text x="465" y="120" text-anchor="middle" font-size="10" fill="#666">DURCH-</text>
+  <text x="465" y="134" text-anchor="middle" font-size="10" fill="#666">GANG</text>
+  <text x="465" y="148" text-anchor="middle" font-size="9" fill="#999">0,60 m</text>
+
+  <!-- Slush-Maschine: 0.60m = 146px -->
+  <rect x="538" y="80" width="146" height="90" fill="#ffe0cc" stroke="#cc5500" stroke-width="2"/>
+  <text x="611" y="118" text-anchor="middle" font-size="11" font-weight="bold" fill="#7a3300">SLUSH</text>
+  <text x="611" y="132" text-anchor="middle" font-size="10" fill="#7a3300">MASCHINE</text>
+  <text x="611" y="146" text-anchor="middle" font-size="9" fill="#7a3300">0,60 m × 0,60 m</text>
+
+  <!-- Gap on right -->
+  <rect x="684" y="80" width="116" height="90" fill="#f8f8f8" stroke="#ccc" stroke-width="1"/>
+  <text x="742" y="132" text-anchor="middle" font-size="9" fill="#999">(Reserve)</text>
+
+  <!-- === LINKE SEITE (left wall) - Kundenseite === -->
+  <!-- Label -->
+  <text x="55" y="380" text-anchor="middle" font-size="11" font-weight="bold" fill="#006633" transform="rotate(-90, 55, 380)">LINKE SEITE — KUNDENSICHT</text>
+
+  <!-- Regal (thin) -->
+  <rect x="100" y="170" width="50" height="460" fill="#e8d5b0" stroke="#8b6914" stroke-width="1"/>
+  <text x="125" y="395" text-anchor="middle" font-size="9" fill="#5a3c00" transform="rotate(-90, 125, 395)">REGAL 0,30m</text>
+
+  <!-- Kuchenvitrine: 1.00m = 122px -->
+  <rect x="150" y="170" width="122" height="122" fill="#fff0cc" stroke="#cc9900" stroke-width="2"/>
+  <text x="211" y="224" text-anchor="middle" font-size="11" font-weight="bold" fill="#664400">KUCHEN-</text>
+  <text x="211" y="239" text-anchor="middle" font-size="11" font-weight="bold" fill="#664400">VITRINE</text>
+  <text x="211" y="254" text-anchor="middle" font-size="9" fill="#664400">1,00 × 0,60 m</text>
+  <text x="211" y="268" text-anchor="middle" font-size="9" fill="#664400">Höhe: 1,20 m</text>
+
+  <!-- Kasse/Counter: 1.00m = 122px -->
+  <rect x="150" y="292" width="122" height="122" fill="#e6f2ff" stroke="#0055cc" stroke-width="2"/>
+  <text x="211" y="341" text-anchor="middle" font-size="11" font-weight="bold" fill="#003380">KASSE /</text>
+  <text x="211" y="356" text-anchor="middle" font-size="11" font-weight="bold" fill="#003380">COUNTER</text>
+  <text x="211" y="371" text-anchor="middle" font-size="9" fill="#003380">1,00 × 0,60 m</text>
+  <text x="211" y="385" text-anchor="middle" font-size="9" fill="#003380">TSE-System</text>
+
+  <!-- Freie Arbeitsfläche: 1.00m = 122px -->
+  <rect x="150" y="414" width="122" height="122" fill="#f0f0f0" stroke="#777" stroke-width="2"/>
+  <text x="211" y="463" text-anchor="middle" font-size="10" font-weight="bold" fill="#333">FREIE</text>
+  <text x="211" y="478" text-anchor="middle" font-size="10" font-weight="bold" fill="#333">FLÄCHE /</text>
+  <text x="211" y="493" text-anchor="middle" font-size="10" fill="#333">AUSGABE</text>
+  <text x="211" y="508" text-anchor="middle" font-size="9" fill="#555">1,00 × 0,60 m</text>
+
+  <!-- Kühltisch Sandwich: 0.65m = 79px -->
+  <rect x="150" y="536" width="122" height="96" fill="#ccf0ff" stroke="#0099cc" stroke-width="2"/>
+  <text x="211" y="573" text-anchor="middle" font-size="10" font-weight="bold" fill="#005577">KÜHLTISCH</text>
+  <text x="211" y="588" text-anchor="middle" font-size="9" fill="#005577">SANDWICH</text>
+  <text x="211" y="603" text-anchor="middle" font-size="9" fill="#005577">0,65 × 0,60 m</text>
+  <text x="211" y="618" text-anchor="middle" font-size="8" fill="#005577">3 Schubladen</text>
+
+  <!-- === MITTELGANG === -->
+  <rect x="272" y="170" width="172" height="470" fill="#fafff0" stroke="#99cc44" stroke-width="1" stroke-dasharray="8,4"/>
+  <text x="358" y="390" text-anchor="middle" font-size="13" font-weight="bold" fill="#557700" transform="rotate(-90, 358, 390)">MITTELGANG  1,20 m  — kreuzungsfrei</text>
+
+  <!-- 3-Minuten-Finish Arrow -->
+  <line x1="240" y1="584" x2="450" y2="584" stroke="#ff4400" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="358" y="577" text-anchor="middle" font-size="9" fill="#ff4400">3-Min-Finish</text>
+
+  <!-- === RECHTE SEITE (right wall) - Küche === -->
+  <text x="860" y="380" text-anchor="middle" font-size="11" font-weight="bold" fill="#cc3300" transform="rotate(90, 860, 380)">RECHTE SEITE — PRODUKTION / KÜCHE</text>
+
+  <!-- Kaffeemaschine Zone: ~0.80m = 98px -->
+  <rect x="444" y="170" width="256" height="98" fill="#fff5e6" stroke="#cc6600" stroke-width="2"/>
+  <text x="572" y="207" text-anchor="middle" font-size="11" font-weight="bold" fill="#7a3300">ESPRESSO-</text>
+  <text x="572" y="222" text-anchor="middle" font-size="11" font-weight="bold" fill="#7a3300">MASCHINE + MÜHLE</text>
+  <text x="572" y="237" text-anchor="middle" font-size="9" fill="#7a3300">~3,5 kW + Abschlag</text>
+  <text x="572" y="252" text-anchor="middle" font-size="9" fill="#cc3300">Zone: ca. 0,80 m</text>
+
+  <!-- Wandboard above (schematic) -->
+  <rect x="444" y="80" width="256" height="90" fill="#ffe8d0" stroke="#aa4400" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="572" y="122" text-anchor="middle" font-size="9" fill="#7a3300">WANDBOARD (oben)</text>
+  <text x="572" y="137" text-anchor="middle" font-size="9" fill="#7a3300">Tassen, Zubehör</text>
+
+  <!-- Toaster/Kontaktgrill: ~0.40m = 49px -->
+  <rect x="444" y="268" width="256" height="98" fill="#ffe0e0" stroke="#cc0000" stroke-width="2"/>
+  <text x="572" y="307" text-anchor="middle" font-size="11" font-weight="bold" fill="#880000">KONTAKTGRILL</text>
+  <text x="572" y="322" text-anchor="middle" font-size="11" font-weight="bold" fill="#880000">/ TOASTER</text>
+  <text x="572" y="337" text-anchor="middle" font-size="10" fill="#cc0000">4,4 kW STARKSTROM</text>
+  <text x="572" y="352" text-anchor="middle" font-size="9" fill="#880000">Breite: ca. 0,40 m</text>
+
+  <!-- Spüle: 0.80m -->
+  <rect x="444" y="366" width="256" height="98" fill="#e6f7ff" stroke="#0077aa" stroke-width="2"/>
+  <text x="572" y="405" text-anchor="middle" font-size="11" font-weight="bold" fill="#004466">SPÜLE 2-BECKEN</text>
+  <text x="572" y="420" text-anchor="middle" font-size="10" fill="#004466">+ Abtropffläche</text>
+  <text x="572" y="435" text-anchor="middle" font-size="9" fill="#004466">0,80 m × 0,60 m</text>
+  <text x="572" y="450" text-anchor="middle" font-size="8" fill="#888">Spritzschutz zu Grill!</text>
+
+  <!-- Spülmaschine + Müll -->
+  <rect x="444" y="464" width="256" height="90" fill="#f0ffe0" stroke="#449900" stroke-width="2"/>
+  <text x="572" y="500" text-anchor="middle" font-size="11" font-weight="bold" fill="#224400">SPÜLMASCHINE</text>
+  <text x="572" y="515" text-anchor="middle" font-size="10" fill="#224400">(Unterbau) + MÜLL</text>
+  <text x="572" y="530" text-anchor="middle" font-size="9" fill="#224400">Arbeitsplatte: 1,50 m</text>
+
+  <!-- Bottom zone -->
+  <rect x="444" y="554" width="256" height="86" fill="#f8f8f8" stroke="#aaa" stroke-width="1"/>
+  <text x="572" y="590" text-anchor="middle" font-size="9" fill="#555">HANDWASCHBECKEN</text>
+  <text x="572" y="605" text-anchor="middle" font-size="8" fill="#cc0000">(Pflicht Gesundheitsamt!)</text>
+  <text x="572" y="620" text-anchor="middle" font-size="8" fill="#555">SEPARAT — nicht Spüle</text>
+
+  <!-- === DIMENSION ARROWS === -->
+  <!-- Width arrow (top) -->
+  <line x1="100" y1="665" x2="800" y2="665" stroke="#333" stroke-width="1.5"/>
+  <line x1="100" y1="658" x2="100" y2="672" stroke="#333" stroke-width="1.5"/>
+  <line x1="800" y1="658" x2="800" y2="672" stroke="#333" stroke-width="1.5"/>
+  <text x="450" y="682" text-anchor="middle" font-size="11" fill="#333">Gesamtbreite Thresenbereich: ca. 4,66 m</text>
+
+  <!-- Height arrow (right) -->
+  <line x1="845" y1="80" x2="845" y2="640" stroke="#333" stroke-width="1.5"/>
+  <line x1="838" y1="80" x2="852" y2="80" stroke="#333" stroke-width="1.5"/>
+  <line x1="838" y1="640" x2="852" y2="640" stroke="#333" stroke-width="1.5"/>
+  <text x="872" y="365" text-anchor="middle" font-size="11" fill="#333" transform="rotate(90, 872, 365)">Länge: ca. 4,15 m</text>
+
+  <!-- Left side length -->
+  <line x1="75" y1="170" x2="75" y2="640" stroke="#006633" stroke-width="1.5"/>
+  <line x1="68" y1="170" x2="82" y2="170" stroke="#006633" stroke-width="1.5"/>
+  <line x1="68" y1="640" x2="82" y2="640" stroke="#006633" stroke-width="1.5"/>
+  <text x="47" y="408" text-anchor="middle" font-size="10" fill="#006633" transform="rotate(-90, 47, 408)">Theke: 3,65 m</text>
+
+  <!-- Arrow marker -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ff4400"/>
+    </marker>
+  </defs>
+
+  <!-- Legend -->
+  <rect x="100" y="650" width="12" height="12" fill="#cce5ff" stroke="#0066cc" stroke-width="1"/>
+  <text x="116" y="661" font-size="9" fill="#333">Kühlgeräte</text>
+  <rect x="190" y="650" width="12" height="12" fill="#ffe0e0" stroke="#cc0000" stroke-width="1"/>
+  <text x="206" y="661" font-size="9" fill="#333">Hitzegeräte</text>
+  <rect x="270" y="650" width="12" height="12" fill="#fff0cc" stroke="#cc9900" stroke-width="1"/>
+  <text x="286" y="661" font-size="9" fill="#333">Präsentation</text>
+  <rect x="360" y="650" width="12" height="12" fill="#fafff0" stroke="#99cc44" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="376" y="661" font-size="9" fill="#333">Mittelgang (1,20m)</text>
+
+</svg>
