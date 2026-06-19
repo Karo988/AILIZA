@@ -51,4 +51,8 @@ secrets/
 
 # Lokale Merge-Sicherungen
 .merge-backups/
-.env 
+.env
+
+# Claude Code interne Daten
+.claude/worktrees/
+
