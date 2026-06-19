@@ -157,6 +157,17 @@ kill_switch_state = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+users = Table(
+    "users",
+    metadata_obj,
+    Column("user_id", String(64), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("role", String(32), nullable=False, default="user"),
+    Column("hashed_password", String(256), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("active", Integer, nullable=False, default=1),
+)
+
 
 def init_db() -> None:
     metadata_obj.create_all(engine)
@@ -500,3 +511,37 @@ def list_routing_proposals(tenant_id: str | None = None) -> list[dict[str, Any]]
         query = query.where(routing_proposals.c.tenant_id == tenant_id)
     with engine.begin() as connection:
         return [dict(r) for r in connection.execute(query).mappings().all()]
+
+
+# ── Nutzer / Auth ─────────────────────────────────────────────────────────────
+def create_user(user_id: str, tenant_id: str, role: str, hashed_password: str) -> dict[str, Any]:
+    entry = {
+        "user_id": user_id, "tenant_id": tenant_id, "role": role,
+        "hashed_password": hashed_password,
+        "created_at": datetime.now(timezone.utc), "active": 1,
+    }
+    with engine.begin() as connection:
+        connection.execute(insert(users).values(**entry))
+    return {k: v for k, v in entry.items() if k != "hashed_password"}
+
+
+def get_user(user_id: str, tenant_id: str | None = None) -> dict[str, Any] | None:
+    query = select(users).where(users.c.user_id == user_id)
+    if tenant_id is not None:
+        query = query.where(users.c.tenant_id == tenant_id)
+    with engine.begin() as connection:
+        row = connection.execute(query).mappings().first()
+    return dict(row) if row else None
+
+
+def authenticate_user(user_id: str, plain_password: str, tenant_id: str | None = None) -> dict[str, Any] | None:
+    row = get_user(user_id, tenant_id)
+    if not row or not row.get("active"):
+        return None
+    try:
+        import bcrypt
+        if not bcrypt.checkpw(plain_password.encode(), row["hashed_password"].encode()):
+            return None
+    except ImportError:
+        return None
+    return {k: v for k, v in row.items() if k != "hashed_password"}

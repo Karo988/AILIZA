@@ -28,18 +28,24 @@ try:
     from .errors import AILIZAError, MESSAGES
     from .providers.orchestrator import ProviderOrchestrator
     from .documents.document_handler import scan_document
+    from .auth import create_token, Role, require_role, get_current_user, TokenData
+    from .database import create_user as db_create_user, authenticate_user as db_authenticate_user
+    from .auth.models import UserCreate, UserInDB
 except ImportError:
     from agent_runtime import AgentRuntime
     from database import (
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
+        create_user as db_create_user, authenticate_user as db_authenticate_user,
     )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
     from errors import AILIZAError, MESSAGES
     from providers.orchestrator import ProviderOrchestrator
     from documents.document_handler import scan_document
+    from auth import create_token, Role, require_role, get_current_user, TokenData
+    from auth.models import UserCreate, UserInDB
 
 
 @asynccontextmanager
@@ -75,7 +81,7 @@ app.include_router(approvals_router)
 
 
 from fastapi.responses import JSONResponse
-from fastapi import Request, UploadFile, File
+from fastapi import Depends, Request, UploadFile, File
 
 
 @app.exception_handler(AILIZAError)
@@ -454,8 +460,65 @@ async def documents_scan(file: UploadFile = File(...)) -> dict[str, Any]:
     }
 
 
+# ── Auth-Endpunkte ────────────────────────────────────────────────────────────
+class LoginRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1)
+    tenant_id: str = Field(default=DEFAULT_TENANT_ID)
+
+
+class RegisterRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=8)
+    role: str = Field(default="user", pattern="^(user|manager|admin|dsb)$")
+    tenant_id: str = Field(default=DEFAULT_TENANT_ID)
+
+
+@app.post("/auth/login")
+def login(payload: LoginRequest) -> dict[str, Any]:
+    user = db_authenticate_user(payload.user_id, payload.password, payload.tenant_id)
+    if user is None:
+        write_audit_entry(action="auth.login.failed",
+                          metadata={"user_id": payload.user_id, "tenant_id": payload.tenant_id},
+                          tenant_id=payload.tenant_id)
+        raise HTTPException(status_code=401, detail="Ungültige Zugangsdaten.")
+    token = create_token(user["user_id"], user["tenant_id"], user["role"])
+    write_audit_entry(action="auth.login.success",
+                      metadata={"user_id": payload.user_id, "role": user["role"]},
+                      tenant_id=payload.tenant_id)
+    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
+
+
+@app.post("/auth/register", status_code=201)
+def register(
+    payload: RegisterRequest,
+    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    user_create = UserCreate(
+        user_id=payload.user_id,
+        tenant_id=payload.tenant_id,
+        role=payload.role,
+        plain_password=payload.password,
+    )
+    user_in_db = UserInDB.from_create(user_create)
+    try:
+        entry = db_create_user(
+            user_id=user_in_db.user_id,
+            tenant_id=user_in_db.tenant_id,
+            role=user_in_db.role,
+            hashed_password=user_in_db.hashed_password,
+        )
+    except Exception:
+        raise HTTPException(status_code=409, detail="Nutzer existiert bereits.")
+    write_audit_entry(action="auth.register",
+                      metadata={"user_id": payload.user_id, "role": payload.role},
+                      tenant_id=payload.tenant_id)
+    return {"status": "created", "user_id": entry["user_id"], "role": entry["role"]}
+
+
+# ── Admin-Endpunkte (mindestens ADMIN-Rolle erforderlich) ────────────────────
 @app.post("/admin/cleanup")
-def admin_cleanup() -> dict[str, Any]:
+def admin_cleanup(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> dict[str, Any]:
     """Retention-Cleanup manuell auslösen — löscht abgelaufene Einträge."""
     try:
         from .maintenance.retention_cleanup import run_cleanup
@@ -467,7 +530,7 @@ def admin_cleanup() -> dict[str, Any]:
 
 
 @app.get("/admin/provider-profiles")
-def list_provider_profiles() -> list[dict[str, Any]]:
+def list_provider_profiles(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> list[dict[str, Any]]:
     """Gibt alle konfigurierten ProviderProfile zurück (ohne API-Keys)."""
     try:
         from .providers.provider_profiles import get_active_profiles, profile_to_dict
