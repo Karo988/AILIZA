@@ -21,13 +21,20 @@ from enum import Enum
 from typing import Any
 
 try:
-    from ..governance.data_governance import DataClass, DataTarget
+    from ..governance.data_governance import DataClass, DataTarget, RISK_ORDER
     from ..governance.data_matrix import PolicyDecision
     from ..policy import PolicyContext, evaluate_policy
 except ImportError:
-    from governance.data_governance import DataClass, DataTarget
+    from governance.data_governance import DataClass, DataTarget, RISK_ORDER
     from governance.data_matrix import PolicyDecision
     from policy import PolicyContext, evaluate_policy
+
+
+def _highest_class(data_classes: list[DataClass]) -> DataClass:
+    """Gibt die strengste Datenklasse zurueck (RISK_ORDER, hoeher = strenger)."""
+    if not data_classes:
+        return DataClass.PUBLIC
+    return max(data_classes, key=lambda c: RISK_ORDER.index(c))
 
 
 class RiskLevel(str, Enum):
@@ -242,6 +249,9 @@ def check_capability(
             capability_enabled=False,
         )
 
+    # Strengste Datenklasse bestimmen — Mischfaelle (PUBLIC+CREDENTIALS) → CREDENTIALS
+    highest = _highest_class(data_classes)
+
     # Datenklassen gegen erlaubte Liste pruefen
     forbidden = [dc for dc in data_classes if dc not in cap.allowed_data_classes]
     if forbidden:
@@ -257,13 +267,14 @@ def check_capability(
             context_summary={"forbidden_classes": forbidden_names},
         )
 
-    # Policy Engine konsultieren
+    # Policy Engine konsultieren — mit strengster Klasse als Leitklasse
     ctx = PolicyContext(
         tenant_id=tenant_id,
         user_id=user_id,
         purpose=cap.gdpr_purpose,
         target=cap.target,
         data_classes=data_classes,
+        highest_risk_class=highest,
         redaction_applied=redaction_applied,
         approval_given=approval_given or (not cap.requires_approval),
         provider_profile_id=provider_profile_id,

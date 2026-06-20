@@ -681,6 +681,132 @@ def check_capability_endpoint(
     }
 
 
+# ── Skill-Learning-Loop ───────────────────────────────────────────────────────
+class SkillProposeRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    description: str = Field(..., min_length=1, max_length=512)
+    steps_summary: str = Field(..., min_length=10, max_length=2000)
+    gdpr_purpose: str = Field(..., min_length=1, max_length=256)
+    data_classes: list[str] = Field(default_factory=lambda: ["public"])
+    source_run_id: str | None = None
+
+
+@app.post("/skills/propose", status_code=201)
+@_limiter.limit("10/minute")
+def skill_propose(
+    request: Request,
+    payload: SkillProposeRequest,
+    token: TokenData = Depends(require_role(Role.USER)),
+) -> dict[str, Any]:
+    """
+    Schlaegt einen neuen Skill vor. Capability-Check + Sanitierung laufen automatisch.
+    Skill wird als 'pending' gespeichert — Admin muss genehmigen.
+    """
+    try:
+        from .skills.skill_store import propose_skill
+        from .governance.data_governance import DataClass
+    except ImportError:
+        from skills.skill_store import propose_skill
+        from governance.data_governance import DataClass
+
+    try:
+        dc_list = [DataClass(dc) for dc in payload.data_classes]
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Ungültige Datenklasse: {exc}")
+
+    proposal = propose_skill(
+        name=payload.name,
+        description=payload.description,
+        steps_summary=payload.steps_summary,
+        gdpr_purpose=payload.gdpr_purpose,
+        data_classes=dc_list,
+        tenant_id=token.tenant_id,
+        user_id=token.user_id,
+        source_run_id=payload.source_run_id,
+    )
+    return {
+        "skill_id": proposal.skill_id,
+        "status": proposal.status,
+        "name": proposal.name,
+        "risk_level": proposal.risk_level,
+        "requires_approval": True,
+        "message": "Skill-Vorschlag eingereicht. Ein Administrator muss ihn genehmigen.",
+    }
+
+
+@app.get("/admin/skills")
+def list_skills_admin(
+    status: str | None = None,
+    token: TokenData = Depends(require_role(Role.ADMIN)),
+) -> list[dict[str, Any]]:
+    """Gibt alle Skill-Vorschlaege zurueck (gefiltert nach Status)."""
+    try:
+        from .skills.skill_store import list_skills
+    except ImportError:
+        from skills.skill_store import list_skills
+    return list_skills(tenant_id=token.tenant_id, status=status)
+
+
+@app.post("/admin/skills/{skill_id}/approve")
+def approve_skill_endpoint(
+    skill_id: str,
+    token: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """Admin genehmigt Skill. Capability-Check 'memory_store' laeuft hier."""
+    try:
+        from .skills.skill_store import approve_skill
+    except ImportError:
+        from skills.skill_store import approve_skill
+    return approve_skill(skill_id=skill_id, approved_by=token.user_id, tenant_id=token.tenant_id)
+
+
+@app.post("/admin/skills/{skill_id}/reject")
+def reject_skill_endpoint(
+    skill_id: str,
+    reason: str = "Kein Grund angegeben.",
+    token: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """Admin verwirft Skill-Vorschlag."""
+    try:
+        from .skills.skill_store import reject_skill
+    except ImportError:
+        from skills.skill_store import reject_skill
+    return reject_skill(skill_id=skill_id, rejected_by=token.user_id,
+                        reason=reason, tenant_id=token.tenant_id)
+
+
+@app.delete("/admin/skills/{skill_id}")
+def delete_skill_endpoint(
+    skill_id: str,
+    token: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """Admin loescht Skill (auch genehmigte). DSGVO-Loeschrecht."""
+    try:
+        from .skills.skill_store import delete_skill
+    except ImportError:
+        from skills.skill_store import delete_skill
+    deleted = delete_skill(skill_id=skill_id, tenant_id=token.tenant_id, deleted_by=token.user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Skill nicht gefunden.")
+    return {"status": "deleted", "skill_id": skill_id}
+
+
+@app.get("/skills")
+def list_approved_skills(
+    token: TokenData | None = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """Gibt genehmigte Skills zurueck (ohne steps_summary fuer normale Nutzer)."""
+    try:
+        from .skills.skill_store import list_skills
+    except ImportError:
+        from skills.skill_store import list_skills
+    skills_list = list_skills(tenant_id=_tenant_id(token), status="approved")
+    return [
+        {k: v for k, v in s.items() if k != "steps_summary"}
+        for s in skills_list
+    ]
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
