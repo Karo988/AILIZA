@@ -45,6 +45,42 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (pad % 4))
 
 
+def create_totp_pending_token(user_id: str, tenant_id: str, role: str) -> str:
+    """
+    Kurz­lebiger Token (5 min) nach Passwort-Check, vor TOTP-Verifikation.
+    Enthält claim 'totp_pending': True → darf KEINE Ressourcen freigeben.
+    """
+    secret = os.getenv("AILIZA_SECRET_KEY", _SECRET)
+    if len(secret) < 32:
+        raise ValueError("AILIZA_SECRET_KEY muss mindestens 32 Zeichen haben.")
+    expires = datetime.now(timezone.utc) + timedelta(minutes=5)
+    header = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = _b64url_encode(json.dumps({
+        "sub": user_id,
+        "tenant_id": tenant_id,
+        "role": role,
+        "totp_pending": True,
+        "exp": int(expires.timestamp()),
+    }).encode())
+    signing_input = f"{header}.{payload}"
+    sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    return f"{signing_input}.{_b64url_encode(sig)}"
+
+
+def decode_totp_pending_token(token: str) -> TokenData:
+    """Dekodiert einen TOTP-Pending-Token. Wirft ValueError wenn kein pending-Token."""
+    td = decode_token(token)
+    # Re-decode payload to check totp_pending flag
+    parts = token.split(".")
+    try:
+        payload = json.loads(_b64url_decode(parts[1]))
+    except Exception as exc:
+        raise ValueError("Ungültiger Token.") from exc
+    if not payload.get("totp_pending"):
+        raise ValueError("Kein TOTP-Pending-Token.")
+    return td
+
+
 def create_token(user_id: str, tenant_id: str, role: str) -> str:
     """Erzeugt ein signiertes JWT (HS256)."""
     secret = os.getenv("AILIZA_SECRET_KEY", _SECRET)

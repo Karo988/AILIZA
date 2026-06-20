@@ -182,6 +182,29 @@ messenger_bindings = Table(
     Column("opt_in_at", DateTime(timezone=True), nullable=True),
 )
 
+totp_secrets = Table(
+    "totp_secrets",
+    metadata_obj,
+    Column("user_id", String(64), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("secret_b32", String(64), nullable=False),
+    Column("confirmed", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("confirmed_at", DateTime(timezone=True), nullable=True),
+)
+
+totp_backup_codes = Table(
+    "totp_backup_codes",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(64), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("code_hash", String(64), nullable=False),
+    Column("used", Integer, nullable=False, default=0),
+    Column("used_at", DateTime(timezone=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 skills = Table(
     "skills",
     metadata_obj,
@@ -231,6 +254,7 @@ def ensure_sqlite_schema() -> None:
         # Account-Lockout-Felder fuer bestehende users-Tabellen
         _add_column_if_missing(connection, "users", "failed_login_attempts", "INTEGER DEFAULT 0")
         _add_column_if_missing(connection, "users", "locked_until", "DATETIME")
+        # TOTP-Felder (Tabellen werden durch metadata_obj.create_all angelegt)
 
 
 def get_kill_switch_flag() -> bool | None:
@@ -640,3 +664,85 @@ def _reset_failed_login(user_id: str, tenant_id: str) -> None:
             .where(users.c.tenant_id == tenant_id)
             .values(failed_login_attempts=0, locked_until=None)
         )
+
+
+# ── TOTP ──────────────────────────────────────────────────────────────────────
+def upsert_totp_secret(user_id: str, tenant_id: str, secret_b32: str) -> None:
+    """Speichert (oder ersetzt) ein TOTP-Secret; confirmed=0 bis Erstbestätigung."""
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(totp_secrets).where(totp_secrets.c.user_id == user_id)
+        ).first()
+        if existing:
+            conn.execute(
+                update(totp_secrets)
+                .where(totp_secrets.c.user_id == user_id)
+                .values(secret_b32=secret_b32, confirmed=0, confirmed_at=None,
+                        created_at=datetime.now(timezone.utc))
+            )
+        else:
+            conn.execute(insert(totp_secrets).values(
+                user_id=user_id, tenant_id=tenant_id, secret_b32=secret_b32,
+                confirmed=0, created_at=datetime.now(timezone.utc), confirmed_at=None,
+            ))
+
+
+def confirm_totp_secret(user_id: str) -> bool:
+    """Markiert TOTP-Secret als bestätigt. Gibt False zurück wenn kein Secret vorhanden."""
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(totp_secrets)
+            .where(totp_secrets.c.user_id == user_id)
+            .where(totp_secrets.c.confirmed == 0)
+            .values(confirmed=1, confirmed_at=datetime.now(timezone.utc))
+        )
+    return result.rowcount > 0
+
+
+def get_totp_record(user_id: str) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(totp_secrets).where(totp_secrets.c.user_id == user_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def delete_totp_secret(user_id: str) -> int:
+    with engine.begin() as conn:
+        r1 = conn.execute(delete(totp_secrets).where(totp_secrets.c.user_id == user_id))
+        conn.execute(delete(totp_backup_codes).where(totp_backup_codes.c.user_id == user_id))
+    return r1.rowcount
+
+
+def store_backup_codes(user_id: str, tenant_id: str, code_hashes: list[str]) -> None:
+    """Speichert gehashte Backup-Codes. Vorherige Codes werden gelöscht."""
+    with engine.begin() as conn:
+        conn.execute(delete(totp_backup_codes).where(totp_backup_codes.c.user_id == user_id))
+        now = datetime.now(timezone.utc)
+        for h in code_hashes:
+            conn.execute(insert(totp_backup_codes).values(
+                user_id=user_id, tenant_id=tenant_id, code_hash=h, used=0, created_at=now,
+            ))
+
+
+def consume_backup_code(user_id: str, plain_code: str) -> bool:
+    """
+    Prüft und verbraucht einen Backup-Code. Gibt True zurück wenn gültig.
+    Einmalig — nach Verwendung wird used=1 gesetzt.
+    """
+    from .auth.totp import hash_backup_code, verify_backup_code
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(totp_backup_codes)
+            .where(totp_backup_codes.c.user_id == user_id)
+            .where(totp_backup_codes.c.used == 0)
+        ).mappings().all()
+        for row in rows:
+            if verify_backup_code(plain_code, row["code_hash"]):
+                conn.execute(
+                    update(totp_backup_codes)
+                    .where(totp_backup_codes.c.id == row["id"])
+                    .values(used=1, used_at=datetime.now(timezone.utc))
+                )
+                return True
+    return False
