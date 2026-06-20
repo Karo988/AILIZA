@@ -536,9 +536,26 @@ class LoginRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=64)
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=12)
     role: str = Field(default="user", pattern="^(user|manager|admin|dsb)$")
     tenant_id: str = Field(default=DEFAULT_TENANT_ID)
+
+    @field_validator("password")
+    @classmethod
+    def password_policy(cls, v: str) -> str:
+        import re
+        errors = []
+        if not re.search(r"[A-Z]", v):
+            errors.append("Großbuchstabe fehlt")
+        if not re.search(r"[a-z]", v):
+            errors.append("Kleinbuchstabe fehlt")
+        if not re.search(r"\d", v):
+            errors.append("Zahl fehlt")
+        if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>/?]", v):
+            errors.append("Sonderzeichen fehlt")
+        if errors:
+            raise ValueError(f"Passwort-Policy: {', '.join(errors)}")
+        return v
 
 
 @app.post("/auth/login")

@@ -166,6 +166,8 @@ users = Table(
     Column("hashed_password", String(256), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("active", Integer, nullable=False, default=1),
+    Column("failed_login_attempts", Integer, nullable=False, default=0),
+    Column("locked_until", DateTime(timezone=True), nullable=True),
 )
 
 
@@ -194,6 +196,9 @@ def ensure_sqlite_schema() -> None:
         tenant_ddl = f"VARCHAR(64) DEFAULT '{DEFAULT_TENANT_ID}'"
         for table in ("audit_logs", "approval_requests", "agent_runs"):
             _add_column_if_missing(connection, table, "tenant_id", tenant_ddl)
+        # Account-Lockout-Felder fuer bestehende users-Tabellen
+        _add_column_if_missing(connection, "users", "failed_login_attempts", "INTEGER DEFAULT 0")
+        _add_column_if_missing(connection, "users", "locked_until", "DATETIME")
 
 
 def get_kill_switch_flag() -> bool | None:
@@ -534,14 +539,72 @@ def get_user(user_id: str, tenant_id: str | None = None) -> dict[str, Any] | Non
     return dict(row) if row else None
 
 
+def _max_attempts() -> int:
+    return int(os.getenv("AILIZA_MAX_LOGIN_ATTEMPTS", "5"))
+
+def _lockout_minutes() -> int:
+    return int(os.getenv("AILIZA_LOCKOUT_MINUTES", "15"))
+
+
 def authenticate_user(user_id: str, plain_password: str, tenant_id: str | None = None) -> dict[str, Any] | None:
+    """
+    Prueft Credentials. Sperrt Account nach _MAX_FAILED_ATTEMPTS Fehlversuchen
+    fuer _LOCKOUT_MINUTES Minuten. Gibt None zurueck bei Fehler (kein Hinweis auf Grund).
+    """
     row = get_user(user_id, tenant_id)
     if not row or not row.get("active"):
         return None
+
+    # Lockout pruefen
+    locked_until = row.get("locked_until")
+    if locked_until is not None:
+        if isinstance(locked_until, str):
+            locked_until = datetime.fromisoformat(locked_until)
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < locked_until:
+            return None  # gesperrt — kein Unterschied zu falschen Credentials
+
     try:
         import bcrypt
-        if not bcrypt.checkpw(plain_password.encode(), row["hashed_password"].encode()):
-            return None
+        pw_ok = bcrypt.checkpw(plain_password.encode(), row["hashed_password"].encode())
     except ImportError:
         return None
-    return {k: v for k, v in row.items() if k != "hashed_password"}
+
+    if not pw_ok:
+        _record_failed_login(user_id, tenant_id or row["tenant_id"])
+        return None
+
+    # Erfolg: Zähler zurücksetzen
+    _reset_failed_login(user_id, tenant_id or row["tenant_id"])
+    return {k: v for k, v in row.items() if k not in ("hashed_password",)}
+
+
+def _record_failed_login(user_id: str, tenant_id: str) -> None:
+    from datetime import timedelta
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(users.c.failed_login_attempts)
+            .where(users.c.user_id == user_id)
+            .where(users.c.tenant_id == tenant_id)
+        ).first()
+        attempts = (row[0] if row else 0) + 1
+        locked_until = None
+        if attempts >= _max_attempts():
+            locked_until = datetime.now(timezone.utc) + timedelta(minutes=_lockout_minutes())
+        conn.execute(
+            update(users)
+            .where(users.c.user_id == user_id)
+            .where(users.c.tenant_id == tenant_id)
+            .values(failed_login_attempts=attempts, locked_until=locked_until)
+        )
+
+
+def _reset_failed_login(user_id: str, tenant_id: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            update(users)
+            .where(users.c.user_id == user_id)
+            .where(users.c.tenant_id == tenant_id)
+            .values(failed_login_attempts=0, locked_until=None)
+        )
