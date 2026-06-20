@@ -685,19 +685,23 @@ class TotpConfirmRequest(BaseModel):
 
 class TotpVerifyRequest(BaseModel):
     totp_pending_token: str = Field(..., min_length=10)
-    code: str = Field(..., min_length=6, max_length=8)  # 6-stellig oder 8-stelliger Backup-Code
+    code: str = Field(..., min_length=6, max_length=8)  # 6-stellig TOTP oder 8-stellig Backup-Code
 
 
 class TotpDeleteRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6)
 
 
+class AdminTotpResetRequest(BaseModel):
+    reason: str = Field(..., min_length=5, max_length=512)
+
+
 @app.post("/auth/totp/setup")
-@_limiter.limit("5/minute")
+@_limiter.limit("3/minute")
 def totp_setup(request: Request, token: TokenData = Depends(get_current_user)) -> dict[str, Any]:
     """
     Schritt 1: TOTP-Secret generieren.
-    Gibt otpauth:// URI zurück (für QR-Code im Frontend).
+    Gibt otpauth:// URI zurück (nur einmalig — Secret danach nicht mehr abrufbar).
     Secret ist erst nach /auth/totp/confirm aktiv.
     Nur für ADMIN/DSB erlaubt.
     """
@@ -711,18 +715,24 @@ def totp_setup(request: Request, token: TokenData = Depends(get_current_user)) -
     secret = generate_secret()
     upsert_totp_secret(token.user_id, token.tenant_id, secret)
     uri = build_otpauth_uri(secret, token.user_id)
+    # Kein Secret im Audit-Log — nur Event
     write_audit_entry(action="auth.totp.setup_initiated", metadata={"user_id": token.user_id},
                       tenant_id=token.tenant_id)
-    return {"otpauth_uri": uri, "secret": secret, "issuer": "AILIZA"}
+    return {
+        "otpauth_uri": uri,
+        "secret": secret,
+        "issuer": "AILIZA",
+        "warning": "Dieses Secret und den QR-Code jetzt scannen. Danach nicht mehr abrufbar.",
+    }
 
 
 @app.post("/auth/totp/confirm")
-@_limiter.limit("10/minute")
+@_limiter.limit("5/minute")
 def totp_confirm(request: Request, payload: TotpConfirmRequest,
                  token: TokenData = Depends(get_current_user)) -> dict[str, Any]:
     """
-    Schritt 2: Ersten TOTP-Code bestätigen → TOTP wird aktiviert.
-    Gibt Backup-Codes zurück (einmalig! Nicht nochmal abrufbar).
+    Schritt 2: Ersten TOTP-Code bestätigen → TOTP aktiviert.
+    Backup-Codes werden einmalig zurückgegeben — danach nicht mehr abrufbar.
     """
     if token is None:
         raise HTTPException(status_code=401, detail="Nicht authentifiziert.")
@@ -732,13 +742,16 @@ def totp_confirm(request: Request, payload: TotpConfirmRequest,
     if not record or record["confirmed"]:
         raise AILIZAError.from_code("totp_not_configured")
     if not verify_totp(record["secret_b32"], payload.code):
+        # Kein Code im Audit — nur fehlgeschlagenes Event
         write_audit_entry(action="auth.totp.confirm_failed", metadata={"user_id": token.user_id},
                           tenant_id=token.tenant_id)
         raise AILIZAError.from_code("totp_invalid")
     confirm_totp_secret(token.user_id)
     backup_codes = generate_backup_codes(8)
     store_backup_codes(token.user_id, token.tenant_id, [hash_backup_code(c) for c in backup_codes])
-    write_audit_entry(action="auth.totp.confirmed", metadata={"user_id": token.user_id},
+    # Kein Backup-Code-Inhalt im Audit-Log
+    write_audit_entry(action="auth.totp.confirmed",
+                      metadata={"user_id": token.user_id, "backup_codes_issued": 8},
                       tenant_id=token.tenant_id)
     return {
         "status": "totp_activated",
@@ -748,7 +761,7 @@ def totp_confirm(request: Request, payload: TotpConfirmRequest,
 
 
 @app.post("/auth/totp/verify")
-@_limiter.limit("10/minute")
+@_limiter.limit("5/minute")
 def totp_verify(request: Request, payload: TotpVerifyRequest) -> JSONResponse:
     """
     Schritt 3 (2FA-Login-Abschluss): TOTP-Code oder Backup-Code prüfen.
@@ -771,13 +784,9 @@ def totp_verify(request: Request, payload: TotpVerifyRequest) -> JSONResponse:
     if len(code) == 6 and code.isdigit():
         valid = verify_totp(record["secret_b32"], code)
     elif len(code) == 8:
-        # Backup-Code: einmalig nutzbar
-        try:
-            from .database import consume_backup_code as _consume
-        except ImportError:
-            from database import consume_backup_code as _consume
-        valid = _consume(td.user_id, code)
+        valid = consume_backup_code(td.user_id, code)
         if valid:
+            # Backup-Code-Nutzung auditieren — kein Code im Log
             write_audit_entry(action="auth.totp.backup_code_used",
                               metadata={"user_id": td.user_id}, tenant_id=td.tenant_id)
 
@@ -786,15 +795,15 @@ def totp_verify(request: Request, payload: TotpVerifyRequest) -> JSONResponse:
                           metadata={"user_id": td.user_id}, tenant_id=td.tenant_id)
         raise AILIZAError.from_code("totp_invalid")
 
-    token = create_token(td.user_id, td.tenant_id, td.role)
+    full_token = create_token(td.user_id, td.tenant_id, td.role)
     write_audit_entry(action="auth.login.success_2fa",
                       metadata={"user_id": td.user_id, "role": td.role},
                       tenant_id=td.tenant_id)
     response = JSONResponse(content={
-        "access_token": token, "token_type": "bearer",
+        "access_token": full_token, "token_type": "bearer",
         "role": td.role, "user_id": td.user_id,
     })
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, full_token)
     return response
 
 
@@ -820,13 +829,26 @@ def totp_delete(request: Request, payload: TotpDeleteRequest,
 
 
 @app.delete("/admin/totp/{target_user_id}")
-def admin_totp_delete(target_user_id: str,
-                      token: TokenData = Depends(require_role(Role.ADMIN))) -> dict[str, Any]:
-    """Admin-Endpoint: TOTP für beliebigen User zurücksetzen (z.B. bei verlorenen Codes)."""
+def admin_totp_delete(
+    request: Request,
+    target_user_id: str,
+    payload: AdminTotpResetRequest,
+    token: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """
+    Admin-Endpoint: TOTP für beliebigen User zurücksetzen (z.B. bei verlorenen Codes).
+    Pflichtfeld: reason (wird auditiert, kein Secret/Code).
+    """
     deleted = delete_totp_secret(target_user_id)
-    write_audit_entry(action="auth.totp.admin_reset",
-                      metadata={"target_user_id": target_user_id, "by": token.user_id},
-                      tenant_id=token.tenant_id)
+    write_audit_entry(
+        action="auth.totp.admin_reset",
+        metadata={
+            "target_user_id": target_user_id,
+            "by": token.user_id,
+            "reason": payload.reason,
+        },
+        tenant_id=token.tenant_id,
+    )
     return {"status": "totp_reset", "rows_deleted": deleted}
 
 
