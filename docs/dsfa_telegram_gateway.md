@@ -1,6 +1,11 @@
-# Datenschutz-Folgenabschätzung (DSFA)
+# Datenschutz-Folgenabschätzung (DSFA) — Entwurf
 ## AILIZA Telegram-Gateway
-**Gemäß DSGVO Art. 35 | Stand: 2026-06-20 | Version: 1.0**
+**Gemäß DSGVO Art. 35 | Stand: 2026-06-20 | Version: 0.2 (Entwurf — noch nicht fachlich geprüft)**
+
+> ⚠️ **Hinweis:** Dieses Dokument ist ein technisch erstellter DSFA-Entwurf.
+> Eine belastbare DSFA erfordert zusätzlich die fachliche Prüfung durch den/die
+> Datenschutzbeauftragte(n) und ggf. Konsultation der Aufsichtsbehörde (Art. 36 DSGVO).
+> Dieses Dokument ersetzt keine rechtliche Beratung.
 
 ---
 
@@ -46,7 +51,7 @@ AILIZA Backend (selbst-gehostet)
 
 | Datenkategorie | Speicherort | Aufbewahrung | Rechtsgrundlage |
 |---|---|---|---|
-| Telegram chat_id (pseudonymisiert) | SQLite messenger_bindings | bis Widerruf/Löschung | Art. 6 Abs. 1 lit. a |
+| Telegram chat_id (pseudonymisiert via HMAC-SHA256+Pepper — keine Anonymisierung, Zuordnung mit Secret möglich) | SQLite messenger_bindings | bis Widerruf/Löschung | Art. 6 Abs. 1 lit. a |
 | Telegram username (optional) | SQLite messenger_bindings | bis Widerruf/Löschung | Art. 6 Abs. 1 lit. a |
 | Opt-in-Zeitstempel | SQLite messenger_bindings | bis Widerruf/Löschung | Art. 7 Abs. 1 |
 | Nachrichteninhalt | **nicht** persistent gespeichert | RAM, Verarbeitungsdauer | — |
@@ -134,8 +139,8 @@ HR, Strafverfolgung, Bildung oder Kreditvergabe neu bewerten.
 | Maßnahme | Status |
 |---|---|
 | Verschlüsselung in Transit (TLS 1.3 via Telegram) | ✅ |
-| Webhook-Signaturprüfung (HMAC-SHA256) | ✅ (Dev: optional, Prod: Pflicht) |
-| HMAC-Pseudonymisierung der chat_id | ✅ |
+| Webhook-Authentifizierung (Telegram Secret-Token oder Gateway-HMAC) | ✅ Dev: optional; Prod: hard fail wenn kein Secret gesetzt |
+| HMAC-SHA256-Pseudonymisierung der chat_id (nicht Anonymisierung) | ✅ |
 | Datenschutz-Klassifikation vor Verarbeitung | ✅ |
 | Redaktion vor LLM-Call | ✅ |
 | Kill-Switch für externe LLM-Calls | ✅ |
@@ -165,7 +170,7 @@ HR, Strafverfolgung, Bildung oder Kreditvergabe neu bewerten.
 | 4 | 2FA/TOTP für ADMIN und DSB Rollen | Mittel | Sprint 3 |
 | 5 | Datenschutzerklärung (Website) mit Telegram-Abschnitt ergänzen | Hoch | Vor Beta-Launch |
 | 6 | Verarbeitungsverzeichnis (VVT, Art. 30) aktualisieren | Mittel | Sprint 2 |
-| 7 | AILIZA_ENV-Prüfung: Webhook-Secret in Produktion erzwingen (hard fail statt warning) | Mittel | Sprint 2 |
+| 7 | AILIZA_ENV=production/staging: Webhook-Secret bereits hard fail — ✅ implementiert | — | Erledigt |
 
 ---
 

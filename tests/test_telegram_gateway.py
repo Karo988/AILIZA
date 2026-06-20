@@ -102,14 +102,20 @@ def test_message_without_optin_blocked(mock_tg):
     assert any("start" in m.get("text", "").lower() for m in mock_tg)
 
 
-def test_delete_removes_binding(mock_tg):
+def test_loeschen_removes_binding(mock_tg):
     from apps.backend.messenger.telegram_gateway import handle_update, get_binding
 
-    handle_update({"message": {"chat": {"id": 444}, "text": "/start",
-                               "from": {}}})
-    handle_update({"message": {"chat": {"id": 444}, "text": "/loeschen",
-                               "from": {}}})
+    handle_update({"message": {"chat": {"id": 444}, "text": "/start", "from": {}}})
+    handle_update({"message": {"chat": {"id": 444}, "text": "/loeschen", "from": {}}})
     assert get_binding("444") is None
+
+
+def test_delete_me_removes_binding(mock_tg):
+    from apps.backend.messenger.telegram_gateway import handle_update, get_binding
+
+    handle_update({"message": {"chat": {"id": 445}, "text": "/start", "from": {}}})
+    handle_update({"message": {"chat": {"id": 445}, "text": "/delete_me", "from": {}}})
+    assert get_binding("445") is None
 
 
 # ── Widerruf (DSGVO Art. 7 Abs. 3) ──────────────────────────────────────────
@@ -129,13 +135,21 @@ def test_revoke_blocks_further_messages(mock_tg):
 
     handle_update({"message": {"chat": {"id": 901}, "text": "/start", "from": {}}})
     handle_update({"message": {"chat": {"id": 901}, "text": "/accept", "from": {}}})
-    handle_update({"message": {"chat": {"id": 901}, "text": "/widerrufen", "from": {}}})
+    handle_update({"message": {"chat": {"id": 901}, "text": "/ablehnen", "from": {}}})
     mock_tg.clear()
 
     handle_update({"message": {"chat": {"id": 901}, "text": "Frage nach Widerruf",
                                "from": {}}})
-    # Muss /start empfehlen — nicht verarbeiten
     assert any("start" in m.get("text", "").lower() for m in mock_tg)
+
+
+def test_widerrufen_alias_works(mock_tg):
+    from apps.backend.messenger.telegram_gateway import handle_update, get_binding
+
+    handle_update({"message": {"chat": {"id": 910}, "text": "/start", "from": {}}})
+    handle_update({"message": {"chat": {"id": 910}, "text": "/accept", "from": {}}})
+    handle_update({"message": {"chat": {"id": 910}, "text": "/widerrufen", "from": {}}})
+    assert get_binding("910")["opt_in_confirmed"] == 0
 
 
 def test_revoke_nonexistent_binding(mock_tg):
@@ -340,6 +354,63 @@ def test_admin_list_bindings_pseudonymized(client, monkeypatch):
     for b in bindings:
         assert "chat_id_hash" in b
         assert "chat_id" not in b  # Klartext nie exponiert
+
+
+# ── Getrennte Capabilities ────────────────────────────────────────────────────
+def test_messenger_receive_capability_allowed():
+    from apps.backend.capabilities.registry import check_capability
+    from apps.backend.governance.data_governance import DataClass
+    result = check_capability("messenger_receive", [DataClass.PUBLIC])
+    assert result.allowed
+
+
+def test_message_process_capability_allowed():
+    from apps.backend.capabilities.registry import check_capability
+    from apps.backend.governance.data_governance import DataClass
+    result = check_capability("message_process", [DataClass.PUBLIC, DataClass.PERSONAL_DATA])
+    assert result.allowed
+
+
+def test_messenger_send_requires_approval_without_it():
+    from apps.backend.capabilities.registry import check_capability
+    from apps.backend.governance.data_governance import DataClass
+    result = check_capability("messenger_send", [DataClass.PUBLIC], approval_given=False)
+    assert result.requires_approval
+    assert not result.allowed
+
+
+def test_messenger_send_allowed_with_approval():
+    from apps.backend.capabilities.registry import check_capability
+    from apps.backend.governance.data_governance import DataClass
+    result = check_capability("messenger_send", [DataClass.PUBLIC], approval_given=True)
+    assert result.allowed
+
+
+# ── Fail-Closed Webhook-Secret in Produktion ─────────────────────────────────
+def test_production_fail_closed_without_secret(monkeypatch):
+    from apps.backend.errors import AILIZAError
+    monkeypatch.setenv("AILIZA_ENV", "production")
+    monkeypatch.delenv("AILIZA_TELEGRAM_WEBHOOK_SECRET", raising=False)
+
+    from apps.backend.messenger.telegram_gateway import check_webhook_secret_or_fail
+    with pytest.raises(AILIZAError):
+        check_webhook_secret_or_fail()
+
+
+def test_production_ok_with_secret(monkeypatch):
+    monkeypatch.setenv("AILIZA_ENV", "production")
+    monkeypatch.setenv("AILIZA_TELEGRAM_WEBHOOK_SECRET", "supersecret")
+
+    from apps.backend.messenger.telegram_gateway import check_webhook_secret_or_fail
+    check_webhook_secret_or_fail()  # kein Fehler
+
+
+def test_development_ok_without_secret(monkeypatch):
+    monkeypatch.setenv("AILIZA_ENV", "development")
+    monkeypatch.delenv("AILIZA_TELEGRAM_WEBHOOK_SECRET", raising=False)
+
+    from apps.backend.messenger.telegram_gateway import check_webhook_secret_or_fail
+    check_webhook_secret_or_fail()  # kein Fehler in Dev
 
 
 def test_admin_delete_binding_not_found(client):
