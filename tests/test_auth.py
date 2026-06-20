@@ -120,12 +120,12 @@ def test_register_and_login_flow(client):
     headers = {"Authorization": f"Bearer {admin_token}"}
 
     resp = client.post("/auth/register",
-                       json={"user_id": "testflow", "password": "FlowPass1!", "role": "user"},
+                       json={"user_id": "testflow", "password": "FlowPass1!XYzq", "role": "user"},
                        headers=headers)
     assert resp.status_code == 201
     assert resp.json()["user_id"] == "testflow"
 
-    resp2 = client.post("/auth/login", json={"user_id": "testflow", "password": "FlowPass1!"})
+    resp2 = client.post("/auth/login", json={"user_id": "testflow", "password": "FlowPass1!XYzq"})
     assert resp2.status_code == 200
     data = resp2.json()
     assert "access_token" in data
