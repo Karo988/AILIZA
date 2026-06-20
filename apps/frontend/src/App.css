@@ -450,3 +450,89 @@ nav {
   margin-top: 0;
   color: white;
 }
+/* ── Login ──────────────────────────────────────────────────────────────── */
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.24), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(168, 85, 247, 0.2), transparent 28%),
+    #050816;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 40px 36px;
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.login-card h1 { margin: 20px 0 4px; font-size: 1.6rem; }
+.login-card .subtitle { color: #94a3b8; margin: 0 0 24px; }
+
+.login-card form { display: flex; flex-direction: column; gap: 16px; }
+.login-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: #cbd5e1; }
+
+.login-card input {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(2,6,23,0.72);
+  color: white;
+  font-size: 15px;
+}
+
+.login-card button[type=submit] {
+  margin-top: 8px;
+  padding: 12px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #38bdf8, #8b5cf6);
+  color: white;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+}
+.login-card button[type=submit]:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.error-msg { color: #f87171; font-size: 14px; margin: 0; }
+.login-note { margin-top: 20px; font-size: 12px; color: #64748b; text-align: center; }
+
+/* ── Sidebar Footer ──────────────────────────────────────────────────────── */
+.sidebar { display: flex; flex-direction: column; }
+.sidebar nav { flex: 1; margin-top: 20px; }
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 12px;
+  color: #64748b;
+}
+
+.logout-btn {
+  padding: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  cursor: pointer;
+}
+.logout-btn:hover { background: rgba(239,68,68,0.15); color: #f87171; border-color: rgba(239,68,68,0.3); }
+
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #050816;
+  color: #64748b;
+  font-size: 1.1rem;
+}
