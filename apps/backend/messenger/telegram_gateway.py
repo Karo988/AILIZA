@@ -10,10 +10,12 @@ Sicherheits-Pflichten:
 - Rate-Limit pro chat_id
 - Nur PUBLIC/INTERNAL-Daten erlaubt
 - Tenant-Bindung: chat_id → tenant_id + user_id
-- Audit-light: kein Nachrichteninhalt, nur IDs und Entscheidung
+- Audit-light: kein Nachrichteninhalt, nur HMAC-Pseudonym der chat_id
 - Kein API-Key in Code — AILIZA_TELEGRAM_BOT_TOKEN in .env
+- Webhook-HMAC: in Produktion Pflicht (AILIZA_TELEGRAM_WEBHOOK_SECRET)
 
-EU AI Act Art. 52: Nutzer wird informiert dass er mit einem KI-System interagiert.
+EU AI Act Art. 50: Nutzer wird klar und zugaenglich informiert, dass er mit einem
+KI-System interagiert (Regulation (EU) 2024/1689, Art. 50).
 """
 from __future__ import annotations
 
@@ -52,12 +54,14 @@ _RATE_LIMIT_PER_MINUTE = int(os.getenv("AILIZA_TELEGRAM_RATE_LIMIT", "10"))
 
 _DATENSCHUTZ_HINWEIS = (
     "👋 Hallo! Ich bin AILIZA, ein KI-Assistent.\n\n"
-    "⚠️ *EU AI Act Art. 52 Hinweis:* Du interagierst mit einem KI-System.\n\n"
+    "⚠️ *EU AI Act Art. 50 Hinweis:* Du interagierst mit einem KI-System "
+    "(Regulation (EU) 2024/1689).\n\n"
     "📋 *Datenschutz (DSGVO):*\n"
     "• Deine Anfragen werden an externe KI-Anbieter (Anthropic/Groq) weitergeleitet.\n"
     "• Anfragen werden vor der Weiterleitung auf sensible Daten geprüft.\n"
     "• Keine dauerhaften Chat-Verläufe werden gespeichert.\n"
-    "• Du kannst deine Daten jederzeit löschen mit /loeschen\n\n"
+    "• Du kannst deine Einwilligung jederzeit widerrufen mit /widerrufen\n"
+    "• Deine Daten werden auf Verlangen gelöscht mit /loeschen\n\n"
     "Tippe /accept um zuzustimmen und AILIZA zu nutzen.\n"
     "Tippe /ablehnen um die Verarbeitung abzulehnen."
 )
@@ -67,9 +71,20 @@ _WILLKOMMEN = (
     "Beispiel: _Was ist der Unterschied zwischen GmbH und UG?_\n\n"
     "Befehle:\n"
     "/hilfe — Hilfe anzeigen\n"
-    "/loeschen — Deine Daten löschen\n"
+    "/widerrufen — Einwilligung widerrufen (DSGVO Art. 7 Abs. 3)\n"
+    "/loeschen — Deine Daten vollständig löschen\n"
     "/status — Dein Verbindungsstatus"
 )
+
+
+# ── Pseudonymisierung ─────────────────────────────────────────────────────────
+def _pseudo_chat_id(chat_id: str) -> str:
+    """
+    HMAC-SHA256 mit serverseitigem Pepper (AILIZA_SECRET_KEY) statt plain SHA256.
+    Ergebnis: 16-Zeichen-Pseudonym — nicht umkehrbar ohne Secret.
+    """
+    pepper = os.getenv("AILIZA_SECRET_KEY", "changeme")
+    return hmac.new(pepper.encode(), chat_id.encode(), hashlib.sha256).hexdigest()[:16]
 
 
 # ── Telegram API-Wrapper ──────────────────────────────────────────────────────
@@ -90,11 +105,27 @@ def send_message(chat_id: int | str, text: str, parse_mode: str = "Markdown") ->
 
 # ── Webhook-Signatur-Prüfung ──────────────────────────────────────────────────
 def verify_telegram_signature(body: bytes, secret_token: str, x_telegram_token: str) -> bool:
-    """Prueft X-Telegram-Bot-Api-Secret-Token Header (optional, empfohlen)."""
+    """
+    Prueft X-Telegram-Bot-Api-Secret-Token Header (constant-time Vergleich).
+    In Produktion MUSS AILIZA_TELEGRAM_WEBHOOK_SECRET gesetzt sein.
+    Ohne Secret: nur fuer lokale Entwicklung akzeptabel.
+    """
     if not secret_token:
-        return True  # kein Secret konfiguriert → nicht pruefen (nur fuer Dev)
+        return True  # kein Secret konfiguriert — nur in Dev akzeptabel
     expected = hmac.new(secret_token.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, x_telegram_token or "")
+
+
+def _require_webhook_secret_in_production() -> None:
+    """Warnt wenn kein Webhook-Secret gesetzt (non-blocking — Operator muss bewusst entscheiden)."""
+    import warnings
+    env = os.getenv("AILIZA_ENV", "development").lower()
+    if env in ("production", "staging") and not os.getenv("AILIZA_TELEGRAM_WEBHOOK_SECRET"):
+        warnings.warn(
+            "AILIZA_TELEGRAM_WEBHOOK_SECRET ist nicht gesetzt. "
+            "In Produktion ist die Webhook-Signaturprüfung Pflicht (EU AI Act, DSGVO).",
+            stacklevel=3,
+        )
 
 
 # ── Rate-Limit ────────────────────────────────────────────────────────────────
@@ -139,8 +170,18 @@ def confirm_opt_in(chat_id: str) -> None:
         )
 
 
+def revoke_opt_in(chat_id: str) -> None:
+    """DSGVO Art. 7 Abs. 3: Widerruf der Einwilligung — setzt opt_in auf 0, loescht keine Daten."""
+    with engine.begin() as conn:
+        conn.execute(
+            update(messenger_bindings)
+            .where(messenger_bindings.c.chat_id == chat_id)
+            .values(opt_in_confirmed=0)
+        )
+
+
 def delete_binding(chat_id: str) -> None:
-    """DSGVO-Loeschrecht: entfernt alle Bindungsdaten."""
+    """DSGVO-Loeschrecht (Art. 17): entfernt alle Bindungsdaten vollstaendig."""
     with engine.begin() as conn:
         conn.execute(
             sa_delete(messenger_bindings).where(messenger_bindings.c.chat_id == chat_id)
@@ -152,8 +193,10 @@ def handle_update(update_data: dict[str, Any]) -> None:
     """
     Verarbeitet ein eingehendes Telegram-Update.
     Reihenfolge: Rate-Limit → Opt-in-Check → Datenschutz-Hinweis →
-                 Capability-Check → Redaktion → Agent → Antwort senden
+                 Capability-Check → Klassifikation → Redaktion → Agent → Antwort senden
     """
+    _require_webhook_secret_in_production()
+
     message = update_data.get("message", {})
     if not message:
         return
@@ -181,6 +224,9 @@ def handle_update(update_data: dict[str, Any]) -> None:
     if text in ("/ablehnen", "/loeschen"):
         _handle_delete(chat_id)
         return
+    if text == "/widerrufen":
+        _handle_revoke(chat_id)
+        return
     if text == "/status":
         _handle_status(chat_id)
         return
@@ -190,8 +236,10 @@ def handle_update(update_data: dict[str, Any]) -> None:
             "Stelle einfach eine Frage auf Deutsch.\n\n"
             "Befehle:\n"
             "/start — Datenschutzhinweis\n"
-            "/loeschen — Deine Daten löschen\n"
-            "/status — Verbindungsstatus")
+            "/widerrufen — Einwilligung widerrufen (DSGVO Art. 7 Abs. 3)\n"
+            "/loeschen — Deine Daten vollständig löschen\n"
+            "/status — Verbindungsstatus\n\n"
+            "⚠️ Du interagierst mit einem KI-System (EU AI Act Art. 50).")
         return
 
     # 3. Opt-in prüfen
@@ -209,13 +257,14 @@ def handle_update(update_data: dict[str, Any]) -> None:
         "messenger_send",
         data_classes=[DataClass.PUBLIC],
         tenant_id=tenant_id,
+        approval_given=True,  # Opt-in des Nutzers = Genehmigung
     )
     if not cap.allowed:
         send_message(chat_id, "⛔ Dieser Dienst ist derzeit nicht verfügbar.")
         _audit("messenger.capability_blocked", chat_id, {"reason": cap.reason})
         return
 
-    # 5. Klassifikation der Nutzereingabe
+    # 5. Klassifikation der Nutzereingabe (VOR LLM, Memory und Logs)
     classification = classify(text)
     if classification.highest_risk_class in {
         DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY,
@@ -229,15 +278,15 @@ def handle_update(update_data: dict[str, Any]) -> None:
                {"highest_class": classification.highest_risk_class.value})
         return
 
-    # 6. Redaktion (zusätzliche Sicherheitsschicht)
+    # 6. Redaktion (zusätzliche Sicherheitsschicht, VOR LLM)
     redacted = redact(text, classification)
     safe_text = redacted.redacted_text
 
     # 7. Agent aufrufen
     answer = _run_agent(safe_text, tenant_id)
 
-    # 8. Antwort senden
-    send_message(chat_id, f"{answer}\n\n_🤖 KI-generierte Antwort (AILIZA)_")
+    # 8. Antwort senden (EU AI Act Art. 50: KI-Kennzeichnung Pflicht)
+    send_message(chat_id, f"{answer}\n\n_🤖 KI-generierte Antwort — AILIZA (EU AI Act Art. 50)_")
     _audit("messenger.response_sent", chat_id, {"tenant_id": tenant_id})
 
 
@@ -258,10 +307,25 @@ def _handle_accept(chat_id: str) -> None:
     _audit("messenger.opt_in_confirmed", chat_id)
 
 
+def _handle_revoke(chat_id: str) -> None:
+    """DSGVO Art. 7 Abs. 3: Widerruf der Einwilligung — Daten bleiben, Verarbeitung stoppt."""
+    binding = get_binding(chat_id)
+    if binding is None:
+        send_message(chat_id, "Keine aktive Verbindung gefunden. Tippe /start.")
+        return
+    revoke_opt_in(chat_id)
+    send_message(chat_id,
+        "✅ Deine Einwilligung wurde widerrufen (DSGVO Art. 7 Abs. 3).\n"
+        "Ich verarbeite keine weiteren Nachrichten von dir.\n\n"
+        "Tippe /loeschen um deine Daten vollständig zu entfernen.\n"
+        "Tippe /accept um die Einwilligung erneut zu erteilen.")
+    _audit("messenger.opt_in_revoked", chat_id)
+
+
 def _handle_delete(chat_id: str) -> None:
     delete_binding(chat_id)
     send_message(chat_id,
-        "✅ Deine Daten wurden gelöscht. "
+        "✅ Deine Daten wurden gelöscht (DSGVO Art. 17).\n"
         "Du kannst jederzeit mit /start neu beginnen.")
     _audit("messenger.data_deleted", chat_id)
 
@@ -270,6 +334,8 @@ def _handle_status(chat_id: str) -> None:
     binding = get_binding(chat_id)
     if binding and binding.get("opt_in_confirmed"):
         send_message(chat_id, "✅ Verbunden und aktiv.")
+    elif binding:
+        send_message(chat_id, "⏸ Einwilligung widerrufen. Tippe /accept zum Reaktivieren.")
     else:
         send_message(chat_id, "❌ Nicht verbunden. Tippe /start.")
 
@@ -312,12 +378,11 @@ def _run_agent(task: str, tenant_id: str) -> str:
 
 # ── Audit-Light ───────────────────────────────────────────────────────────────
 def _audit(action: str, chat_id: str, meta: dict[str, Any] | None = None) -> None:
-    """Kein Nachrichteninhalt — nur Action, anonymisierte chat_id (Hash), Metadaten."""
+    """HMAC-Pseudonym statt plain SHA256 — serverseitiger Pepper aus AILIZA_SECRET_KEY."""
     try:
-        hashed_chat = hashlib.sha256(chat_id.encode()).hexdigest()[:16]
         write_audit_entry(
             action=action,
-            metadata={"chat_id_hash": hashed_chat, **(meta or {})},
+            metadata={"chat_pseudo": _pseudo_chat_id(chat_id), **(meta or {})},
         )
     except Exception:
         pass

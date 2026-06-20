@@ -823,12 +823,11 @@ async def telegram_webhook(request: Request) -> dict[str, Any]:
 
     body = await request.body()
     secret = os.getenv("AILIZA_TELEGRAM_WEBHOOK_SECRET", "")
-    if secret:
-        x_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not verify_telegram_signature(body, secret, x_token):
-            write_audit_entry(action="messenger.webhook.signature_invalid",
-                              metadata={"ip": request.client.host if request.client else "unknown"})
-            raise HTTPException(status_code=403, detail="Ungültige Webhook-Signatur.")
+    x_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not verify_telegram_signature(body, secret, x_token):
+        write_audit_entry(action="messenger.webhook.signature_invalid",
+                          metadata={"ip": request.client.host if request.client else "unknown"})
+        raise HTTPException(status_code=403, detail="Ungültige Webhook-Signatur.")
 
     try:
         update_data = await request.json()
