@@ -433,10 +433,11 @@ class TestAdminTotpReset:
         client.post("/auth/totp/confirm", json={"code": code},
                     headers={"Authorization": f"Bearer {target_token}"})
 
-        # Admin-Reset durch anderen Admin
+        # Admin-Reset durch anderen Admin — mit Pflichtbegruendung
         admin_token = _register_and_login(client, "super_admin_01", "admin")
-        resp = client.delete("/admin/totp/totp_target_01",
-                             headers={"Authorization": f"Bearer {admin_token}"})
+        resp = client.request("DELETE", "/admin/totp/totp_target_01",
+                              json={"reason": "Geraet verloren gemeldet am 2026-06-20"},
+                              headers={"Authorization": f"Bearer {admin_token}"})
         assert resp.status_code == 200
         assert resp.json()["status"] == "totp_reset"
 
@@ -446,11 +447,33 @@ class TestAdminTotpReset:
         })
         assert "access_token" in login_resp.json()
 
+    def test_admin_reset_requires_reason(self, client):
+        admin_token = _register_and_login(client, "super_admin_02", "admin")
+        resp = client.request("DELETE", "/admin/totp/nobody",
+                              json={"reason": "ok"},  # zu kurz (< 5 Zeichen)
+                              headers={"Authorization": f"Bearer {admin_token}"})
+        assert resp.status_code == 422  # Pydantic-Validierung
+
     def test_non_admin_cannot_reset_totp(self, client):
         user_token = _register_and_login(client, "totp_user_reset_01", "user")
-        resp = client.delete("/admin/totp/someone",
-                             headers={"Authorization": f"Bearer {user_token}"})
+        resp = client.request("DELETE", "/admin/totp/someone",
+                              json={"reason": "Ich will das zuruecksetzen"},
+                              headers={"Authorization": f"Bearer {user_token}"})
         assert resp.status_code in (401, 403)
+
+    def test_admin_reset_reason_in_audit(self, client):
+        """Admin-Reset-Begründung muss im Audit-Log erscheinen."""
+        admin_token = _register_and_login(client, "super_admin_03", "admin")
+        from apps.backend.database import list_audit_entries
+        client.request("DELETE", "/admin/totp/nobody_exists",
+                       json={"reason": "Geraet verloren laut Ticket #99"},
+                       headers={"Authorization": f"Bearer {admin_token}"})
+        entries = list_audit_entries(limit=5)
+        reset_entry = next((e for e in entries if e["action"] == "auth.totp.admin_reset"), None)
+        assert reset_entry is not None
+        meta = reset_entry["metadata"]
+        assert meta["reason"] == "Geraet verloren laut Ticket #99"
+        assert meta["by"] == "super_admin_03"
 
     def test_dsb_login_triggers_totp(self, client):
         from apps.backend.auth.totp import get_totp
@@ -467,3 +490,108 @@ class TestAdminTotpReset:
             "user_id": "totp_dsb_01", "password": "Admin@1234!", "tenant_id": "default",
         })
         assert resp.json().get("totp_required") is True
+
+
+# ── Audit-Sauberkeit ─────────────────────────────────────────────────────────
+class TestAuditNeverContainsSensitiveData:
+    """Audit-Log darf niemals TOTP-Secret, TOTP-Code oder Backup-Code enthalten."""
+
+    def _all_audit_values(self, entries: list[dict]) -> str:
+        """Gibt alle Audit-Metadaten als String zurück für einfache Prüfung."""
+        import json
+        return json.dumps([e.get("metadata", {}) for e in entries])
+
+    def test_setup_audit_contains_no_secret(self, client):
+        from apps.backend.auth.totp import get_totp
+        from apps.backend.database import list_audit_entries
+        token = _register_and_login(client, "audit_admin_01", "admin")
+        resp = client.post("/auth/totp/setup",
+                           headers={"Authorization": f"Bearer {token}"})
+        secret = resp.json()["secret"]
+        entries = list_audit_entries(limit=10)
+        dump = self._all_audit_values(entries)
+        assert secret not in dump
+
+    def test_confirm_failed_audit_contains_no_code(self, client):
+        from apps.backend.database import list_audit_entries
+        token = _register_and_login(client, "audit_admin_02", "admin")
+        client.post("/auth/totp/setup", headers={"Authorization": f"Bearer {token}"})
+        client.post("/auth/totp/confirm", json={"code": "123456"},
+                    headers={"Authorization": f"Bearer {token}"})
+        entries = list_audit_entries(limit=10)
+        dump = self._all_audit_values(entries)
+        assert "123456" not in dump
+
+    def test_confirm_success_audit_no_backup_codes(self, client):
+        from apps.backend.auth.totp import get_totp
+        from apps.backend.database import list_audit_entries
+        token = _register_and_login(client, "audit_admin_03", "admin")
+        setup = client.post("/auth/totp/setup",
+                            headers={"Authorization": f"Bearer {token}"})
+        secret = setup.json()["secret"]
+        code = get_totp(secret)
+        confirm = client.post("/auth/totp/confirm", json={"code": code},
+                              headers={"Authorization": f"Bearer {token}"})
+        backup_codes = confirm.json()["backup_codes"]
+        entries = list_audit_entries(limit=10)
+        dump = self._all_audit_values(entries)
+        for bc in backup_codes:
+            assert bc not in dump
+
+    def test_verify_failed_audit_contains_no_code(self, client):
+        from apps.backend.auth.totp import get_totp
+        from apps.backend.database import list_audit_entries
+        token = _register_and_login(client, "audit_admin_04", "admin")
+        setup = client.post("/auth/totp/setup",
+                            headers={"Authorization": f"Bearer {token}"})
+        secret = setup.json()["secret"]
+        code = get_totp(secret)
+        client.post("/auth/totp/confirm", json={"code": code},
+                    headers={"Authorization": f"Bearer {token}"})
+        login = client.post("/auth/login", json={
+            "user_id": "audit_admin_04", "password": "Admin@1234!", "tenant_id": "default",
+        })
+        pending = login.json()["totp_pending_token"]
+        client.post("/auth/totp/verify", json={"totp_pending_token": pending, "code": "000000"})
+        entries = list_audit_entries(limit=10)
+        dump = self._all_audit_values(entries)
+        assert "000000" not in dump
+
+    def test_backup_code_used_audit_contains_no_code(self, client):
+        from apps.backend.auth.totp import get_totp
+        from apps.backend.database import list_audit_entries
+        token = _register_and_login(client, "audit_admin_05", "admin")
+        setup = client.post("/auth/totp/setup",
+                            headers={"Authorization": f"Bearer {token}"})
+        secret = setup.json()["secret"]
+        code = get_totp(secret)
+        confirm = client.post("/auth/totp/confirm", json={"code": code},
+                              headers={"Authorization": f"Bearer {token}"})
+        backup_codes = confirm.json()["backup_codes"]
+        login = client.post("/auth/login", json={
+            "user_id": "audit_admin_05", "password": "Admin@1234!", "tenant_id": "default",
+        })
+        pending = login.json()["totp_pending_token"]
+        client.post("/auth/totp/verify", json={
+            "totp_pending_token": pending, "code": backup_codes[0],
+        })
+        entries = list_audit_entries(limit=15)
+        dump = self._all_audit_values(entries)
+        assert backup_codes[0] not in dump
+
+    def test_no_self_built_crypto_functions_in_totp_module(self):
+        """
+        Sicherstellen dass keine selbstgebauten Verschluesselungsfunktionen definiert sind.
+        Dokumentation darf den Namen erwaehnen, aber keine Implementierung enthalten.
+        """
+        import inspect
+        from apps.backend.auth import totp as totp_mod
+        # Keine Funktionsdefinitionen fuer Eigenimplementierungen
+        assert not hasattr(totp_mod, "encrypt_totp_secret"), \
+            "encrypt_totp_secret darf nicht implementiert sein (kein Eigenbau-Crypto)"
+        assert not hasattr(totp_mod, "decrypt_totp_secret"), \
+            "decrypt_totp_secret darf nicht implementiert sein (kein Eigenbau-Crypto)"
+        # Der Docstring muss das Production-Gate erwaehnen
+        source = inspect.getsource(totp_mod)
+        assert "Production-Gate" in source
+        assert "Keine selbstgebaute Kryptografie" in source

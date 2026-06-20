@@ -10,7 +10,22 @@ Sicherheitsdesign:
 - Algorithmus: HMAC-SHA1 (TOTP-Pflicht nach RFC 6238 / HOTP RFC 4226)
 - Zeitfenster: 30 Sekunden, ±1 Schritt Toleranz (für Uhrabweichung)
 - Codes: 6-stellig
-- Backup-Codes: 8 × 8 alphanumerisch, einmalig nutzbar
+- Backup-Codes: 8 × 8 alphanumerisch, HMAC-SHA256 mit serverseitigem Pepper, einmalig nutzbar
+
+TOTP-Secret at rest — Beta-Status und Production-Gate:
+  TOTP-Secrets werden NICHT mit selbstgebauter Kryptografie verschlüsselt.
+  Eigenimplementierungen (XOR+HMAC o.ä.) sind kein Ersatz für AES-GCM und sind VERBOTEN.
+
+  Für Beta gilt:
+    - TOTP-Secrets werden im zugriffsbeschränkten DB-Feld gespeichert.
+    - Betriebliche Auflage: DB-/Volume-Verschlüsselung (z.B. SQLCipher, dm-crypt,
+      verschlüsselte Cloud-Volumes), minimale DB-Rechte, Audit-Logging.
+
+  Production-Gate (muss vor Produktiv-Einsatz erfüllt sein):
+    - Secret-at-rest-Schutz via `cryptography` (AES-256-GCM / Fernet) oder
+      KMS/Vault (z.B. HashiCorp Vault, AWS KMS, Azure Key Vault).
+    - Keine selbstgebaute Kryptografie (XOR, eigener Keystream o.ä.) als Ersatz.
+    - Implementierung in upsert_totp_secret() / get_totp_record() in database.py ergänzen.
 """
 from __future__ import annotations
 
@@ -29,6 +44,15 @@ _WINDOW = 1         # ±1 Schritt Toleranz
 _SECRET_BYTES = 20  # 160 Bit — RFC 4226 Empfehlung
 
 
+def _pepper() -> bytes:
+    """Pepper aus AILIZA_SECRET_KEY für HMAC-Operationen (Backup-Codes)."""
+    key = os.getenv("AILIZA_SECRET_KEY", "")
+    if len(key) < 32:
+        raise ValueError("AILIZA_SECRET_KEY muss mindestens 32 Zeichen haben.")
+    return key.encode()
+
+
+# ── HOTP / TOTP ───────────────────────────────────────────────────────────────
 def generate_secret() -> str:
     """Erzeugt ein neues Base32-kodiertes TOTP-Secret (160 Bit)."""
     raw = os.urandom(_SECRET_BYTES)
@@ -74,7 +98,8 @@ def verify_totp(secret_b32: str, code: str, ts: float | None = None) -> bool:
 def build_otpauth_uri(secret_b32: str, user_id: str, issuer: str = "AILIZA") -> str:
     """
     Erzeugt otpauth:// URI für QR-Code-Generierung im Frontend.
-    Format: otpauth://totp/{issuer}:{user_id}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30
+    WICHTIG: URI enthält das Klartext-Secret → nur einmalig beim Setup anzeigen,
+    nie in Logs schreiben, nicht cachen.
     """
     from urllib.parse import quote
     label = quote(f"{issuer}:{user_id}")
@@ -88,19 +113,25 @@ def build_otpauth_uri(secret_b32: str, user_id: str, issuer: str = "AILIZA") -> 
     return f"otpauth://totp/{label}?{params}"
 
 
+# ── Backup-Codes ──────────────────────────────────────────────────────────────
 def generate_backup_codes(n: int = 8) -> list[str]:
     """
     Erzeugt n einmalig nutzbare Backup-Codes (je 8 alphanumerische Zeichen).
-    Backup-Codes werden gehasht in der DB gespeichert — nie im Klartext.
+    Backup-Codes werden HMAC-SHA256+Pepper gehasht in der DB gespeichert.
     """
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # ohne O, I, 0, 1 (Lesbarkeit)
     return ["".join(secrets.choice(alphabet) for _ in range(8)) for _ in range(n)]
 
 
 def hash_backup_code(code: str) -> str:
-    """SHA-256-Hash eines Backup-Codes für sichere DB-Speicherung."""
-    return hashlib.sha256(code.upper().strip().encode()).hexdigest()
+    """
+    HMAC-SHA256 eines Backup-Codes mit serverseitigem Pepper.
+    Schützt bei DB-Leak vor Offline-Brute-Force (8-stellige Codes: ~10^12 Kombinationen
+    mit Pepper statt ~10^9 ohne).
+    """
+    return hmac.new(_pepper(), code.upper().strip().encode(), hashlib.sha256).hexdigest()
 
 
 def verify_backup_code(plain: str, stored_hash: str) -> bool:
     return hmac.compare_digest(hash_backup_code(plain), stored_hash)
+
