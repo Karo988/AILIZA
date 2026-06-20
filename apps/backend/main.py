@@ -626,6 +626,61 @@ def list_provider_profiles(_admin: TokenData = Depends(require_role(Role.ADMIN))
     return [profile_to_dict(p) for p in get_active_profiles()]
 
 
+@app.get("/admin/capabilities")
+def list_capabilities(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> list[dict[str, Any]]:
+    """Gibt alle registrierten Capabilities zurück (Capability Registry)."""
+    try:
+        from .capabilities.registry import get_all_capabilities
+    except ImportError:
+        from capabilities.registry import get_all_capabilities
+    return get_all_capabilities()
+
+
+class CapabilityCheckRequest(BaseModel):
+    capability_id: str = Field(..., min_length=1)
+    data_classes: list[str] = Field(default_factory=list)
+    redaction_applied: bool = False
+    approval_given: bool = False
+
+
+@app.post("/admin/capabilities/check")
+def check_capability_endpoint(
+    payload: CapabilityCheckRequest,
+    token: TokenData = Depends(require_role(Role.MANAGER)),
+) -> dict[str, Any]:
+    """Prüft ob eine Capability für gegebene Datenklassen erlaubt ist."""
+    try:
+        from .capabilities.registry import check_capability
+        from .governance.data_governance import DataClass
+    except ImportError:
+        from capabilities.registry import check_capability
+        from governance.data_governance import DataClass
+
+    try:
+        dc_list = [DataClass(dc) for dc in payload.data_classes]
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Ungültige Datenklasse: {exc}")
+
+    result = check_capability(
+        capability_id=payload.capability_id,
+        data_classes=dc_list,
+        tenant_id=token.tenant_id,
+        user_id=token.user_id,
+        redaction_applied=payload.redaction_applied,
+        approval_given=payload.approval_given,
+    )
+    return {
+        "capability_id": result.capability_id,
+        "allowed": result.allowed,
+        "decision": result.decision.value,
+        "reason": result.reason,
+        "requires_approval": result.requires_approval,
+        "risk_level": result.risk_level,
+        "capability_enabled": result.capability_enabled,
+        "context_summary": result.context_summary,
+    }
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
