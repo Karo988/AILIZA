@@ -171,6 +171,27 @@ users = Table(
 )
 
 
+skills = Table(
+    "skills",
+    metadata_obj,
+    Column("skill_id", String(36), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("name", String(128), nullable=False),
+    Column("description", String(512), nullable=True),
+    Column("steps_summary", Text, nullable=False),
+    Column("data_classes", JSON, nullable=True),
+    Column("risk_level", String(32), nullable=False, default="medium"),
+    Column("gdpr_purpose", String(256), nullable=True),
+    Column("source_run_id", String(36), nullable=True),
+    Column("proposed_by", String(64), nullable=True),
+    Column("status", String(32), nullable=False, default="pending"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("approved_at", DateTime(timezone=True), nullable=True),
+    Column("approved_by", String(64), nullable=True),
+    Column("rejection_reason", String(512), nullable=True),
+)
+
+
 def init_db() -> None:
     metadata_obj.create_all(engine)
     ensure_sqlite_schema()
