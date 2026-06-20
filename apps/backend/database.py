@@ -668,7 +668,14 @@ def _reset_failed_login(user_id: str, tenant_id: str) -> None:
 
 # ── TOTP ──────────────────────────────────────────────────────────────────────
 def upsert_totp_secret(user_id: str, tenant_id: str, secret_b32: str) -> None:
-    """Speichert (oder ersetzt) ein TOTP-Secret; confirmed=0 bis Erstbestätigung."""
+    """
+    Speichert (oder ersetzt) ein TOTP-Secret; confirmed=0 bis Erstbestätigung.
+
+    Beta-Betriebsauflage: Secret liegt im Klartext in der DB.
+    Schutz erfolgt durch DB-/Volume-Verschlüsselung und minimale DB-Rechte.
+    Production-Gate: AES-256-GCM oder KMS/Vault vor Produktiv-Einsatz erforderlich.
+    Keine selbstgebaute Kryptografie (XOR o.ä.) als Ersatz zulässig.
+    """
     with engine.begin() as conn:
         existing = conn.execute(
             select(totp_secrets).where(totp_secrets.c.user_id == user_id)
@@ -727,10 +734,10 @@ def store_backup_codes(user_id: str, tenant_id: str, code_hashes: list[str]) -> 
 
 def consume_backup_code(user_id: str, plain_code: str) -> bool:
     """
-    Prüft und verbraucht einen Backup-Code. Gibt True zurück wenn gültig.
+    Prüft und verbraucht einen Backup-Code (HMAC+Pepper, constant-time).
     Einmalig — nach Verwendung wird used=1 gesetzt.
     """
-    from .auth.totp import hash_backup_code, verify_backup_code
+    from .auth.totp import verify_backup_code
     with engine.begin() as conn:
         rows = conn.execute(
             select(totp_backup_codes)
