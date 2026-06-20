@@ -133,8 +133,10 @@ def test_register_and_login_flow(client):
 
 
 def test_admin_cleanup_requires_admin(client):
+    # Shared-Cookie-Client kann einen User-Cookie aus vorherigen Tests enthalten.
+    # Ohne Admin-Token: entweder 401 (kein Token) oder 403 (falsche Rolle) — beides korrekt.
     resp = client.post("/admin/cleanup")
-    assert resp.status_code == 401
+    assert resp.status_code in (401, 403)
 
 
 def test_admin_cleanup_with_admin_token(client):

@@ -560,7 +560,11 @@ class RegisterRequest(BaseModel):
 
 @app.post("/auth/login")
 @_limiter.limit("10/minute")
-def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
+def login(request: Request, payload: LoginRequest) -> JSONResponse:
+    """
+    Login: setzt ein HttpOnly-Cookie (Browser-Flow) UND gibt das Token im Body zurueck
+    (API-Client-Kompatibilitaet). Cookie: Secure in Prod, SameSite=Strict.
+    """
     user = db_authenticate_user(payload.user_id, payload.password, payload.tenant_id)
     if user is None:
         write_audit_entry(action="auth.login.failed",
@@ -571,7 +575,43 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
     write_audit_entry(action="auth.login.success",
                       metadata={"user_id": payload.user_id, "role": user["role"]},
                       tenant_id=payload.tenant_id)
-    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
+    is_prod = os.getenv("AILIZA_ENV", "development").lower() in ("production", "staging")
+    expiry_minutes = int(os.getenv("AILIZA_JWT_EXPIRY_MINUTES", "60"))
+    response = JSONResponse(content={
+        "access_token": token, "token_type": "bearer",
+        "role": user["role"], "user_id": user["user_id"],
+    })
+    response.set_cookie(
+        key="ailiza_session",
+        value=token,
+        httponly=True,                # JS kann Cookie nicht lesen → XSS-Schutz
+        secure=is_prod,               # Nur HTTPS in Prod/Staging
+        samesite="strict",            # CSRF-Schutz: Cookie nie cross-site gesendet
+        max_age=expiry_minutes * 60,
+        path="/",
+    )
+    return response
+
+
+@app.post("/auth/logout")
+def logout() -> JSONResponse:
+    """Loescht den Session-Cookie. Token-Revocation liegt am Client (Bearer) oder Cookie-Loeschung."""
+    response = JSONResponse(content={"status": "logged_out"})
+    response.delete_cookie(key="ailiza_session", path="/", samesite="strict")
+    return response
+
+
+@app.get("/auth/me")
+def me(token: TokenData | None = Depends(get_current_user)) -> dict[str, Any]:
+    """Gibt Nutzerinfos des aktuellen Sessions-Tokens zurueck. Fuer Frontend-Bootstrapping."""
+    if token is None:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert.")
+    return {
+        "user_id": token.user_id,
+        "tenant_id": token.tenant_id,
+        "role": token.role,
+        "exp": token.exp.isoformat() if token.exp else None,
+    }
 
 
 @app.post("/auth/register", status_code=201)

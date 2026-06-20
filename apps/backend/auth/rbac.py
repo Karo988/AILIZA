@@ -3,20 +3,16 @@ RBAC fuer AILIZA
 =================
 Rollen: user < manager < admin < dsb
 
-Verwendung in Endpunkten:
-    @app.get("/admin/...")
-    def my_endpoint(token_data: TokenData = Depends(require_role(Role.ADMIN))):
-        ...
-
-Alle oeffentlichen Endpunkte (/, /health, /agent/run) brauchen keine Auth.
-Admin-Endpunkte erfordern mindestens Role.ADMIN.
+Token-Extraktion: Bearer-Header ODER HttpOnly-Cookie "ailiza_session".
+Cookie-Flow ist bevorzugt (sicherer gegen XSS als localStorage).
+Bearer-Header bleibt fuer API-Clients und Tests erhalten.
 """
 from __future__ import annotations
 
 from enum import IntEnum
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 try:
@@ -25,6 +21,8 @@ except ImportError:
     from auth.jwt_handler import TokenData, decode_token
 
 _bearer = HTTPBearer(auto_error=False)
+
+_COOKIE_NAME = "ailiza_session"
 
 
 class Role(IntEnum):
@@ -39,17 +37,29 @@ class Role(IntEnum):
         return mapping.get(name.lower(), cls.USER)
 
 
+def _extract_token(
+    credentials: HTTPAuthorizationCredentials | None,
+    cookie: str | None,
+) -> str | None:
+    """Bearer-Header hat Vorrang (API-Clients), Cookie als Fallback (Browser-Flow)."""
+    if credentials is not None:
+        return credentials.credentials
+    return cookie
+
+
 def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
+    ailiza_session: Annotated[str | None, Cookie()] = None,
 ) -> TokenData | None:
     """
-    Extrahiert den aktuellen Nutzer aus dem Bearer-Token.
+    Extrahiert den aktuellen Nutzer aus Bearer-Token ODER HttpOnly-Cookie.
     Gibt None zurueck wenn kein Token vorhanden (Endpunkte ohne Pflicht-Auth).
     """
-    if credentials is None:
+    raw = _extract_token(credentials, ailiza_session)
+    if raw is None:
         return None
     try:
-        return decode_token(credentials.credentials)
+        return decode_token(raw)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -61,21 +71,21 @@ def get_current_user(
 def require_role(min_role: Role):
     """
     Dependency-Factory: erzwingt mindestens `min_role`.
-
-    Beispiel:
-        Depends(require_role(Role.ADMIN))
+    Akzeptiert Bearer-Header oder HttpOnly-Cookie.
     """
     def _check(
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
+        ailiza_session: Annotated[str | None, Cookie()] = None,
     ) -> TokenData:
-        if credentials is None:
+        raw = _extract_token(credentials, ailiza_session)
+        if raw is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentifizierung erforderlich.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         try:
-            token_data = decode_token(credentials.credentials)
+            token_data = decode_token(raw)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
