@@ -807,6 +807,88 @@ def list_approved_skills(
     ]
 
 
+# ── Messenger / Telegram-Gateway ─────────────────────────────────────────────
+@app.post("/messenger/telegram/webhook")
+@_limiter.limit("100/minute")
+async def telegram_webhook(request: Request) -> dict[str, Any]:
+    """
+    Telegram-Webhook-Endpoint.
+    Optionale Signatur-Prüfung via X-Telegram-Bot-Api-Secret-Token Header.
+    Fail-closed: Fehler in handle_update werden nicht nach außen gegeben.
+    """
+    try:
+        from .messenger.telegram_gateway import handle_update, verify_telegram_signature
+    except ImportError:
+        from messenger.telegram_gateway import handle_update, verify_telegram_signature
+
+    body = await request.body()
+    secret = os.getenv("AILIZA_TELEGRAM_WEBHOOK_SECRET", "")
+    if secret:
+        x_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not verify_telegram_signature(body, secret, x_token):
+            write_audit_entry(action="messenger.webhook.signature_invalid",
+                              metadata={"ip": request.client.host if request.client else "unknown"})
+            raise HTTPException(status_code=403, detail="Ungültige Webhook-Signatur.")
+
+    try:
+        update_data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ungültiges JSON.")
+
+    try:
+        handle_update(update_data)
+    except Exception:
+        pass  # Fail-closed: keine internen Fehler nach außen
+
+    return {"ok": True}
+
+
+@app.get("/admin/messenger/bindings")
+def list_messenger_bindings(
+    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+) -> list[dict[str, Any]]:
+    """Gibt alle Telegram-Bindungen zurück (pseudonymisiert: nur chat_id-Hash + Metadaten)."""
+    try:
+        from .database import engine, messenger_bindings
+    except ImportError:
+        from database import engine, messenger_bindings
+    import hashlib
+    from sqlalchemy import select
+
+    with engine.begin() as conn:
+        rows = conn.execute(select(messenger_bindings)).mappings().all()
+    return [
+        {
+            "chat_id_hash": hashlib.sha256(str(r["chat_id"]).encode()).hexdigest()[:16],
+            "tenant_id": r["tenant_id"],
+            "opt_in_confirmed": bool(r["opt_in_confirmed"]),
+            "created_at": str(r["created_at"]) if r["created_at"] else None,
+            "opt_in_at": str(r["opt_in_at"]) if r.get("opt_in_at") else None,
+        }
+        for r in rows
+    ]
+
+
+@app.delete("/admin/messenger/bindings/{chat_id}")
+def delete_messenger_binding(
+    chat_id: str,
+    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """DSGVO-Loeschrecht: Admin löscht Telegram-Bindung eines Nutzers."""
+    try:
+        from .messenger.telegram_gateway import delete_binding, get_binding
+    except ImportError:
+        from messenger.telegram_gateway import delete_binding, get_binding
+
+    binding = get_binding(chat_id)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="Bindung nicht gefunden.")
+    delete_binding(chat_id)
+    write_audit_entry(action="admin.messenger.binding_deleted",
+                      metadata={"deleted_by": _admin.user_id})
+    return {"status": "deleted", "chat_id": chat_id}
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 

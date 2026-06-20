@@ -171,6 +171,17 @@ users = Table(
 )
 
 
+messenger_bindings = Table(
+    "messenger_bindings",
+    metadata_obj,
+    Column("chat_id", String(64), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("telegram_username", String(128), nullable=True),
+    Column("opt_in_confirmed", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("opt_in_at", DateTime(timezone=True), nullable=True),
+)
+
 skills = Table(
     "skills",
     metadata_obj,
