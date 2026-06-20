@@ -21,6 +21,7 @@ try:
     from .base import LLMProvider
     from .groq_provider import GroqProvider
     from .anthropic_provider import AnthropicProvider
+    from .provider_profiles import check_provider_policy
     from ..capabilities.registry import check_capability
     from ..governance.data_governance import DataClass
 except ImportError:  # pragma: no cover
@@ -29,25 +30,44 @@ except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
     from providers.groq_provider import GroqProvider
     from providers.anthropic_provider import AnthropicProvider
+    from providers.provider_profiles import check_provider_policy
     from capabilities.registry import check_capability
     from governance.data_governance import DataClass
+
+try:
+    from .openrouter_provider import OpenRouterProvider
+    _HAS_OPENROUTER = True
+except Exception:
+    _HAS_OPENROUTER = False
 
 
 class ProviderOrchestrator:
     def __init__(self, providers: dict[str, LLMProvider] | None = None, default_provider: str = "groq") -> None:
         if providers is None:
-            providers = {
+            _p: dict[str, LLMProvider] = {
                 "groq": GroqProvider(),
                 "anthropic": AnthropicProvider(),
             }
+            if _HAS_OPENROUTER:
+                _p["openrouter"] = OpenRouterProvider()
+            providers = _p
         self.providers = providers
         self.default_provider = default_provider
 
-    def _select(self, provider_id: str | None) -> LLMProvider:
+    def _select(self, provider_id: str | None, data_classes: list[DataClass]) -> LLMProvider:
+        """
+        Waehlt Provider und prueft ProviderProfile-Policy.
+        Fail-closed: kein passendes Profil → AILIZAError.
+        """
         pid = provider_id or self.default_provider
         provider = self.providers.get(pid)
         if provider is None:
             raise AILIZAError.from_code("provider_not_configured")
+
+        allowed, reason = check_provider_policy(pid, data_classes)
+        if not allowed:
+            raise AILIZAError.from_code("policy_blocked", safe_alternatives=[reason])
+
         return provider
 
     def _log_metrics(self, context: Any, provider: LLMProvider, latency_ms: int,
@@ -87,10 +107,7 @@ class ProviderOrchestrator:
         if not cap_result.allowed:
             raise AILIZAError.from_code("policy_blocked")
 
-        provider = self._select(provider_id)
-        # ProviderProfile aktiv: hier ueber Vorhandensein einer Region/Version geprueft
-        if not provider.provider_profile_version:
-            raise AILIZAError.from_code("provider_not_configured")
+        provider = self._select(provider_id, list(data_classes))
         tokens_in = sum(provider.count_tokens(m.get("content", "")) for m in messages)
         start = time.time()
         error_type = None
@@ -112,5 +129,6 @@ class ProviderOrchestrator:
 
     def stream(self, messages: list[dict[str, Any]], context: Any = None, provider_id: str | None = None) -> Iterator[str]:
         enforce_kill_switch()
-        provider = self._select(provider_id)
+        data_classes = getattr(context, "data_classes", [DataClass.PUBLIC]) if context else [DataClass.PUBLIC]
+        provider = self._select(provider_id, list(data_classes))
         yield from provider.stream(messages, context)

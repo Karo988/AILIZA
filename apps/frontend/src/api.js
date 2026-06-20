@@ -31,9 +31,14 @@ export async function apiFetch(path, options = {}) {
   if (response.status === 401) {
     // Token abgelaufen oder kein Cookie → Login
     sessionStorage.removeItem("ailiza_role")
-    sessionStorage.removeItem("ailiza_user")
     window.location.href = "/login"
     return null
+  }
+
+  if (response.status === 403) {
+    // Keine Berechtigung — kein Redirect, Fehler wird nach oben gegeben
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || "Keine Berechtigung für diese Aktion.")
   }
 
   if (!response.ok) {
@@ -57,8 +62,8 @@ export async function login(userId, password, tenantId = "default") {
     body: { user_id: userId, password, tenant_id: tenantId },
   })
   if (data) {
+    // Kein user_id in sessionStorage (personenbeziehbar) — nur Rolle fuer UI-Steuerung
     sessionStorage.setItem("ailiza_role", data.role)
-    sessionStorage.setItem("ailiza_user", data.user_id)
   }
   return data
 }
@@ -69,13 +74,13 @@ export async function login(userId, password, tenantId = "default") {
 export async function logout() {
   await apiFetch("/auth/logout", { method: "POST" })
   sessionStorage.removeItem("ailiza_role")
-  sessionStorage.removeItem("ailiza_user")
   window.location.href = "/login"
 }
 
 /**
  * Prueft ob ein aktiver Session-Cookie vorliegt (via /auth/me).
  * Gibt TokenData zurueck oder null.
+ * user_id kommt aus /auth/me (Server), nicht aus sessionStorage.
  */
 export async function getSession() {
   try {
@@ -86,4 +91,3 @@ export async function getSession() {
 }
 
 export const getRole = () => sessionStorage.getItem("ailiza_role") || "guest"
-export const getUser = () => sessionStorage.getItem("ailiza_user") || ""
