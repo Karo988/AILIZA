@@ -21,12 +21,16 @@ try:
     from .base import LLMProvider
     from .groq_provider import GroqProvider
     from .anthropic_provider import AnthropicProvider
+    from ..capabilities.registry import check_capability
+    from ..governance.data_governance import DataClass
 except ImportError:  # pragma: no cover
     from kill_switch import enforce_kill_switch
     from errors import AILIZAError
     from providers.base import LLMProvider
     from providers.groq_provider import GroqProvider
     from providers.anthropic_provider import AnthropicProvider
+    from capabilities.registry import check_capability
+    from governance.data_governance import DataClass
 
 
 class ProviderOrchestrator:
@@ -70,6 +74,19 @@ class ProviderOrchestrator:
 
     def generate(self, messages: list[dict[str, Any]], context: Any = None, provider_id: str | None = None) -> str:
         enforce_kill_switch()
+
+        # Capability-Check: LLM-Call benoetigt Freigabe durch Registry
+        data_classes = getattr(context, "data_classes", [DataClass.PUBLIC]) if context else [DataClass.PUBLIC]
+        tenant_id = getattr(context, "tenant_id", "default") if context else "default"
+        user_id = getattr(context, "user_id", None) if context else None
+        redaction_applied = getattr(context, "redaction_applied", False) if context else False
+        cap_result = check_capability(
+            "llm_call", data_classes=list(data_classes),
+            tenant_id=tenant_id, user_id=user_id, redaction_applied=redaction_applied,
+        )
+        if not cap_result.allowed:
+            raise AILIZAError.from_code("policy_blocked")
+
         provider = self._select(provider_id)
         # ProviderProfile aktiv: hier ueber Vorhandensein einer Region/Version geprueft
         if not provider.provider_profile_version:

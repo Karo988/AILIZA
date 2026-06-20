@@ -19,6 +19,9 @@ MESSAGES: dict[str, str] = {
     "redaction_required": "Diese Anfrage muss vor der externen Verarbeitung anonymisiert werden.",
     "document_blocked": "Dieses Dokument kann aus Sicherheitsgruenden nicht verarbeitet werden.",
     "internal_error": "Es ist ein interner Fehler aufgetreten. Bitte versuchen Sie es spaeter erneut.",
+    "policy_blocked": "Diese Aktion ist aufgrund der Datenschutz-Richtlinien nicht erlaubt. Bitte pruefen Sie die Datenklassen oder beantragen Sie eine Freigabe.",
+    "capability_disabled": "Diese Faehigkeit ist derzeit deaktiviert. Bitte wenden Sie sich an einen Administrator.",
+    "capability_unknown": "Unbekannte Faehigkeit. Die Aktion kann nicht ausgefuehrt werden.",
 }
 
 
