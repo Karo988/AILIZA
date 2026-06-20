@@ -183,18 +183,45 @@ _CAPABILITIES: dict[str, Capability] = {
         gdpr_purpose="Nachweisfuehrung und Compliance-Dokumentation",
         tags=["audit", "logging", "internal"],
     ),
+    "messenger_receive": Capability(
+        capability_id="messenger_receive",
+        name="Messenger-Nachricht empfangen",
+        description="Empfaengt Nachricht ueber Telegram. Nur nach Nutzer-Opt-in. Kein Inhalt in Logs.",
+        target=DataTarget.RAM,
+        allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        risk_level=RiskLevel.MEDIUM,
+        requires_approval=False,
+        external_call=False,
+        gdpr_purpose="Entgegennahme von Nutzeranfragen ueber Messenger-Kanal (nur mit Einwilligung)",
+        tags=["messenger", "telegram", "receive"],
+    ),
+    "message_process": Capability(
+        capability_id="message_process",
+        name="Nachricht klassifizieren und redigieren",
+        description="Klassifiziert Nutzerinput, blockiert sensible Kategorien, redigiert PII. Lokal, kein externer Call.",
+        target=DataTarget.RAM,
+        allowed_data_classes=[
+            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.PERSONAL_DATA,
+        ],
+        risk_level=RiskLevel.LOW,
+        requires_approval=False,
+        external_call=False,
+        gdpr_purpose="Datenschutz-Vorpruefung und Redaktion vor LLM-Verarbeitung",
+        tags=["messenger", "classify", "redact", "local"],
+    ),
     "messenger_send": Capability(
         capability_id="messenger_send",
-        name="Messenger-Nachricht senden",
-        description="Sendet Antwort ueber Telegram/Slack/Discord. Nur nach Nutzer-Opt-in.",
-        target=DataTarget.EXTERNAL_LLM,  # EMAIL als naechstes naeheres Target
+        name="Messenger-Antwort senden",
+        description="Sendet Antwort ueber Telegram/Slack/Discord an den Nutzer. Nur nach Opt-in und LLM-Verarbeitung.",
+        target=DataTarget.EXTERNAL_LLM,
         allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
         risk_level=RiskLevel.CRITICAL,
         requires_approval=True,
         external_call=True,
-        enabled=True,   # Gateway implementiert — Opt-in + Capability-Check erzwungen
-        gdpr_purpose="Antwortlieferung ueber Messenger-Kanal (nur mit Einwilligung)",
-        tags=["messenger", "telegram", "slack", "external", "disabled"],
+        enabled=True,
+        gdpr_purpose="Antwortlieferung ueber Messenger-Kanal (nur mit Einwilligung, Art. 6 Abs. 1 lit. a DSGVO)",
+        tags=["messenger", "telegram", "slack", "send", "external"],
     ),
 }
 
@@ -284,7 +311,7 @@ def check_capability(
     # Freigabepflicht der Capability selbst berücksichtigen
     final_decision = result.decision
     if cap.requires_approval and not approval_given:
-        if final_decision == PolicyDecision.ALLOW:
+        if final_decision in {PolicyDecision.ALLOW, PolicyDecision.ALLOW_WITH_NOTICE}:
             final_decision = PolicyDecision.APPROVAL_REQUIRED
 
     allowed = final_decision in {PolicyDecision.ALLOW, PolicyDecision.ALLOW_WITH_NOTICE}

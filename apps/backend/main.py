@@ -817,9 +817,16 @@ async def telegram_webhook(request: Request) -> dict[str, Any]:
     Fail-closed: Fehler in handle_update werden nicht nach außen gegeben.
     """
     try:
-        from .messenger.telegram_gateway import handle_update, verify_telegram_signature
+        from .messenger.telegram_gateway import (
+            handle_update, verify_telegram_signature, check_webhook_secret_or_fail,
+        )
     except ImportError:
-        from messenger.telegram_gateway import handle_update, verify_telegram_signature
+        from messenger.telegram_gateway import (
+            handle_update, verify_telegram_signature, check_webhook_secret_or_fail,
+        )
+
+    # Fail-Closed in Produktion: kein Secret → sofortiger Fehler
+    check_webhook_secret_or_fail()
 
     body = await request.body()
     secret = os.getenv("AILIZA_TELEGRAM_WEBHOOK_SECRET", "")
