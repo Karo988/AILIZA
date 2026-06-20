@@ -32,9 +32,15 @@ try:
     from .providers.orchestrator import ProviderOrchestrator
     from .documents.document_handler import scan_document
     from .auth import create_token, Role, require_role, get_current_user, TokenData
+    from .auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
     from .database import create_user as db_create_user, authenticate_user as db_authenticate_user
-    from .database import engine
+    from .database import (
+        engine,
+        get_totp_record, upsert_totp_secret, confirm_totp_secret,
+        delete_totp_secret, store_backup_codes, consume_backup_code,
+    )
     from .auth.models import UserCreate, UserInDB
+    from .auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
 except ImportError:
     from agent_runtime import AgentRuntime
     from database import (
@@ -43,6 +49,8 @@ except ImportError:
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_user as db_create_user, authenticate_user as db_authenticate_user,
         engine,
+        get_totp_record, upsert_totp_secret, confirm_totp_secret,
+        delete_totp_secret, store_backup_codes, consume_backup_code,
     )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
@@ -50,7 +58,9 @@ except ImportError:
     from providers.orchestrator import ProviderOrchestrator
     from documents.document_handler import scan_document
     from auth import create_token, Role, require_role, get_current_user, TokenData
+    from auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
     from auth.models import UserCreate, UserInDB
+    from auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
 
 
 @asynccontextmanager
@@ -106,7 +116,7 @@ from fastapi import Depends, UploadFile, File
 # ── CSRF-Schutz: Origin-/Referer-Check fuer Cookie-gestuetzte Requests ────────
 _CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _CSRF_PROTECTED_PREFIXES = (
-    "/auth/logout", "/auth/register", "/admin/", "/skills/propose",
+    "/auth/logout", "/auth/register", "/auth/totp", "/admin/", "/skills/propose",
     "/agent/run", "/feedback", "/documents/", "/messenger/",
 )
 
@@ -606,12 +616,30 @@ class RegisterRequest(BaseModel):
         return v
 
 
+_TOTP_REQUIRED_ROLES = {"admin", "dsb"}
+
+
+def _set_session_cookie(response: JSONResponse, token: str) -> None:
+    is_prod = os.getenv("AILIZA_ENV", "development").lower() in ("production", "staging")
+    expiry_minutes = int(os.getenv("AILIZA_JWT_EXPIRY_MINUTES", "60"))
+    response.set_cookie(
+        key="ailiza_session",
+        value=token,
+        httponly=True,
+        secure=is_prod,
+        samesite="strict",
+        max_age=expiry_minutes * 60,
+        path="/",
+    )
+
+
 @app.post("/auth/login")
 @_limiter.limit("10/minute")
 def login(request: Request, payload: LoginRequest) -> JSONResponse:
     """
-    Login: setzt ein HttpOnly-Cookie (Browser-Flow) UND gibt das Token im Body zurueck
-    (API-Client-Kompatibilitaet). Cookie: Secure in Prod, SameSite=Strict.
+    Login: setzt HttpOnly-Cookie (Browser-Flow) und gibt Token im Body zurück.
+    Für ADMIN/DSB mit aktiviertem TOTP: gibt totp_required=true + totp_pending_token zurück.
+    Zweiter Schritt: POST /auth/totp/verify mit Code + totp_pending_token.
     """
     user = db_authenticate_user(payload.user_id, payload.password, payload.tenant_id)
     if user is None:
@@ -619,26 +647,187 @@ def login(request: Request, payload: LoginRequest) -> JSONResponse:
                           metadata={"user_id": payload.user_id, "tenant_id": payload.tenant_id},
                           tenant_id=payload.tenant_id)
         raise HTTPException(status_code=401, detail="Ungültige Zugangsdaten.")
-    token = create_token(user["user_id"], user["tenant_id"], user["role"])
+
+    role = user["role"]
+    # TOTP-Pflicht für ADMIN/DSB wenn TOTP eingerichtet und bestätigt
+    if role in _TOTP_REQUIRED_ROLES:
+        totp_record = get_totp_record(user["user_id"])
+        if totp_record and totp_record["confirmed"]:
+            pending = create_totp_pending_token(user["user_id"], user["tenant_id"], role)
+            write_audit_entry(action="auth.login.totp_required",
+                              metadata={"user_id": user["user_id"], "role": role},
+                              tenant_id=user["tenant_id"])
+            return JSONResponse(content={
+                "totp_required": True,
+                "totp_pending_token": pending,
+                "role": role,
+            })
+
+    token = create_token(user["user_id"], user["tenant_id"], role)
     write_audit_entry(action="auth.login.success",
-                      metadata={"user_id": payload.user_id, "role": user["role"]},
+                      metadata={"user_id": payload.user_id, "role": role},
                       tenant_id=payload.tenant_id)
-    is_prod = os.getenv("AILIZA_ENV", "development").lower() in ("production", "staging")
-    expiry_minutes = int(os.getenv("AILIZA_JWT_EXPIRY_MINUTES", "60"))
     response = JSONResponse(content={
         "access_token": token, "token_type": "bearer",
-        "role": user["role"], "user_id": user["user_id"],
+        "role": role, "user_id": user["user_id"],
     })
-    response.set_cookie(
-        key="ailiza_session",
-        value=token,
-        httponly=True,                # JS kann Cookie nicht lesen → XSS-Schutz
-        secure=is_prod,               # Nur HTTPS in Prod/Staging
-        samesite="strict",            # CSRF-Schutz: Cookie nie cross-site gesendet
-        max_age=expiry_minutes * 60,
-        path="/",
-    )
+    _set_session_cookie(response, token)
     return response
+
+
+class TotpSetupRequest(BaseModel):
+    pass  # kein Body nötig — user_id kommt aus JWT
+
+
+class TotpConfirmRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class TotpVerifyRequest(BaseModel):
+    totp_pending_token: str = Field(..., min_length=10)
+    code: str = Field(..., min_length=6, max_length=8)  # 6-stellig oder 8-stelliger Backup-Code
+
+
+class TotpDeleteRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+@app.post("/auth/totp/setup")
+@_limiter.limit("5/minute")
+def totp_setup(request: Request, token: TokenData = Depends(get_current_user)) -> dict[str, Any]:
+    """
+    Schritt 1: TOTP-Secret generieren.
+    Gibt otpauth:// URI zurück (für QR-Code im Frontend).
+    Secret ist erst nach /auth/totp/confirm aktiv.
+    Nur für ADMIN/DSB erlaubt.
+    """
+    if token is None:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert.")
+    if token.role not in _TOTP_REQUIRED_ROLES:
+        raise HTTPException(status_code=403, detail="TOTP nur für ADMIN und DSB verfügbar.")
+    existing = get_totp_record(token.user_id)
+    if existing and existing["confirmed"]:
+        raise AILIZAError.from_code("totp_already_confirmed")
+    secret = generate_secret()
+    upsert_totp_secret(token.user_id, token.tenant_id, secret)
+    uri = build_otpauth_uri(secret, token.user_id)
+    write_audit_entry(action="auth.totp.setup_initiated", metadata={"user_id": token.user_id},
+                      tenant_id=token.tenant_id)
+    return {"otpauth_uri": uri, "secret": secret, "issuer": "AILIZA"}
+
+
+@app.post("/auth/totp/confirm")
+@_limiter.limit("10/minute")
+def totp_confirm(request: Request, payload: TotpConfirmRequest,
+                 token: TokenData = Depends(get_current_user)) -> dict[str, Any]:
+    """
+    Schritt 2: Ersten TOTP-Code bestätigen → TOTP wird aktiviert.
+    Gibt Backup-Codes zurück (einmalig! Nicht nochmal abrufbar).
+    """
+    if token is None:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert.")
+    if token.role not in _TOTP_REQUIRED_ROLES:
+        raise HTTPException(status_code=403, detail="TOTP nur für ADMIN und DSB verfügbar.")
+    record = get_totp_record(token.user_id)
+    if not record or record["confirmed"]:
+        raise AILIZAError.from_code("totp_not_configured")
+    if not verify_totp(record["secret_b32"], payload.code):
+        write_audit_entry(action="auth.totp.confirm_failed", metadata={"user_id": token.user_id},
+                          tenant_id=token.tenant_id)
+        raise AILIZAError.from_code("totp_invalid")
+    confirm_totp_secret(token.user_id)
+    backup_codes = generate_backup_codes(8)
+    store_backup_codes(token.user_id, token.tenant_id, [hash_backup_code(c) for c in backup_codes])
+    write_audit_entry(action="auth.totp.confirmed", metadata={"user_id": token.user_id},
+                      tenant_id=token.tenant_id)
+    return {
+        "status": "totp_activated",
+        "backup_codes": backup_codes,
+        "warning": "Backup-Codes jetzt sicher aufbewahren. Sie werden nicht erneut angezeigt.",
+    }
+
+
+@app.post("/auth/totp/verify")
+@_limiter.limit("10/minute")
+def totp_verify(request: Request, payload: TotpVerifyRequest) -> JSONResponse:
+    """
+    Schritt 3 (2FA-Login-Abschluss): TOTP-Code oder Backup-Code prüfen.
+    Erwartet totp_pending_token (aus /auth/login) + 6-stelligen TOTP-Code
+    oder 8-stelligen Backup-Code.
+    Gibt bei Erfolg volles JWT + Cookie zurück.
+    """
+    try:
+        td = decode_totp_pending_token(payload.totp_pending_token)
+    except ValueError:
+        raise AILIZAError.from_code("totp_pending_invalid")
+
+    record = get_totp_record(td.user_id)
+    if not record or not record["confirmed"]:
+        raise AILIZAError.from_code("totp_not_configured")
+
+    code = payload.code.strip()
+    valid = False
+
+    if len(code) == 6 and code.isdigit():
+        valid = verify_totp(record["secret_b32"], code)
+    elif len(code) == 8:
+        # Backup-Code: einmalig nutzbar
+        try:
+            from .database import consume_backup_code as _consume
+        except ImportError:
+            from database import consume_backup_code as _consume
+        valid = _consume(td.user_id, code)
+        if valid:
+            write_audit_entry(action="auth.totp.backup_code_used",
+                              metadata={"user_id": td.user_id}, tenant_id=td.tenant_id)
+
+    if not valid:
+        write_audit_entry(action="auth.totp.verify_failed",
+                          metadata={"user_id": td.user_id}, tenant_id=td.tenant_id)
+        raise AILIZAError.from_code("totp_invalid")
+
+    token = create_token(td.user_id, td.tenant_id, td.role)
+    write_audit_entry(action="auth.login.success_2fa",
+                      metadata={"user_id": td.user_id, "role": td.role},
+                      tenant_id=td.tenant_id)
+    response = JSONResponse(content={
+        "access_token": token, "token_type": "bearer",
+        "role": td.role, "user_id": td.user_id,
+    })
+    _set_session_cookie(response, token)
+    return response
+
+
+@app.delete("/auth/totp")
+@_limiter.limit("3/minute")
+def totp_delete(request: Request, payload: TotpDeleteRequest,
+                token: TokenData = Depends(get_current_user)) -> dict[str, Any]:
+    """
+    TOTP deaktivieren. Erfordert aktuellen TOTP-Code zur Bestätigung.
+    Nur eigener Account — ADMIN kann per /admin/totp/{user_id} löschen.
+    """
+    if token is None:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert.")
+    record = get_totp_record(token.user_id)
+    if not record or not record["confirmed"]:
+        raise AILIZAError.from_code("totp_not_configured")
+    if not verify_totp(record["secret_b32"], payload.code):
+        raise AILIZAError.from_code("totp_invalid")
+    delete_totp_secret(token.user_id)
+    write_audit_entry(action="auth.totp.deleted", metadata={"user_id": token.user_id},
+                      tenant_id=token.tenant_id)
+    return {"status": "totp_removed"}
+
+
+@app.delete("/admin/totp/{target_user_id}")
+def admin_totp_delete(target_user_id: str,
+                      token: TokenData = Depends(require_role(Role.ADMIN))) -> dict[str, Any]:
+    """Admin-Endpoint: TOTP für beliebigen User zurücksetzen (z.B. bei verlorenen Codes)."""
+    deleted = delete_totp_secret(target_user_id)
+    write_audit_entry(action="auth.totp.admin_reset",
+                      metadata={"target_user_id": target_user_id, "by": token.user_id},
+                      tenant_id=token.tenant_id)
+    return {"status": "totp_reset", "rows_deleted": deleted}
 
 
 @app.post("/auth/logout")

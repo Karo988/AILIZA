@@ -22,6 +22,11 @@ MESSAGES: dict[str, str] = {
     "policy_blocked": "Diese Aktion ist aufgrund der Datenschutz-Richtlinien nicht erlaubt. Bitte pruefen Sie die Datenklassen oder beantragen Sie eine Freigabe.",
     "capability_disabled": "Diese Faehigkeit ist derzeit deaktiviert. Bitte wenden Sie sich an einen Administrator.",
     "capability_unknown": "Unbekannte Faehigkeit. Die Aktion kann nicht ausgefuehrt werden.",
+    "totp_required": "Bitte geben Sie Ihren TOTP-Code aus der Authenticator-App ein.",
+    "totp_invalid": "Der TOTP-Code ist ungueltig oder abgelaufen. Bitte versuchen Sie es erneut.",
+    "totp_not_configured": "Fuer Ihren Account ist kein TOTP konfiguriert. Bitte richten Sie die Zwei-Faktor-Authentifizierung ein.",
+    "totp_already_confirmed": "TOTP ist bereits eingerichtet. Loeschen Sie das bestehende Setup, bevor Sie ein neues erstellen.",
+    "totp_pending_invalid": "Der Zwei-Schritt-Login-Token ist ungueltig oder abgelaufen. Bitte melden Sie sich erneut an.",
 }
 
 
