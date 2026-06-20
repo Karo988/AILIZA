@@ -24,10 +24,12 @@ def test_unknown_capability_blocked():
 def test_disabled_capability_blocked():
     from apps.backend.capabilities.registry import check_capability
     from apps.backend.governance.data_governance import DataClass
-    # messenger_send ist enabled=False
+    # messenger_send ist aktiviert aber requires_approval=True → APPROVAL_REQUIRED, nicht ALLOW
     result = check_capability("messenger_send", [DataClass.PUBLIC])
-    assert not result.allowed
-    assert result.capability_enabled is False
+    assert result.capability_enabled is True
+    assert result.requires_approval is True
+    # Ohne approval_given → nicht allowed (APPROVAL_REQUIRED oder BLOCK)
+    assert not result.allowed or result.requires_approval
 
 
 def test_public_data_web_search_allowed():

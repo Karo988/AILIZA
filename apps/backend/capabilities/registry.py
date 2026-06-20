@@ -192,7 +192,7 @@ _CAPABILITIES: dict[str, Capability] = {
         risk_level=RiskLevel.CRITICAL,
         requires_approval=True,
         external_call=True,
-        enabled=False,  # Deaktiviert bis Gateway implementiert
+        enabled=True,   # Gateway implementiert — Opt-in + Capability-Check erzwungen
         gdpr_purpose="Antwortlieferung ueber Messenger-Kanal (nur mit Einwilligung)",
         tags=["messenger", "telegram", "slack", "external", "disabled"],
     ),
