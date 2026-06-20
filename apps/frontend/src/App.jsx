@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import "./App.css"
 import DashboardCard from "./components/DashboardCard"
 import LoginPage from "./components/LoginPage"
-import { getSession, logout, apiFetch, getRole, getUser } from "./api"
+import { getSession, logout, apiFetch } from "./api"
 
 function App() {
   const [session, setSession] = useState(null)          // null = nicht geprüft, false = nicht eingeloggt

@@ -39,7 +39,8 @@ def test_generate_with_mock(monkeypatch):
     importlib.reload(kill_switch)
     import apps.backend.providers.orchestrator as orch_mod
     importlib.reload(orch_mod)
-    o = orch_mod.ProviderOrchestrator(providers={"mock": MockProvider()}, default_provider="mock")
+    # "groq" ist im ProviderProfile-Register registriert (PUBLIC erlaubt)
+    o = orch_mod.ProviderOrchestrator(providers={"groq": MockProvider()}, default_provider="groq")
     assert o.generate([{"role": "user", "content": "hi"}]) == "MOCK_ANSWER"
 
 

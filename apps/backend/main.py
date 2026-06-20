@@ -103,6 +103,54 @@ from fastapi.responses import JSONResponse
 from fastapi import Depends, UploadFile, File
 
 
+# ── CSRF-Schutz: Origin-/Referer-Check fuer Cookie-gestuetzte Requests ────────
+_CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_CSRF_PROTECTED_PREFIXES = (
+    "/auth/logout", "/auth/register", "/admin/", "/skills/propose",
+    "/agent/run", "/feedback", "/documents/", "/messenger/",
+)
+
+
+@app.middleware("http")
+async def csrf_origin_check(request: Request, call_next):
+    """
+    Prueft bei schreibenden Requests mit Cookie-Auth, ob Origin/Referer
+    zur konfigurierten CORS-Origin passt.
+
+    SameSite=Strict allein reicht nicht in allen Browser-Setups.
+    API-Clients mit Bearer-Token sind ausgenommen (kein Cookie gesendet).
+    """
+    if request.method in _CSRF_SAFE_METHODS:
+        return await call_next(request)
+
+    # Nur pruefen wenn Cookie vorhanden (Browser-Flow) und kein Bearer-Header
+    has_cookie = "ailiza_session" in request.cookies
+    has_bearer = request.headers.get("authorization", "").startswith("Bearer ")
+
+    if has_cookie and not has_bearer:
+        path = request.url.path
+        if any(path.startswith(p) for p in _CSRF_PROTECTED_PREFIXES):
+            origin = request.headers.get("origin", "")
+            referer = request.headers.get("referer", "")
+            allowed = os.getenv("AILIZA_CORS_ORIGINS", "*")
+
+            if allowed != "*":
+                allowed_origins = [o.strip() for o in allowed.split(",") if o.strip()]
+                source = origin or referer
+                if source and not any(source.startswith(o) for o in allowed_origins):
+                    write_audit_entry(
+                        action="security.csrf_blocked",
+                        metadata={"path": path, "origin": origin or referer},
+                    )
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": True, "code": "csrf_blocked",
+                                 "message": "Cross-Site-Anfrage abgewiesen."},
+                    )
+
+    return await call_next(request)
+
+
 @app.exception_handler(AILIZAError)
 async def ailiza_error_handler(_request: Request, exc: AILIZAError) -> JSONResponse:
     # Niemals Stack-Trace zum Client. Nur saubere deutsche Meldung.
