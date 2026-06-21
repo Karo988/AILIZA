@@ -1,11 +1,3 @@
-fastapi==0.111.0
-uvicorn==0.29.0
-sqlalchemy==2.0.30
-pydantic==2.7.1
-requests==2.31.0
-beautifulsoup4==4.12.3
-python-dotenv==1.0.1
-tavily-python==0.3.3
-cryptography>=42.0.0
-spacy>=3.7.0
-# After install run: python -m spacy download de_core_news_sm
+# Zeigt auf Full-Stack — für Produktionsumgebungen
+# Für minimale Installation: pip install -r requirements-core.txt
+-r requirements-full.txt
