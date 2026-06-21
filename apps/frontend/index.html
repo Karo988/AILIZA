@@ -10,6 +10,14 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon.svg">
 <title>AILIZA — Ihr autonomer KI-Assistent</title>
+<!-- PWA -->
+<meta name="theme-color" content="#2D5F3F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="AILIZA">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon.svg">
+<!-- API-URL Konfiguration (config.js anpassen) -->
 <script src="/config.js"></script>
 <style>
 :root {
@@ -39,8 +47,6 @@ body{
   display:flex;
   flex-direction:column;
 }
-
-/* ── TOP BAR ── */
 .topbar{
   height:42px;
   background:var(--surface);
@@ -51,638 +57,132 @@ body{
   gap:12px;
   flex-shrink:0;
 }
-.brand{
-  font-weight:700;
-  font-size:14px;
-  letter-spacing:.5px;
-}
+.brand{font-weight:700;font-size:14px;letter-spacing:.5px}
 .brand-mark{color:var(--accent)}
 .brand-sub{font-size:11px;color:var(--text-muted);font-weight:400;margin-left:6px}
-.topbar-status{
-  margin-left:auto;
-  display:flex;
-  align-items:center;
-  gap:10px;
-  font-size:11px;
-}
-.status-dot{
-  display:inline-flex;
-  align-items:center;
-  gap:5px;
-  padding:3px 9px;
-  border-radius:20px;
-  font-weight:500;
-}
+.topbar-status{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:11px}
+.status-dot{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-weight:500}
 .status-ok{background:var(--accent-soft);color:var(--accent)}
 .status-off{background:#FCE8E8;color:var(--err)}
-.deadline-pill{
-  background:var(--warn-soft);
-  color:var(--warn);
-  padding:3px 9px;
-  border-radius:20px;
-  font-weight:500;
-}
-
-/* ── LAYOUT ── */
-.app{
-  flex:1;
-  display:flex;
-  min-height:0;
-}
-
-/* ── SIDEBAR ── */
-.sidebar{
-  width:240px;
-  background:var(--surface);
-  border-right:1px solid var(--border);
-  display:flex;
-  flex-direction:column;
-  flex-shrink:0;
-}
-.side-section{
-  padding:6px 8px;
-}
-.side-section + .side-section{
-  border-top:1px solid var(--border);
-}
-.side-label{
-  font-size:10px;
-  font-weight:600;
-  color:var(--text-muted);
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  padding:8px 10px 4px;
-}
-.side-item{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:7px 10px;
-  border-radius:6px;
-  cursor:pointer;
-  font-size:13px;
-  color:var(--text-soft);
-  user-select:none;
-}
+.deadline-pill{background:var(--warn-soft);color:var(--warn);padding:3px 9px;border-radius:20px;font-weight:500}
+.app{flex:1;display:flex;min-height:0}
+.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.side-section{padding:6px 8px}
+.side-section+.side-section{border-top:1px solid var(--border)}
+.side-label{font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;padding:8px 10px 4px}
+.side-item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text-soft);user-select:none}
 .side-item:hover{background:var(--surface-2)}
 .side-item.active{background:var(--surface-2);color:var(--text);font-weight:500}
 .side-ic{width:14px;text-align:center;flex-shrink:0;font-size:13px}
-.side-count{
-  margin-left:auto;
-  font-size:10px;
-  background:var(--surface-2);
-  color:var(--text-muted);
-  padding:1px 6px;
-  border-radius:10px;
-  font-weight:500;
-}
+.side-count{margin-left:auto;font-size:10px;background:var(--surface-2);color:var(--text-muted);padding:1px 6px;border-radius:10px;font-weight:500}
 .side-item.active .side-count{background:var(--border);color:var(--text-soft)}
-.side-scroll{
-  flex:1;
-  overflow-y:auto;
-}
-.side-list-item{
-  padding:6px 10px 6px 24px;
-  font-size:12px;
-  color:var(--text-soft);
-  cursor:pointer;
-  border-radius:6px;
-  display:flex;
-  align-items:center;
-  gap:8px;
-  position:relative;
-}
+.side-scroll{flex:1;overflow-y:auto}
+.side-list-item{padding:6px 10px 6px 24px;font-size:12px;color:var(--text-soft);cursor:pointer;border-radius:6px;display:flex;align-items:center;gap:8px;position:relative}
 .side-list-item:hover{background:var(--surface-2)}
-.side-list-item .dot{
-  width:5px;
-  height:5px;
-  border-radius:50%;
-  background:var(--text-muted);
-  flex-shrink:0;
-}
+.side-list-item .dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);flex-shrink:0}
 .side-list-item.active .dot{background:var(--accent)}
-.side-list-text{
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-  flex:1;
-}
-.side-list-meta{
-  font-size:10px;
-  color:var(--text-muted);
-  flex-shrink:0;
-}
-.side-add{
-  padding:6px 10px;
-  font-size:11px;
-  color:var(--text-muted);
-  cursor:pointer;
-  border-radius:6px;
-}
+.side-list-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.side-list-meta{font-size:10px;color:var(--text-muted);flex-shrink:0}
+.side-add{padding:6px 10px;font-size:11px;color:var(--text-muted);cursor:pointer;border-radius:6px}
 .side-add:hover{color:var(--text);background:var(--surface-2)}
-.side-footer{
-  border-top:1px solid var(--border);
-  padding:10px 14px;
-  font-size:10px;
-  color:var(--text-muted);
-  text-align:center;
-}
-
-/* ── MAIN ── */
-.main{
-  flex:1;
-  display:flex;
-  flex-direction:column;
-  min-width:0;
-}
-
-/* ── TABS / VIEW SWITCH ── */
+.side-footer{border-top:1px solid var(--border);padding:10px 14px;font-size:10px;color:var(--text-muted);text-align:center}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
 .view{display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden}
 .view.active{display:flex}
-
-/* ── CHAT VIEW ── */
-.chat-header{
-  padding:14px 20px;
-  border-bottom:1px solid var(--border);
-  background:var(--surface);
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex-shrink:0;
-}
-.chat-title{
-  font-size:14px;
-  font-weight:600;
-}
-.chat-subtitle{
-  font-size:11px;
-  color:var(--text-muted);
-}
+.chat-header{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.chat-title{font-size:14px;font-weight:600}
+.chat-subtitle{font-size:11px;color:var(--text-muted)}
 .chat-actions{margin-left:auto;display:flex;gap:6px}
-.btn-mini{
-  border:1px solid var(--border);
-  background:var(--surface);
-  padding:4px 10px;
-  font-size:11px;
-  border-radius:5px;
-  cursor:pointer;
-  color:var(--text-soft);
-}
+.btn-mini{border:1px solid var(--border);background:var(--surface);padding:4px 10px;font-size:11px;border-radius:5px;cursor:pointer;color:var(--text-soft)}
 .btn-mini:hover{background:var(--surface-2)}
-
-.chat-body{
-  flex:1;
-  overflow-y:auto;
-  padding:20px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-}
-.chat-inner{
-  width:100%;
-  max-width:720px;
-  display:flex;
-  flex-direction:column;
-  gap:14px;
-}
-
-.welcome{
-  text-align:center;
-  padding:48px 20px 24px;
-}
-.welcome-h{
-  font-size:22px;
-  font-weight:600;
-  margin-bottom:8px;
-  letter-spacing:-.3px;
-}
-.welcome-sub{
-  font-size:13px;
-  color:var(--text-soft);
-  margin-bottom:24px;
-}
-.welcome-chips{
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-  justify-content:center;
-  max-width:540px;
-  margin:0 auto;
-}
-.chip{
-  background:var(--surface);
-  border:1px solid var(--border);
-  padding:8px 14px;
-  border-radius:20px;
-  font-size:12px;
-  cursor:pointer;
-  color:var(--text-soft);
-}
+.chat-body{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center}
+.chat-inner{width:100%;max-width:720px;display:flex;flex-direction:column;gap:14px}
+.welcome{text-align:center;padding:48px 20px 24px}
+.welcome-h{font-size:22px;font-weight:600;margin-bottom:8px;letter-spacing:-.3px}
+.welcome-sub{font-size:13px;color:var(--text-soft);margin-bottom:24px}
+.welcome-chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-width:540px;margin:0 auto}
+.chip{background:var(--surface);border:1px solid var(--border);padding:8px 14px;border-radius:20px;font-size:12px;cursor:pointer;color:var(--text-soft)}
 .chip:hover{background:var(--surface-2);border-color:var(--border-strong);color:var(--text)}
-
-.msg{
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-}
+.msg{display:flex;flex-direction:column;gap:4px}
 .msg.user{align-items:flex-end}
 .msg.ai{align-items:flex-start}
-.bubble{
-  padding:10px 14px;
-  border-radius:14px;
-  max-width:88%;
-  font-size:13px;
-  line-height:1.6;
-  word-wrap:break-word;
-}
-.bubble.user{
-  background:var(--accent);
-  color:#fff;
-  border-bottom-right-radius:4px;
-}
-.bubble.ai{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-bottom-left-radius:4px;
-}
+.bubble{padding:10px 14px;border-radius:14px;max-width:88%;font-size:13px;line-height:1.6;word-wrap:break-word}
+.bubble.user{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.bubble.ai{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px}
 .bubble.ai strong{color:var(--text)}
-.bubble.ai code{
-  background:var(--surface-2);
-  padding:1px 5px;
-  border-radius:3px;
-  font-size:12px;
-}
-.msg-tags{
-  display:flex;
-  flex-wrap:wrap;
-  gap:4px;
-  max-width:88%;
-}
-.msg-tag{
-  font-size:10px;
-  padding:2px 7px;
-  border-radius:10px;
-  font-weight:500;
-}
+.bubble.ai code{background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:12px}
+.msg-tags{display:flex;flex-wrap:wrap;gap:4px;max-width:88%}
+.msg-tag{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500}
 .tag-ai{background:var(--accent-soft);color:var(--accent)}
 .tag-warn{background:var(--warn-soft);color:var(--warn)}
-.tag-info{background:#E6EEF5;color:#1F4569}
-.msg-meta{
-  font-size:10px;
-  color:var(--text-muted);
-  padding:0 4px;
-}
-
-.typing{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:14px;
-  border-bottom-left-radius:4px;
-  padding:10px 14px;
-  display:flex;
-  gap:4px;
-  align-self:flex-start;
-}
-.typing span{
-  width:5px;
-  height:5px;
-  background:var(--text-muted);
-  border-radius:50%;
-  animation:bounce .8s infinite;
-}
+.msg-meta{font-size:10px;color:var(--text-muted);padding:0 4px}
+.typing{background:var(--surface);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-self:flex-start}
+.typing span{width:5px;height:5px;background:var(--text-muted);border-radius:50%;animation:bounce .8s infinite}
 .typing span:nth-child(2){animation-delay:.15s}
 .typing span:nth-child(3){animation-delay:.3s}
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
-
-/* ── INPUT ── */
-.input-wrap{
-  padding:14px 20px 18px;
-  background:var(--bg);
-  flex-shrink:0;
-}
-.privacy-panel{
-  max-width:720px;
-  margin:0 auto 8px;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:9px 11px;
-  font-size:11px;
-}
-.privacy-head{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:7px;
-}
-.privacy-title{
-  font-weight:700;
-  color:var(--text);
-}
-.privacy-note{
-  color:var(--text-muted);
-}
-.privacy-items{
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-}
-.privacy-pill{
-  border:1px solid var(--border);
-  border-radius:999px;
-  padding:3px 9px;
-  line-height:1.4;
-  max-width:100%;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.privacy-pill.high{
-  background:#FCE8E8;
-  border-color:#D23B3B;
-  color:#8B2424;
-  font-weight:800;
-}
-.privacy-pill.normal{
-  background:#E8F0EA;
-  border-color:#B6D2BD;
-  color:#2D5F3F;
-  font-weight:600;
-}
-.privacy-pill.empty{
-  background:#E8F0EA;
-  border-color:#B6D2BD;
-  color:#2D5F3F;
-}
-.input-box{
-  max-width:720px;
-  margin:0 auto;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:12px;
-  padding:10px 12px;
-  transition:border-color .15s, box-shadow .15s;
-}
-.input-box:focus-within{
-  border-color:var(--border-strong);
-  box-shadow:0 0 0 3px rgba(45,95,63,.06);
-}
-.input-row{
-  display:flex;
-  align-items:flex-end;
-  gap:8px;
-}
-.input-field{
-  flex:1;
-  border:none;
-  outline:none;
-  font-family:inherit;
-  font-size:13px;
-  background:transparent;
-  resize:none;
-  max-height:140px;
-  line-height:1.5;
-  color:var(--text);
-}
+.input-wrap{padding:14px 20px 18px;background:var(--bg);flex-shrink:0}
+.privacy-panel{max-width:720px;margin:0 auto 8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 11px;font-size:11px}
+.privacy-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px}
+.privacy-title{font-weight:700;color:var(--text)}
+.privacy-note{color:var(--text-muted)}
+.privacy-items{display:flex;flex-wrap:wrap;gap:6px}
+.privacy-pill{border:1px solid var(--border);border-radius:999px;padding:3px 9px;line-height:1.4;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.privacy-pill.high{background:#FCE8E8;border-color:#D23B3B;color:#8B2424;font-weight:800}
+.privacy-pill.normal{background:#E8F0EA;border-color:#B6D2BD;color:#2D5F3F;font-weight:600}
+.privacy-pill.empty{background:#E8F0EA;border-color:#B6D2BD;color:#2D5F3F}
+.input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
+.input-box:focus-within{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(45,95,63,.06)}
+.input-row{display:flex;align-items:flex-end;gap:8px}
+.input-field{flex:1;border:none;outline:none;font-family:inherit;font-size:13px;background:transparent;resize:none;max-height:140px;line-height:1.5;color:var(--text)}
 .input-field::placeholder{color:var(--text-muted)}
-.input-send{
-  width:32px;height:32px;
-  background:var(--accent);
-  color:#fff;
-  border:none;
-  border-radius:8px;
-  cursor:pointer;
-  font-size:14px;
-  flex-shrink:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
+.input-send{width:32px;height:32px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
 .input-send:disabled{background:var(--border-strong);cursor:not-allowed}
-.input-toolbar{
-  display:flex;
-  align-items:center;
-  gap:6px;
-  margin-top:8px;
-  padding-top:8px;
-  border-top:1px solid var(--surface-2);
-  font-size:11px;
-}
-.tool-btn{
-  display:flex;
-  align-items:center;
-  gap:5px;
-  padding:4px 9px;
-  border:1px solid transparent;
-  background:transparent;
-  border-radius:5px;
-  cursor:pointer;
-  font-size:11px;
-  color:var(--text-soft);
-}
+.input-toolbar{display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2);font-size:11px}
+.tool-btn{display:flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid transparent;background:transparent;border-radius:5px;cursor:pointer;font-size:11px;color:var(--text-soft)}
 .tool-btn:hover{background:var(--surface-2);color:var(--text)}
 .tool-btn.active{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}
 .tool-sep{flex:1}
-.tool-select{
-  background:transparent;
-  border:1px solid var(--border);
-  padding:3px 8px;
-  border-radius:5px;
-  font-size:11px;
-  font-family:inherit;
-  color:var(--text-soft);
-  cursor:pointer;
-  outline:none;
-}
-
-/* ── PROJEKTE VIEW ── */
-.page-wrap{
-  flex:1;
-  overflow-y:auto;
-  padding:24px 32px;
-}
-.page-head{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  margin-bottom:20px;
-}
-.page-title{
-  font-size:20px;
-  font-weight:600;
-  letter-spacing:-.3px;
-}
-.page-sub{
-  font-size:12px;
-  color:var(--text-muted);
-  margin-top:2px;
-}
-.btn-primary{
-  background:var(--accent);
-  color:#fff;
-  border:none;
-  padding:7px 14px;
-  border-radius:6px;
-  font-size:12px;
-  font-weight:500;
-  cursor:pointer;
-}
+.tool-select{background:transparent;border:1px solid var(--border);padding:3px 8px;border-radius:5px;font-size:11px;font-family:inherit;color:var(--text-soft);cursor:pointer;outline:none}
+.page-wrap{flex:1;overflow-y:auto;padding:24px 32px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px}
+.page-title{font-size:20px;font-weight:600;letter-spacing:-.3px}
+.page-sub{font-size:12px;color:var(--text-muted);margin-top:2px}
+.btn-primary{background:var(--accent);color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer}
 .btn-primary:hover{background:#234a31}
-.grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
-  gap:12px;
-}
-.card{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px;
-}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
 .card-h{font-size:13px;font-weight:600;margin-bottom:4px}
 .card-desc{font-size:12px;color:var(--text-soft);margin-bottom:10px;line-height:1.5}
-.card-meta{
-  display:flex;
-  gap:6px;
-  font-size:10px;
-  flex-wrap:wrap;
-}
-.meta-pill{
-  background:var(--surface-2);
-  color:var(--text-soft);
-  padding:2px 8px;
-  border-radius:10px;
-  font-weight:500;
-}
+.card-meta{display:flex;gap:6px;font-size:10px;flex-wrap:wrap}
+.meta-pill{background:var(--surface-2);color:var(--text-soft);padding:2px 8px;border-radius:10px;font-weight:500}
 .meta-pill.hi{background:var(--warn-soft);color:var(--warn)}
-.meta-pill.del{
-  background:transparent;
-  color:var(--text-muted);
-  cursor:pointer;
-  border:none;
-  margin-left:auto;
-}
+.meta-pill.del{background:transparent;color:var(--text-muted);cursor:pointer;border:none;margin-left:auto}
 .meta-pill.del:hover{color:var(--err)}
-.empty{
-  text-align:center;
-  padding:48px;
-  color:var(--text-muted);
-  font-size:13px;
-}
-
-/* ── STATUS ── */
-.metrics{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
-  gap:10px;
-  margin-bottom:20px;
-}
-.metric{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px;
-}
+.empty{text-align:center;padding:48px;color:var(--text-muted);font-size:13px}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
 .metric-lbl{font-size:11px;color:var(--text-muted);margin-bottom:6px}
 .metric-val{font-size:22px;font-weight:600;letter-spacing:-.3px}
 .metric-val.warn{color:var(--warn)}
 .metric-val.ok{color:var(--accent)}
-
-/* ── MODAL ── */
-.modal{
-  position:fixed;
-  inset:0;
-  background:rgba(20,20,20,.4);
-  display:none;
-  align-items:center;
-  justify-content:center;
-  z-index:100;
-}
+.modal{position:fixed;inset:0;background:rgba(20,20,20,.4);display:none;align-items:center;justify-content:center;z-index:100}
 .modal.open{display:flex}
-.modal-box{
-  background:var(--surface);
-  border-radius:12px;
-  padding:20px;
-  width:90%;
-  max-width:440px;
-}
+.modal-box{background:var(--surface);border-radius:12px;padding:20px;width:90%;max-width:440px}
 .modal-h{font-size:15px;font-weight:600;margin-bottom:14px}
 .field{margin-bottom:10px}
-.field label{
-  display:block;
-  font-size:11px;
-  color:var(--text-muted);
-  margin-bottom:4px;
-}
-.field input,.field textarea,.field select{
-  width:100%;
-  border:1px solid var(--border);
-  border-radius:6px;
-  padding:7px 9px;
-  font-size:12px;
-  font-family:inherit;
-  outline:none;
-  background:var(--surface);
-}
-.field input:focus,.field textarea:focus,.field select:focus{
-  border-color:var(--accent);
-}
-.modal-acts{
-  display:flex;
-  gap:8px;
-  justify-content:flex-end;
-  margin-top:14px;
-}
-.btn-ghost{
-  background:transparent;
-  border:1px solid var(--border);
-  color:var(--text-soft);
-  padding:7px 14px;
-  font-size:12px;
-  border-radius:6px;
-  cursor:pointer;
-}
-
-/* ── KEY POPOVER ── */
-.key-pop{
-  position:absolute;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:8px;
-  padding:12px;
-  box-shadow:0 4px 20px rgba(0,0,0,.08);
-  z-index:50;
-  display:none;
-  width:280px;
-}
+.field label{display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px}
+.field input,.field textarea,.field select{width:100%;border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:12px;font-family:inherit;outline:none;background:var(--surface)}
+.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--accent)}
+.modal-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text-soft);padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer}
+.key-pop{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;box-shadow:0 4px 20px rgba(0,0,0,.08);z-index:50;display:none;width:280px}
 .key-pop.open{display:block}
 .key-pop label{font-size:11px;color:var(--text-muted);margin-bottom:4px;display:block}
-.key-pop input{
-  width:100%;
-  padding:6px 8px;
-  font-size:12px;
-  border:1px solid var(--border);
-  border-radius:5px;
-  outline:none;
-  font-family:inherit;
-}
+.key-pop input{width:100%;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;outline:none;font-family:inherit}
 .key-pop-actions{display:flex;gap:6px;margin-top:8px;justify-content:flex-end}
-
-/* SKILL TILES */
-.skill-tiles{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
-  gap:10px;
-}
-.skill-tile{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px;
-  cursor:pointer;
-  transition:border-color .15s;
-}
+.skill-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.skill-tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s}
 .skill-tile:hover{border-color:var(--accent)}
 .skill-ic{font-size:18px;margin-bottom:8px}
 .skill-n{font-size:13px;font-weight:600;margin-bottom:3px}
@@ -690,118 +190,69 @@ body{
 </style>
 </head>
 <body>
-
-<!-- ── TOP BAR ── -->
 <div class="topbar">
-  <div class="brand">
-    AI<span class="brand-mark">LIZA</span>
-    <span class="brand-sub">v0.4 · KMU · EU-konform</span>
-  </div>
+  <div class="brand">AI<span class="brand-mark">LIZA</span><span class="brand-sub">v0.5 · KMU · EU-konform</span></div>
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
   </div>
 </div>
-
-<!-- ── APP ── -->
 <div class="app">
-
-  <!-- ── SIDEBAR ── -->
   <div class="sidebar">
-
     <div class="side-section">
-      <div class="side-item active" onclick="showView('chat',this)">
-        <span class="side-ic">💬</span><span>Neuer Chat</span>
-      </div>
-      <div class="side-item" onclick="showView('projects',this)">
-        <span class="side-ic">📁</span><span>Projekte</span>
-        <span class="side-count" id="proj-count">0</span>
-      </div>
-      <div class="side-item" onclick="showView('skills',this)">
-        <span class="side-ic">⚡</span><span>Skills</span>
-      </div>
-      <div class="side-item" onclick="showView('status',this)">
-        <span class="side-ic">🛡️</span><span>Compliance</span>
-      </div>
+      <div class="side-item active" onclick="showView('chat',this)"><span class="side-ic">💬</span><span>Neuer Chat</span></div>
+      <div class="side-item" onclick="showView('projects',this)"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
+      <div class="side-item" onclick="showView('skills',this)"><span class="side-ic">⚡</span><span>Skills</span></div>
+      <div class="side-item" onclick="showView('status',this)"><span class="side-ic">🛡️</span><span>Compliance</span></div>
     </div>
-
     <div class="side-section">
       <div class="side-label">Letzte Chats</div>
-      <div class="side-scroll" id="recent-chats" style="max-height:200px">
-        <div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>
-      </div>
+      <div class="side-scroll" id="recent-chats" style="max-height:200px"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div></div>
       <div class="side-add" onclick="newChat()">＋ Neuer Chat</div>
     </div>
-
     <div class="side-section">
       <div class="side-label">Projekte</div>
-      <div id="proj-list" style="max-height:160px;overflow-y:auto">
-        <div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>
-      </div>
+      <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div></div>
       <div class="side-add" onclick="openProjModal()">＋ Neues Projekt</div>
     </div>
-
     <div class="side-section">
       <div class="side-label">Ordner</div>
       <div id="folder-list"></div>
       <div class="side-add" onclick="addFolder()">＋ Ordner</div>
     </div>
-
     <div style="flex:1"></div>
-    <div class="side-footer">
-      AILIZA · EU AI Act Art. 52<br>
-      <span style="color:var(--accent)">Limited Risk · DSGVO</span>
-    </div>
+    <div class="side-footer">AILIZA · EU AI Act Art. 52<br><span style="color:var(--accent)">Limited Risk · DSGVO</span></div>
   </div>
-
-  <!-- ── MAIN ── -->
   <div class="main">
-
-    <!-- ═══ CHAT VIEW ═══ -->
     <div class="view active" id="view-chat">
       <div class="chat-header">
-        <div>
-          <div class="chat-title">Chat mit AILIZA</div>
-          <div class="chat-subtitle">Autonomer KI-Assistent · Antwortet auf Deutsch · DSGVO-konform</div>
-        </div>
+        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 52</div></div>
         <div class="chat-actions">
-          <button class="btn-mini" onclick="clearChat()">🗑 Verlauf löschen</button>
+          <button class="btn-mini" onclick="clearChat()">🗑 Löschen</button>
           <button class="btn-mini" onclick="exportChat()">⬇ Export</button>
         </div>
       </div>
-
-      <div class="chat-body" id="chat-body">
-        <div class="chat-inner" id="chat-inner">
-          <div class="welcome">
-            <div class="welcome-h">Was kann ich für Sie tun?</div>
-            <div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div>
-            <div class="welcome-chips">
-              <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">✉️ E-Mail schreiben</div>
-              <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
-              <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
-              <div class="chip" onclick="quickPrompt('Welcher Tag ist heute?')">📅 Heutiges Datum</div>
-              <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
-              <div class="chip" onclick="quickPrompt('Ist das DSGVO-konform? ')">🔒 DSGVO-Check</div>
-            </div>
+      <div class="chat-body" id="chat-body"><div class="chat-inner" id="chat-inner">
+        <div class="welcome">
+          <div class="welcome-h">Was kann ich für Sie tun?</div>
+          <div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div>
+          <div class="welcome-chips">
+            <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">✉️ E-Mail schreiben</div>
+            <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
+            <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
+            <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
+            <div class="chip" onclick="quickPrompt('Ist das DSGVO-konform? ')">🔒 DSGVO-Check</div>
           </div>
         </div>
-      </div>
-
+      </div></div>
       <div class="input-wrap">
         <div class="privacy-panel" id="privacy-panel">
-          <div class="privacy-head">
-            <span class="privacy-title">DSGVO / EU AI Act Zwischenspeicher</span>
-            <span class="privacy-note" id="privacy-note">Keine sensiblen Daten erkannt</span>
-          </div>
-          <div class="privacy-items" id="privacy-items">
-            <span class="privacy-pill empty">Normal: leer</span>
-          </div>
+          <div class="privacy-head"><span class="privacy-title">DSGVO-Zwischenspeicher</span><span class="privacy-note" id="privacy-note">Keine sensiblen Daten erkannt</span></div>
+          <div class="privacy-items" id="privacy-items"><span class="privacy-pill empty">Normal: leer</span></div>
         </div>
         <div class="input-box">
           <div class="input-row">
-            <textarea class="input-field" id="chat-input" rows="1"
-              placeholder="Tu, was du willst… Drücke Enter zum Senden, Shift+Enter für neue Zeile"
-              onkeydown="handleKey(event)" oninput="autoResize(this); renderPrivacyMemory(this.value)"></textarea>
+            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)"></textarea>
             <button class="input-send" id="send-btn" onclick="sendMessage()">↑</button>
           </div>
           <div class="input-toolbar">
@@ -817,7 +268,6 @@ body{
             </select>
             <select class="tool-select" id="model-sel"></select>
           </div>
-          <!-- Key Popover -->
           <div class="key-pop" id="key-pop">
             <label>API-Key für <span id="key-pop-provider">Groq</span>:</label>
             <input type="password" id="key-pop-input" placeholder="gsk_... oder sk-...">
@@ -829,63 +279,27 @@ body{
         </div>
       </div>
     </div>
-
-    <!-- ═══ PROJEKTE VIEW ═══ -->
     <div class="view" id="view-projects">
       <div class="page-wrap">
-        <div class="page-head">
-          <div>
-            <div class="page-title">Projekte</div>
-            <div class="page-sub">Aufgaben verwalten und Chat-Verläufe zuordnen</div>
-          </div>
-          <button class="btn-primary" onclick="openProjModal()">＋ Neues Projekt</button>
-        </div>
+        <div class="page-head"><div><div class="page-title">Projekte</div><div class="page-sub">Aufgaben verwalten und Chats zuordnen</div></div><button class="btn-primary" onclick="openProjModal()">＋ Neues Projekt</button></div>
         <div class="grid" id="proj-grid"></div>
       </div>
     </div>
-
-    <!-- ═══ SKILLS VIEW ═══ -->
     <div class="view" id="view-skills">
       <div class="page-wrap">
-        <div class="page-head">
-          <div>
-            <div class="page-title">Skills</div>
-            <div class="page-sub">Klicke einen Skill — der Chat startet mit dem passenden Prompt</div>
-          </div>
-        </div>
+        <div class="page-head"><div><div class="page-title">Skills</div><div class="page-sub">Klicke einen Skill — Chat startet mit passendem Prompt</div></div></div>
         <div class="skill-tiles" id="skill-tiles"></div>
       </div>
     </div>
-
-    <!-- ═══ STATUS VIEW ═══ -->
     <div class="view" id="view-status">
       <div class="page-wrap">
-        <div class="page-head">
-          <div>
-            <div class="page-title">Compliance & Status</div>
-            <div class="page-sub">DSGVO und EU AI Act Übersicht</div>
-          </div>
-        </div>
-
+        <div class="page-head"><div><div class="page-title">Compliance & Status</div><div class="page-sub">DSGVO und EU AI Act Übersicht</div></div></div>
         <div class="metrics">
-          <div class="metric">
-            <div class="metric-lbl">Agent-Runs</div>
-            <div class="metric-val" id="m-runs">—</div>
-          </div>
-          <div class="metric">
-            <div class="metric-lbl">Genehmigungen</div>
-            <div class="metric-val warn" id="m-appr">—</div>
-          </div>
-          <div class="metric">
-            <div class="metric-lbl">Compliance</div>
-            <div class="metric-val ok">OK</div>
-          </div>
-          <div class="metric">
-            <div class="metric-lbl">EU AI Act Frist</div>
-            <div class="metric-val warn" id="m-days">—</div>
-          </div>
+          <div class="metric"><div class="metric-lbl">Agent-Runs</div><div class="metric-val" id="m-runs">—</div></div>
+          <div class="metric"><div class="metric-lbl">Genehmigungen</div><div class="metric-val warn" id="m-appr">—</div></div>
+          <div class="metric"><div class="metric-lbl">Compliance</div><div class="metric-val ok">OK</div></div>
+          <div class="metric"><div class="metric-lbl">EU AI Act Frist</div><div class="metric-val warn" id="m-days">—</div></div>
         </div>
-
         <div class="card" style="margin-bottom:12px">
           <div class="card-h">Compliance-Status</div>
           <div style="font-size:12px;color:var(--text-soft);margin-top:8px">
@@ -895,57 +309,26 @@ body{
             <div style="padding:5px 0;color:var(--warn)">⚠ Vollständige Pflichten ab 02.08.2026</div>
           </div>
         </div>
-
-        <div class="card">
-          <div class="card-h">Letzte Agent-Runs</div>
-          <div id="runs-list" style="margin-top:10px">
-            <div class="empty">Lädt…</div>
-          </div>
-        </div>
+        <div class="card"><div class="card-h">Letzte Agent-Runs</div><div id="runs-list" style="margin-top:10px"><div class="empty">Lädt…</div></div></div>
       </div>
     </div>
-
   </div>
 </div>
-
-<!-- ── PROJECT MODAL ── -->
 <div class="modal" id="proj-modal">
   <div class="modal-box">
     <div class="modal-h">Neues Projekt</div>
-    <div class="field">
-      <label>Name</label>
-      <input id="proj-name" type="text" placeholder="z.B. Kundenmailings Q2">
-    </div>
-    <div class="field">
-      <label>Beschreibung</label>
-      <textarea id="proj-desc" rows="3" placeholder="Worum geht es in diesem Projekt?"></textarea>
-    </div>
-    <div class="field">
-      <label>Priorität</label>
-      <select id="proj-prio">
-        <option>Hoch</option>
-        <option selected>Mittel</option>
-        <option>Niedrig</option>
-      </select>
-    </div>
-    <div class="modal-acts">
-      <button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button>
-      <button class="btn-primary" onclick="saveProject()">Erstellen</button>
-    </div>
+    <div class="field"><label>Name</label><input id="proj-name" type="text" placeholder="z.B. Kundenmailings Q2"></div>
+    <div class="field"><label>Beschreibung</label><textarea id="proj-desc" rows="3" placeholder="Worum geht es?"></textarea></div>
+    <div class="field"><label>Priorität</label><select id="proj-prio"><option>Hoch</option><option selected>Mittel</option><option>Niedrig</option></select></div>
+    <div class="modal-acts"><button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button><button class="btn-primary" onclick="saveProject()">Erstellen</button></div>
   </div>
 </div>
-
 <script>
-const API = window.AILIZA_API || `${location.protocol}//${location.hostname}:8000`;
+// API-URL: aus config.js geladen (window.AILIZA_API), Fallback auf gleichen Host
+const API = window.AILIZA_API || `http://${location.hostname}:8000`;
 
-const MODELS = {
-  groq: ["llama3-70b-8192","llama3-8b-8192","mixtral-8x7b-32768"],
-  anthropic: ["claude-haiku-4-5","claude-sonnet-4-6","claude-opus-4-6"],
-  openai: ["gpt-4o-mini","gpt-4o","gpt-3.5-turbo"],
-  mistral: ["mistral-small-latest","mistral-large-latest"],
-};
-
-const SKILLS = [
+const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
+const SKILLS=[
   {ic:"✉️",n:"E-Mail verfassen",d:"Professionelle E-Mail",p:"Schreibe eine professionelle E-Mail: "},
   {ic:"📝",n:"Zusammenfassen",d:"Text zusammenfassen",p:"Fasse zusammen: "},
   {ic:"🌍",n:"Übersetzen",d:"DE/EN/FR/ES/IT",p:"Übersetze ins Englische: "},
@@ -955,527 +338,139 @@ const SKILLS = [
   {ic:"🔒",n:"DSGVO-Check",d:"Datenschutz prüfen",p:"Ist das DSGVO-konform? "},
   {ic:"⚖️",n:"EU AI Act",d:"KI-Compliance",p:"Prüfe EU AI Act für: "},
 ];
-
-let chatHistory = JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
-let projects = JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
-let folders = JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
-let tools = JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
-let context = [];
-
-const PRIVACY_RULES = [
-  {level:"high", label:"Gesundheit", pattern:/\b(?:diagnose|krankheit|krank|patient|patientin|medikament|therapie|arzt|aerztin|klinik|blutdruck|diabetes|depression|schwanger|krankenversicherung)\b/gi},
-  {level:"high", label:"Religion", pattern:/\b(?:religion|kirche|muslim|christ|juedisch|jude|atheist)\b/gi},
-  {level:"high", label:"Politik/Gewerkschaft", pattern:/\b(?:partei|politisch|wahlentscheidung|gewerkschaft)\b/gi},
-  {level:"high", label:"Biometrie", pattern:/\b(?:fingerabdruck|gesichtserkennung|biometrisch|iris)\b/gi},
-  {level:"high", label:"Ausweis/Steuer-ID", pattern:/\b(?:ausweisnummer|reisepass|personalausweis|steuer-id|steueridentifikationsnummer|sozialversicherungsnummer)\b[\w .:-]*/gi},
-  {level:"high", label:"IBAN", pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
-  {level:"normal", label:"E-Mail", pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
-  {level:"normal", label:"Telefon", pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
-  {level:"normal", label:"Name", pattern:/\b(?:mein name ist|ich heisse|ich heiße)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)?/g},
-  {level:"normal", label:"Adresse", pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:strasse|straße|weg|platz|allee)\s+\d+[a-z]?\b/gi},
-  {level:"normal", label:"Geburtsdatum", pattern:/\b(?:geburtsdatum|geboren am|geburtstag)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{2,4}\b/gi},
-  {level:"normal", label:"Firma", pattern:/\b(?:firma|arbeitgeber|unternehmen)\s*:?\s+[A-ZÄÖÜ][A-Za-z0-9ÄÖÜäöüß .&-]{2,}\b/g},
+let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
+let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
+let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
+let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
+let context=[];
+const PRIVACY_RULES=[
+  {level:"high",label:"Gesundheit",pattern:/\b(?:diagnose|krankheit|patient|medikament|therapie|arzt|diabetes|depression|schwanger)\b/gi},
+  {level:"high",label:"IBAN",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
+  {level:"normal",label:"E-Mail",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
+  {level:"normal",label:"Telefon",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
+  {level:"normal",label:"Name",pattern:/\b(?:mein name ist|ich heiße)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+/g},
+  {level:"normal",label:"Adresse",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|weg|platz)\s+\d+/gi},
 ];
-
-// ── INIT ──
 function init(){
-  // Deadline
-  const days = Math.max(0, Math.round((new Date("2026-08-02") - new Date())/86400000));
-  document.getElementById("deadline-pill").textContent = days+" Tage bis EU AI Act";
-  document.getElementById("m-days").textContent = days;
-
-  updateModels();
-  renderRecent();
-  renderProjects();
-  renderProjectList();
-  renderFolders();
-  renderSkills();
-  renderTools();
-  loadHistory();
-  renderPrivacyMemory();
-  checkStatus();
-  setInterval(checkStatus, 15000);
+  const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
+  document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
+  document.getElementById("m-days").textContent=days;
+  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();
+  setInterval(checkStatus,15000);
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
-
-function showView(name, el){
+function showView(name,el){
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
   document.getElementById("view-"+name).classList.add("active");
-  if(el) el.classList.add("active");
-  if(name==="status") loadStatus();
-  if(name==="projects") renderProjects();
-  if(name==="skills") renderSkills();
+  if(el)el.classList.add("active");
+  if(name==="status")loadStatus();
+  if(name==="projects")renderProjects();
+  if(name==="skills")renderSkills();
 }
-
 function updateModels(){
-  const p = document.getElementById("provider-sel").value;
-  const sel = document.getElementById("model-sel");
-  sel.innerHTML = MODELS[p].map(m=>`<option>${m}</option>`).join("");
-  document.getElementById("key-pop-provider").textContent =
-    p.charAt(0).toUpperCase()+p.slice(1);
-  const saved = localStorage.getItem("ailiza_key_"+p);
-  document.getElementById("key-pop-input").value = saved || "";
+  const p=document.getElementById("provider-sel").value;
+  document.getElementById("model-sel").innerHTML=MODELS[p].map(m=>`<option>${m}</option>`).join("");
+  document.getElementById("key-pop-provider").textContent=p.charAt(0).toUpperCase()+p.slice(1);
+  document.getElementById("key-pop-input").value=localStorage.getItem("ailiza_key_"+p)||"";
 }
-
-function toggleKeyPop(e){
-  if(e) e.stopPropagation();
-  document.getElementById("key-pop").classList.toggle("open");
-}
-function saveKey(){
-  const p = document.getElementById("provider-sel").value;
-  const k = document.getElementById("key-pop-input").value.trim();
-  if(k) localStorage.setItem("ailiza_key_"+p, k);
-  toggleKeyPop();
-}
-
-function toggleTool(name){
-  tools[name] = !tools[name];
-  localStorage.setItem("ailiza_tools", JSON.stringify(tools));
-  renderTools();
-}
-function renderTools(){
-  document.getElementById("tool-search").classList.toggle("active", tools.search);
-  document.getElementById("tool-auto").classList.toggle("active", tools.auto);
-}
-
-function escapeHtml(value){
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function normalizePrivacyValue(value){
-  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 90);
-}
-
-function detectPrivacyItems(currentInput=""){
-  const chunks = [];
-  chatHistory.forEach(m => {
-    if(m && m.content) chunks.push(m.content);
-  });
-  context.forEach(m => {
-    if(m && m.content) chunks.push(m.content);
-  });
-  if(currentInput && currentInput.trim()) chunks.push(currentInput);
-
-  const source = chunks.join("\n");
-  const seen = new Set();
-  const items = [];
-
-  for(const rule of PRIVACY_RULES){
-    rule.pattern.lastIndex = 0;
-    let match;
-    while((match = rule.pattern.exec(source)) !== null){
-      const value = normalizePrivacyValue(match[0]);
-      if(value.length < 2) continue;
-      const key = `${rule.level}:${rule.label}:${value.toLowerCase()}`;
-      if(!seen.has(key)){
-        seen.add(key);
-        items.push({level:rule.level, label:rule.label, value});
-      }
-      if(items.length >= 18) return items;
-      if(match.index === rule.pattern.lastIndex) rule.pattern.lastIndex++;
-    }
-  }
-
+function toggleKeyPop(e){if(e)e.stopPropagation();document.getElementById("key-pop").classList.toggle("open")}
+function saveKey(){const p=document.getElementById("provider-sel").value;const k=document.getElementById("key-pop-input").value.trim();if(k)localStorage.setItem("ailiza_key_"+p,k);toggleKeyPop()}
+function toggleTool(n){tools[n]=!tools[n];localStorage.setItem("ailiza_tools",JSON.stringify(tools));renderTools()}
+function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
+function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function detectPrivacyItems(inp=""){
+  const src=[...chatHistory.map(m=>m.content||""),inp].join("\n");
+  const seen=new Set();const items=[];
+  for(const r of PRIVACY_RULES){r.pattern.lastIndex=0;let m;while((m=r.pattern.exec(src))!==null){const v=m[0].trim().slice(0,90);const k=r.level+":"+r.label+":"+v.toLowerCase();if(!seen.has(k)&&v.length>1){seen.add(k);items.push({level:r.level,label:r.label,value:v})}if(items.length>=12)return items;if(m.index===r.pattern.lastIndex)r.pattern.lastIndex++}}
   return items;
 }
-
-function renderPrivacyMemory(currentInput=""){
-  const note = document.getElementById("privacy-note");
-  const list = document.getElementById("privacy-items");
-  if(!note || !list) return;
-
-  const items = detectPrivacyItems(currentInput);
-  const highCount = items.filter(item => item.level === "high").length;
-  const normalCount = items.filter(item => item.level === "normal").length;
-
-  if(!items.length){
-    note.textContent = "Keine sensiblen Daten erkannt";
-    list.innerHTML = '<span class="privacy-pill empty">Normal: leer</span>';
-    return;
-  }
-
-  note.textContent = `${highCount} hochsensibel, ${normalCount} normal`;
-  list.innerHTML = items.map(item => {
-    const levelText = item.level === "high" ? "Hochsensibel" : "Normal";
-    return `<span class="privacy-pill ${item.level}">${levelText}: ${escapeHtml(item.label)} - ${escapeHtml(item.value)}</span>`;
-  }).join("");
+function renderPrivacyMemory(inp=""){
+  const note=document.getElementById("privacy-note");const list=document.getElementById("privacy-items");
+  const items=detectPrivacyItems(inp);
+  if(!items.length){note.textContent="Keine sensiblen Daten erkannt";list.innerHTML='<span class="privacy-pill empty">Normal: leer</span>';return}
+  const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
+  note.textContent=`${h} hochsensibel, ${n} normal`;
+  list.innerHTML=items.map(i=>`<span class="privacy-pill ${i.level}">${i.level==="high"?"Hochsensibel":"Normal"}: ${escapeHtml(i.label)} — ${escapeHtml(i.value)}</span>`).join("");
 }
-
-function quickPrompt(text){
-  const inp = document.getElementById("chat-input");
-  inp.value = text;
-  inp.focus();
-  autoResize(inp);
-  // Wenn vollständig → direkt senden
-  if(!text.endsWith(": ") && !text.endsWith("? ")) sendMessage();
-}
-
-function renderSkills(){
-  document.getElementById("skill-tiles").innerHTML = SKILLS.map(s=>`
-    <div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}');">
-      <div class="skill-ic">${s.ic}</div>
-      <div class="skill-n">${s.n}</div>
-      <div class="skill-d">${s.d}</div>
-    </div>`).join("");
-}
-
-function renderFolders(){
-  const list = document.getElementById("folder-list");
-  list.innerHTML = folders.map((f,i)=>`
-    <div class="side-list-item">
-      <span class="dot"></span>
-      <span class="side-list-text">${f}</span>
-      <span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span>
-    </div>`).join("");
-}
-function addFolder(){
-  const n = prompt("Ordnername:");
-  if(!n) return;
-  folders.push(n);
-  localStorage.setItem("ailiza_folders", JSON.stringify(folders));
-  renderFolders();
-}
-function deleteFolder(i){
-  folders.splice(i,1);
-  localStorage.setItem("ailiza_folders", JSON.stringify(folders));
-  renderFolders();
-}
-
+function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
+function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
+function renderFolders(){document.getElementById("folder-list").innerHTML=folders.map((f,i)=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${f}</span><span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span></div>`).join("")}
+function addFolder(){const n=prompt("Ordnername:");if(!n)return;folders.push(n);localStorage.setItem("ailiza_folders",JSON.stringify(folders));renderFolders()}
+function deleteFolder(i){folders.splice(i,1);localStorage.setItem("ailiza_folders",JSON.stringify(folders));renderFolders()}
 function renderRecent(){
-  const chats = JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-  const el = document.getElementById("recent-chats");
-  if(chats.length === 0){
-    el.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>';
-    return;
-  }
-  el.innerHTML = chats.slice(-10).reverse().map(c=>`
-    <div class="side-list-item" onclick="loadChat('${c.id}')">
-      <span class="dot"></span>
-      <span class="side-list-text">${c.name}</span>
-    </div>`).join("");
+  const chats=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const el=document.getElementById("recent-chats");
+  if(!chats.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>';return}
+  el.innerHTML=chats.slice(-10).reverse().map(c=>`<div class="side-list-item" onclick="loadChat('${c.id}')"><span class="dot"></span><span class="side-list-text">${c.name}</span></div>`).join("");
 }
-
-function loadChat(id){
-  const list = JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-  const chat = list.find(c=>c.id===id);
-  if(!chat) return;
-  chatHistory = chat.messages || [];
-  context = chatHistory.map(m=>({role: m.role==="ai"?"assistant":m.role, content:m.content}));
-  showView('chat', document.querySelector('.side-section .side-item'));
-  renderChat();
-  renderPrivacyMemory();
-}
-
-function newChat(){
-  saveCurrentChat();
-  chatHistory = []; context = [];
-  localStorage.setItem("ailiza_chat", "[]");
-  renderChat();
-  renderPrivacyMemory();
-  showView('chat', document.querySelector('.side-section .side-item'));
-}
-
-function clearChat(){
-  if(!confirm("Chat-Verlauf wirklich löschen?")) return;
-  chatHistory = []; context = [];
-  localStorage.setItem("ailiza_chat", "[]");
-  renderChat();
-  renderPrivacyMemory();
-}
-
-function exportChat(){
-  const text = chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n");
-  const blob = new Blob([text], {type:"text/plain"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "ailiza-chat-"+Date.now()+".txt";
-  a.click();
-}
-
-function saveCurrentChat(){
-  if(chatHistory.length === 0) return;
-  const list = JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-  const id = Date.now().toString();
-  const name = (chatHistory.find(m=>m.role==="user")?.content || "Chat").slice(0,40);
-  list.push({id, name, messages: chatHistory});
-  localStorage.setItem("ailiza_chat_list", JSON.stringify(list.slice(-30)));
-  renderRecent();
-}
-
+function loadChat(id){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");const chat=list.find(c=>c.id===id);if(!chat)return;chatHistory=chat.messages||[];context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));showView('chat',document.querySelector('.side-section .side-item'));renderChat();renderPrivacyMemory()}
+function newChat(){saveCurrentChat();chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");renderChat();renderPrivacyMemory();showView('chat',document.querySelector('.side-section .side-item'))}
+function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");renderChat();renderPrivacyMemory()}
+function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n")],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ailiza-chat-"+Date.now()+".txt";a.click()}
+function saveCurrentChat(){if(!chatHistory.length)return;const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");const id=Date.now().toString();const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);list.push({id,name,messages:chatHistory});localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));renderRecent()}
 function renderChat(){
-  const inner = document.getElementById("chat-inner");
-  if(chatHistory.length === 0){
-    inner.innerHTML = `
-      <div class="welcome">
-        <div class="welcome-h">Was kann ich für Sie tun?</div>
-        <div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div>
-        <div class="welcome-chips">
-          <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">✉️ E-Mail schreiben</div>
-          <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
-          <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
-          <div class="chip" onclick="quickPrompt('Welcher Tag ist heute?')">📅 Heutiges Datum</div>
-          <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
-        </div>
-      </div>`;
-    return;
-  }
-  inner.innerHTML = chatHistory.slice(-50).map(m=>renderMsg(m)).join("");
-  scrollToBottom();
+  const inner=document.getElementById("chat-inner");
+  if(!chatHistory.length){inner.innerHTML=`<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt('Schreibe eine E-Mail: ')">✉️ E-Mail</div><div class="chip" onclick="quickPrompt('Übersetze: ')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt('Fasse zusammen: ')">📝 Zusammenfassen</div></div></div>`;return}
+  inner.innerHTML=chatHistory.slice(-50).map(m=>renderMsg(m)).join("");scrollToBottom();
 }
-
 function renderMsg(m){
-  const text = (m.content||"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
-  if(m.role === "user"){
-    return `<div class="msg user"><div class="bubble user">${text}</div></div>`;
-  }
-  let tags = '<span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>';
-  if(m.warn) tags += `<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`;
-  const time = m.time ? new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) : "";
-  return `<div class="msg ai">
-    <div class="bubble ai">${text}</div>
-    <div class="msg-tags">${tags}</div>
-    <div class="msg-meta">AILIZA · ${time}</div>
-  </div>`;
+  const text=(m.content||"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
+  if(m.role==="user")return`<div class="msg user"><div class="bubble user">${text}</div></div>`;
+  const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
+  return`<div class="msg ai"><div class="bubble ai">${text}</div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
-
-function loadHistory(){
-  if(chatHistory.length === 0) return;
-  context = chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
-  renderChat();
-}
-
-function scrollToBottom(){
-  const body = document.getElementById("chat-body");
-  body.scrollTop = body.scrollHeight;
-}
-
-function showTyping(){
-  const inner = document.getElementById("chat-inner");
-  if(document.getElementById("typing")) return;
-  const d = document.createElement("div");
-  d.id = "typing";
-  d.className = "msg ai";
-  d.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
-  inner.appendChild(d);
-  scrollToBottom();
-}
-function hideTyping(){ document.getElementById("typing")?.remove() }
-
+function loadHistory(){if(!chatHistory.length)return;context=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));renderChat()}
+function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
+function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
+function hideTyping(){document.getElementById("typing")?.remove()}
 async function sendMessage(){
-  const inp = document.getElementById("chat-input");
-  const text = inp.value.trim();
-  if(!text) return;
-  inp.value = ""; autoResize(inp);
-  document.getElementById("send-btn").disabled = true;
-
-  // Welcome entfernen wenn vorhanden
-  if(chatHistory.length === 0) document.getElementById("chat-inner").innerHTML = "";
-
-  chatHistory.push({role:"user", content:text, time:new Date().toISOString()});
-  document.getElementById("chat-inner").innerHTML += renderMsg({role:"user",content:text});
-  renderPrivacyMemory();
-  scrollToBottom();
-
-  const provider = document.getElementById("provider-sel").value;
-  const model = document.getElementById("model-sel").value;
-  const apiKey = localStorage.getItem("ailiza_key_"+provider) || "";
-
+  const inp=document.getElementById("chat-input");
+  const text=inp.value.trim();if(!text)return;
+  inp.value="";autoResize(inp);
+  document.getElementById("send-btn").disabled=true;
+  if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
+  chatHistory.push({role:"user",content:text,time:new Date().toISOString()});
+  document.getElementById("chat-inner").innerHTML+=renderMsg({role:"user",content:text});
+  renderPrivacyMemory();scrollToBottom();
+  const provider=document.getElementById("provider-sel").value;
+  const model=document.getElementById("model-sel").value;
+  const apiKey=localStorage.getItem("ailiza_key_"+provider)||"";
   showTyping();
-
   try{
-    // Versuche LLM-Chat wenn Key vorhanden
     if(apiKey){
-      const r = await fetch(`${API}/llm/chat`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({message:text, provider, model, api_key:apiKey, context})
-      });
+      const r=await fetch(`${API}/llm/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:text,provider,model,api_key:apiKey,context})});
       hideTyping();
-      if(r.ok){
-        const d = await r.json();
-        const reply = d.text || d.response || d.message || "(keine Antwort)";
-        addAiMessage(reply);
-        context.push({role:"user",content:text});
-        context.push({role:"assistant",content:reply});
-        if(context.length > 20) context = context.slice(-20);
-      } else {
-        // Fallback: Web-Suche
-        await runAgent(text);
-      }
-    } else if(tools.search){
-      await runAgent(text);
-    } else {
-      hideTyping();
-      addAiMessage("Bitte gib einen API-Key ein (🔑 unten) oder aktiviere die Web-Suche.", "Kein API-Key gesetzt");
-    }
-  } catch(e){
-    hideTyping();
-    addAiMessage("Backend nicht erreichbar. Bitte Server prüfen.", "Verbindungsfehler: "+e.message);
-  }
-
-  document.getElementById("send-btn").disabled = false;
-  inp.focus();
+      if(r.ok){const d=await r.json();const reply=d.text||d.response||d.message||"(keine Antwort)";addAiMessage(reply);context.push({role:"user",content:text},{role:"assistant",content:reply});if(context.length>20)context=context.slice(-20);}else{await runAgent(text);}
+    }else if(tools.search){await runAgent(text);}
+    else{hideTyping();addAiMessage("Bitte gib einen API-Key ein (🔑 unten) oder aktiviere die Web-Suche.","Kein API-Key");}
+  }catch(e){hideTyping();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
+  document.getElementById("send-btn").disabled=false;
+  document.getElementById("chat-input").focus();
 }
-
 async function runAgent(text){
-  const r = await fetch(`${API}/agent/run`,{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({task:text})
-  });
+  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({task:text})});
   hideTyping();
-  if(!r.ok){
-    addAiMessage("Suche fehlgeschlagen.","HTTP "+r.status);
-    return;
-  }
-  const data = await r.json();
-  // Wenn Backend bereits einen LLM-zusammengefassten Text liefert
-  let answer = data.ai_response || "";
-  if(data.message && data.message !== "Agent run completed") answer = data.message;
-  if(!answer){
-    // Aus den Results extrahieren
-    if(data.results){
-      for(const res of data.results){
-        const sources = [res.result || {}, res.summary || {}];
-        for(const s of sources){
-          if(s.summary){ answer += s.summary + " "; }
-          else if(s.top_results && s.top_results.length){
-            const t = s.top_results[0];
-            answer += (t.title||"") + ": " + (t.content||"").slice(0,300) + " ";
-          }
-        }
-      }
-    }
-  }
-  if(!answer.trim()) answer = "Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
+  if(!r.ok){addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
+  const data=await r.json();
+  let answer=data.ai_response||"";
+  if(data.message&&data.message!=="Agent run completed")answer=data.message;
+  if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
+  if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
   addAiMessage(answer.trim());
 }
-
-function addAiMessage(text, warn){
-  const msg = {role:"ai", content:text, time:new Date().toISOString()};
-  if(warn) msg.warn = warn;
-  chatHistory.push(msg);
-  localStorage.setItem("ailiza_chat", JSON.stringify(chatHistory.slice(-100)));
-  document.getElementById("chat-inner").innerHTML += renderMsg(msg);
-  renderPrivacyMemory();
-  scrollToBottom();
-}
-
-function handleKey(e){
-  if(e.key === "Enter" && !e.shiftKey){
-    e.preventDefault();
-    sendMessage();
-  }
-}
-function autoResize(el){
-  el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, 140) + "px";
-}
-
-// ── PROJECTS ──
-function openProjModal(){ document.getElementById("proj-modal").classList.add("open") }
-function closeProjModal(){ document.getElementById("proj-modal").classList.remove("open") }
-function saveProject(){
-  const name = document.getElementById("proj-name").value.trim();
-  if(!name) return;
-  projects.push({
-    id:Date.now(),
-    name,
-    desc:document.getElementById("proj-desc").value,
-    prio:document.getElementById("proj-prio").value,
-    created:new Date().toISOString(),
-    tasks:[],
-    chats:[]
-  });
-  localStorage.setItem("ailiza_projects", JSON.stringify(projects));
-  closeProjModal();
-  renderProjects();
-  renderProjectList();
-  document.getElementById("proj-name").value = "";
-  document.getElementById("proj-desc").value = "";
-}
-function deleteProject(i){
-  if(!confirm("Projekt wirklich löschen?")) return;
-  projects.splice(i,1);
-  localStorage.setItem("ailiza_projects", JSON.stringify(projects));
-  renderProjects();
-  renderProjectList();
-}
-function renderProjects(){
-  document.getElementById("proj-count").textContent = projects.length;
-  const grid = document.getElementById("proj-grid");
-  if(projects.length === 0){
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">Noch keine Projekte. Erstelle eines, um Aufgaben und Chats zu gruppieren.</div>';
-    return;
-  }
-  grid.innerHTML = projects.map((p,i)=>`
-    <div class="card">
-      <div class="card-h">${p.name}</div>
-      <div class="card-desc">${p.desc || "Keine Beschreibung"}</div>
-      <div class="card-meta">
-        <span class="meta-pill ${p.prio==='Hoch'?'hi':''}">${p.prio}</span>
-        <span class="meta-pill">${new Date(p.created).toLocaleDateString('de-DE')}</span>
-        <span class="meta-pill">${(p.chats||[]).length} Chats</span>
-        <button class="meta-pill del" onclick="deleteProject(${i})">✕</button>
-      </div>
-    </div>`).join("");
-}
-function renderProjectList(){
-  const el = document.getElementById("proj-list");
-  if(projects.length === 0){
-    el.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';
-    return;
-  }
-  el.innerHTML = projects.slice(-8).map(p=>`
-    <div class="side-list-item">
-      <span class="dot"></span>
-      <span class="side-list-text">${p.name}</span>
-    </div>`).join("");
-}
-
-// ── STATUS ──
-async function checkStatus(){
-  const b = document.getElementById("conn-status");
-  try{
-    const r = await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});
-    if(r.ok){ b.textContent = "● System aktiv"; b.className = "status-dot status-ok"; }
-  } catch{ b.textContent = "○ Offline"; b.className = "status-dot status-off"; }
-}
-async function loadStatus(){
-  try{
-    const [ar,ap] = await Promise.all([
-      fetch(`${API}/agent/runs`).then(r=>r.json()),
-      fetch(`${API}/approvals`).then(r=>r.json())
-    ]);
-    const runs = Array.isArray(ar) ? ar : [];
-    const apprs = Array.isArray(ap) ? ap : [];
-    document.getElementById("m-runs").textContent = runs.length;
-    document.getElementById("m-appr").textContent = apprs.length;
-    document.getElementById("runs-list").innerHTML = runs.length === 0
-      ? '<div class="empty">Keine Runs</div>'
-      : runs.slice(0,10).map(r=>`
-        <div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px;align-items:center">
-          <span style="width:6px;height:6px;border-radius:50%;background:${r.status==='completed'?'var(--accent)':'var(--warn)'}"></span>
-          <span style="flex:1">${(r.task||"").slice(0,80)}</span>
-          <span style="color:var(--text-muted);font-size:11px">${r.status}</span>
-        </div>`).join("");
-  } catch{}
-}
-
-// Click outside to close key pop
-document.addEventListener("click", e=>{
-  const pop = document.getElementById("key-pop");
-  if(pop.classList.contains("open") && !pop.contains(e.target)
-     && !e.target.closest("button[onclick*='toggleKeyPop']")){
-    pop.classList.remove("open");
-  }
-});
-
+function addAiMessage(text,warn){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
+function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
+function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
+function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
+function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
+function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});localStorage.setItem("ailiza_projects",JSON.stringify(projects));closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
+function deleteProject(i){if(!confirm("Löschen?"))return;projects.splice(i,1);localStorage.setItem("ailiza_projects",JSON.stringify(projects));renderProjects();renderProjectList()}
+function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card"><div class="card-h">${p.name}</div><div class="card-desc">${p.desc||""}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${p.prio}</span><button class="meta-pill del" onclick="deleteProject(${i})">✕</button></div></div>`).join("")}
+function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${p.name}</span></div>`).join("")}
+async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
+async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
+document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 init();
 
 if ('serviceWorker' in navigator) {

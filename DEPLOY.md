@@ -1,87 +1,102 @@
-# AILIZA — Deployment-Anleitung
+# AILIZA deployen — All-Inkl + Render.com
 
 ## Überblick
 
-| Teil | Wo | Warum |
-|------|----|-------|
-| Backend (Python/FastAPI) | [Render.com](https://render.com) (kostenlos) | All-Inkl kann kein Python |
-| Frontend (HTML/JS) | All-Inkl (Ihr Webspace) | Statische Dateien, HTTPS vorhanden |
+| Teil | Dienst | Dauer |
+|---|---|---|
+| Backend (Python/KI) | Render.com (kostenlos) | ~5 Min |
+| Frontend (Website) | All-Inkl (Ihr Hosting) | ~2 Min |
 
 ---
 
-## Schritt 1 — Backend auf Render.com deployen
+## Schritt 1 — Backend auf Render.com
 
-1. Gehen Sie zu [render.com](https://render.com) → **New** → **Web Service**
-2. GitHub-Repo verbinden: `karo988/ailiza`
-3. Branch: `claude/compassionate-hopper-fre2o0`
-4. Render erkennt `render.yaml` automatisch → einfach **Deploy** klicken
-5. Nach ~2 Minuten: URL kopieren, z.B. `https://ailiza-backend.onrender.com`
+1. **render.com** aufrufen → kostenlosen Account erstellen
+2. "New" → **"Web Service"** → **"Connect a Git repository"**
+3. GitHub-Account verbinden → Repository **karo988/ailiza** auswählen
+4. Einstellungen werden automatisch aus `render.yaml` geladen
+5. Optional: Unter "Environment" Ihren `GROQ_API_KEY` eintragen
+6. **"Deploy Web Service"** klicken
+7. Nach ~3 Minuten erscheint Ihre URL, z.B.:
+   ```
+   https://ailiza-backend.onrender.com
+   ```
+   → Diese URL kopieren!
 
-**Optionale Umgebungsvariablen in Render (Dashboard → Environment):**
-- `AILIZA_ALLOWED_ORIGINS` = `https://ihre-domain.de` (Ihre All-Inkl-Domain)
-- `GROQ_API_KEY` = Ihr Groq-Key (kostenlos auf groq.com)
-- `AILIZA_EXTERNAL_LLM_ENABLED` = `true` (erst setzen wenn API-Key vorhanden)
+> **Hinweis:** Im Render Free-Tier schläft der Server nach 15 Min Inaktivität ein.
+> Erste Anfrage dauert ~30 Sek. Für dauerhaften Betrieb: Render Starter ($7/Mo).
 
 ---
 
 ## Schritt 2 — config.js anpassen
 
-Datei `apps/frontend/config.js` öffnen und die Zeile eintragen:
+Datei `apps/frontend/config.js` öffnen und Ihre Render-URL eintragen:
 
-```javascript
+```js
 window.AILIZA_API = "https://ailiza-backend.onrender.com";
 ```
-
-(URL durch Ihre echte Render-URL ersetzen)
 
 ---
 
 ## Schritt 3 — Frontend auf All-Inkl hochladen
 
-Per FTP (z.B. FileZilla) diese 5 Dateien in Ihr Webspace-Verzeichnis (`/html/` oder `/www/`) hochladen:
+### Per FTP (FileZilla o.ä.)
+
+1. FTP-Zugangsdaten aus All-Inkl KAS holen
+2. In FileZilla verbinden
+3. Folgenden Ordner auf Ihren Webspace hochladen (in `public_html/` oder `/`):
 
 ```
-apps/frontend/index.html    → /html/index.html
-apps/frontend/config.js     → /html/config.js
-apps/frontend/manifest.json → /html/manifest.json
-apps/frontend/sw.js         → /html/sw.js
-apps/frontend/icon.svg      → /html/icon.svg
+apps/frontend/
+├── index.html       ← Hauptdatei
+├── config.js        ← API-URL (angepasst in Schritt 2)
+├── manifest.json    ← PWA
+├── sw.js            ← Service Worker
+└── icon.svg         ← App-Icon
 ```
+
+### Per All-Inkl Dateimanager (KAS)
+
+1. All-Inkl KAS aufrufen → "Dateimanager"
+2. In den `www`-Ordner Ihrer Domain wechseln
+3. Dateien einzeln hochladen (5 Dateien)
 
 ---
 
-## Schritt 4 — Als App auf dem Handy installieren
+## Schritt 4 — Fertig!
 
-### Android (Chrome):
-1. `https://ihre-domain.de` im Chrome öffnen
-2. Menü (3 Punkte) → **"Zum Startbildschirm hinzufügen"**
-3. AILIZA erscheint als App-Icon
-
-### iPhone (Safari):
-1. `https://ihre-domain.de` in Safari öffnen
-2. Teilen-Symbol → **"Zum Home-Bildschirm"**
-
----
-
-## Lokal testen (ohne Hosting)
-
-```bash
-# Windows:
-start.bat
-
-# Mac/Linux:
-./start.sh
+Ihre AILIZA-Adresse:
+```
+https://ihre-domain.de
 ```
 
-Dann im Browser: `http://localhost:8000`
+### Auf dem Handy installieren
 
-Auf dem Handy (gleiches WLAN): `http://192.168.x.x:8000`
+1. Chrome auf dem Handy öffnen
+2. `https://ihre-domain.de` aufrufen
+3. Chrome fragt automatisch: **"App installieren"** → Tippen
+4. AILIZA erscheint als Icon auf dem Homescreen
+
+> Mit HTTPS (All-Inkl hat kostenloses SSL) zeigt Chrome das Install-Banner automatisch!
 
 ---
 
-## Hinweis: Render.com Kaltstarts
+## API-Key nachträglich eintragen
 
-Der kostenlose Render-Plan "schläft" nach 15 Minuten Inaktivität.
-Beim ersten Aufruf kann das Backend ~30 Sekunden brauchen.
-AILIZA zeigt dann: *"Backend nicht erreichbar. Render.com noch am Starten?"*
-→ Einfach 30 Sekunden warten und neu laden.
+Ohne API-Key läuft AILIZA im Basis-Modus (Web-Suche funktioniert trotzdem).
+Für volle KI-Antworten:
+
+1. **Groq** (kostenlos, schnell): console.groq.com → API-Key erstellen
+2. In AILIZA: 🔑 Klicken → Key eingeben → Speichern
+
+ODER dauerhaft in Render.com unter "Environment Variables" eintragen.
+
+---
+
+## Häufige Probleme
+
+| Problem | Lösung |
+|---|---|  
+| "Backend nicht erreichbar" | Render URL in config.js prüfen, Backend evtl. noch am Starten (30 Sek warten) |
+| Kein "App installieren" Button | Seite über HTTPS öffnen (https://, nicht http://) |
+| CORS-Fehler | In Render Env: `AILIZA_ALLOWED_ORIGINS=https://ihre-domain.de` setzen |

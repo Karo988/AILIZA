@@ -1,7 +1,7 @@
 {
   "name": "AILIZA — KI-Assistent",
   "short_name": "AILIZA",
-  "description": "DSGVO- und EU-AI-Act-konformer KI-Assistent für KMU",
+  "description": "Intelligenter KI-Assistent für KMU — DSGVO- und EU-AI-Act-konform",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FAFAF7",
