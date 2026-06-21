@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 from collections.abc import Iterator
@@ -70,7 +71,6 @@ class AgentRuntime:
     ) -> None:
         if not self.persist_runs or not run_id:
             return
-
         kwargs: dict[str, Any] = {}
         if status is not None:
             kwargs["status"] = status
@@ -91,7 +91,12 @@ class AgentRuntime:
         self.create_run_record(run_id, task)
         self.audit_writer(
             "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan)},
+            {
+                "run_id": run_id,
+                "task_hash": hashlib.sha256(task.encode()).hexdigest()[:16],
+                "task_length": len(task),
+                "planned_steps": len(plan),
+            },
         )
 
         steps: list[dict[str, Any]] = []
@@ -99,12 +104,7 @@ class AgentRuntime:
         for index, call in enumerate(plan, start=1):
             self.audit_writer(
                 "agent.tool.planned",
-                {
-                    "run_id": run_id,
-                    "step": index,
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                },
+                {"run_id": run_id, "step": index, "tool": call.tool, "parameters": call.parameters},
             )
 
             try:
@@ -128,21 +128,9 @@ class AgentRuntime:
                     run_id,
                     status="pending_approval",
                     pending_approval_id=approval_id,
-                    result={
-                        "message": response.get("message", "Approval required"),
-                        "steps": steps,
-                        "next_action": "approve_or_reject",
-                    },
+                    result={"message": response.get("message", "Approval required"), "steps": steps, "next_action": "approve_or_reject"},
                 )
-                self.audit_writer(
-                    "agent.run.pending_approval",
-                    {
-                        "run_id": run_id,
-                        "approval_id": approval_id,
-                        "tool": call.tool,
-                        "parameters": call.parameters,
-                    },
-                )
+                self.audit_writer("agent.run.pending_approval", {"run_id": run_id, "approval_id": approval_id, "tool": call.tool, "parameters": call.parameters})
                 return {
                     "run_id": run_id,
                     "status": "pending_approval",
@@ -153,14 +141,12 @@ class AgentRuntime:
                     "next_action": "approve_or_reject",
                 }
 
-            results.append(
-                {
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                    "summary": summarize_tool_result(call.tool, response.get("result")),
-                    "result": response.get("result"),
-                }
-            )
+            results.append({
+                "tool": call.tool,
+                "parameters": call.parameters,
+                "summary": summarize_tool_result(call.tool, response.get("result")),
+                "result": response.get("result"),
+            })
 
         final_response = {
             "run_id": run_id,
@@ -192,10 +178,7 @@ class AgentRuntime:
             )
             raise
 
-        call = PlannedToolCall(
-            tool=str(response.get("tool", "")),
-            parameters=dict(response.get("parameters", {})),
-        )
+        call = PlannedToolCall(tool=str(response.get("tool", "")), parameters=dict(response.get("parameters", {})))
         step = build_step(1, call, response)
 
         if response.get("status") == "pending":
@@ -205,10 +188,7 @@ class AgentRuntime:
                 pending_approval_id=approval_id,
                 result={"message": response.get("message", "Approval is still pending"), "steps": [step]},
             )
-            self.audit_writer(
-                "agent.resume.pending_approval",
-                {"run_id": run_id, "approval_id": approval_id},
-            )
+            self.audit_writer("agent.resume.pending_approval", {"run_id": run_id, "approval_id": approval_id})
             return {
                 "run_id": run_id,
                 "status": "pending_approval",
@@ -226,20 +206,10 @@ class AgentRuntime:
             "message": "Approved tool call executed",
             "approval_id": approval_id,
             "steps": [step],
-            "results": [
-                {
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                    "summary": summarize_tool_result(call.tool, result),
-                    "result": result,
-                }
-            ],
+            "results": [{"tool": call.tool, "parameters": call.parameters, "summary": summarize_tool_result(call.tool, result), "result": result}],
         }
         self.update_run_record(run_id, status="completed", pending_approval_id=None, result=final_response)
-        self.audit_writer(
-            "agent.resume.completed",
-            {"run_id": run_id, "approval_id": approval_id, "tool": call.tool},
-        )
+        self.audit_writer("agent.resume.completed", {"run_id": run_id, "approval_id": approval_id, "tool": call.tool})
         return final_response
 
     def stream(
@@ -254,100 +224,30 @@ class AgentRuntime:
         self.create_run_record(run_id, task, streaming=True)
         self.audit_writer(
             "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan), "streaming": True},
+            {"run_id": run_id, "task_hash": hashlib.sha256(task.encode()).hexdigest()[:16], "task_length": len(task), "planned_steps": len(plan), "streaming": True},
         )
-        yield stream_event(
-            "run_started",
-            {"run_id": run_id, "status": "running", "task": task, "planned_steps": len(plan)},
-        )
+        yield stream_event("run_started", {"run_id": run_id, "status": "running", "planned_steps": len(plan)})
 
         steps: list[dict[str, Any]] = []
         results: list[dict[str, Any]] = []
         for index, call in enumerate(plan, start=1):
-            self.audit_writer(
-                "agent.tool.planned",
-                {
-                    "run_id": run_id,
-                    "step": index,
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                    "streaming": True,
-                },
-            )
-            yield stream_event(
-                "tool_planned",
-                {
-                    "run_id": run_id,
-                    "step": index,
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                },
-            )
-            yield stream_event(
-                "tool_started",
-                {
-                    "run_id": run_id,
-                    "step": index,
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                },
-            )
+            self.audit_writer("agent.tool.planned", {"run_id": run_id, "step": index, "tool": call.tool, "parameters": call.parameters, "streaming": True})
+            yield stream_event("tool_planned", {"run_id": run_id, "step": index, "tool": call.tool, "parameters": call.parameters})
+            yield stream_event("tool_started", {"run_id": run_id, "step": index, "tool": call.tool, "parameters": call.parameters})
 
             try:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
                 status = "blocked" if exc.status_code == 403 else "failed"
                 event_name = "blocked" if exc.status_code == 403 else "error"
-                self.update_run_record(
-                    run_id,
-                    status=status,
-                    result={"status_code": exc.status_code, "detail": exc.detail},
-                )
-                self.audit_writer(
-                    f"agent.run.{status}",
-                    {
-                        "run_id": run_id,
-                        "step": index,
-                        "tool": call.tool,
-                        "parameters": call.parameters,
-                        "status_code": exc.status_code,
-                        "detail": exc.detail,
-                    },
-                )
-                yield stream_event(
-                    event_name,
-                    {
-                        "run_id": run_id,
-                        "status": status,
-                        "step": index,
-                        "tool": call.tool,
-                        "status_code": exc.status_code,
-                        "detail": exc.detail,
-                    },
-                )
+                self.update_run_record(run_id, status=status, result={"status_code": exc.status_code, "detail": exc.detail})
+                self.audit_writer(f"agent.run.{status}", {"run_id": run_id, "step": index, "tool": call.tool, "parameters": call.parameters, "status_code": exc.status_code, "detail": exc.detail})
+                yield stream_event(event_name, {"run_id": run_id, "status": status, "step": index, "tool": call.tool, "status_code": exc.status_code, "detail": exc.detail})
                 return
             except Exception as exc:
                 self.update_run_record(run_id, status="failed", result={"detail": str(exc)})
-                self.audit_writer(
-                    "agent.run.failed",
-                    {
-                        "run_id": run_id,
-                        "step": index,
-                        "tool": call.tool,
-                        "parameters": call.parameters,
-                        "detail": str(exc),
-                    },
-                )
-                yield stream_event(
-                    "error",
-                    {
-                        "run_id": run_id,
-                        "status": "failed",
-                        "step": index,
-                        "tool": call.tool,
-                        "detail": str(exc),
-                    },
-                )
+                self.audit_writer("agent.run.failed", {"run_id": run_id, "step": index, "tool": call.tool, "parameters": call.parameters, "detail": str(exc)})
+                yield stream_event("error", {"run_id": run_id, "status": "failed", "step": index, "tool": call.tool, "detail": str(exc)})
                 return
 
             step = build_step(index, call, response)
@@ -360,171 +260,63 @@ class AgentRuntime:
                     run_id,
                     status="pending_approval",
                     pending_approval_id=approval_id,
-                    result={
-                        "message": response.get("message", "Approval required"),
-                        "steps": steps,
-                        "next_action": "approve_or_reject",
-                    },
+                    result={"message": response.get("message", "Approval required"), "steps": steps, "next_action": "approve_or_reject"},
                 )
-                self.audit_writer(
-                    "agent.run.pending_approval",
-                    {
-                        "run_id": run_id,
-                        "approval_id": approval_id,
-                        "tool": call.tool,
-                        "parameters": call.parameters,
-                        "streaming": True,
-                    },
-                )
-                yield stream_event(
-                    "approval_required",
-                    {
-                        "run_id": run_id,
-                        "status": "pending_approval",
-                        "message": response.get("message", "Approval required"),
-                        "approval_id": approval_id,
-                        "risk_level": response.get("risk_level"),
-                        "steps": steps,
-                        "next_action": "approve_or_reject",
-                    },
-                )
+                self.audit_writer("agent.run.pending_approval", {"run_id": run_id, "approval_id": approval_id, "tool": call.tool, "parameters": call.parameters, "streaming": True})
+                yield stream_event("approval_required", {"run_id": run_id, "status": "pending_approval", "message": response.get("message", "Approval required"), "approval_id": approval_id, "risk_level": response.get("risk_level"), "steps": steps, "next_action": "approve_or_reject"})
                 if not wait_for_approval:
                     return
 
                 if approval_id is None:
                     self.update_run_record(run_id, status="failed", result={"detail": "Approval id is missing"})
-                    yield stream_event(
-                        "error",
-                        {"run_id": run_id, "status": "failed", "detail": "Approval id is missing"},
-                    )
+                    yield stream_event("error", {"run_id": run_id, "status": "failed", "detail": "Approval id is missing"})
                     return
 
                 deadline = time.monotonic() + approval_timeout
                 poll_interval = max(0.1, approval_poll_interval)
-                yield stream_event(
-                    "approval_waiting",
-                    {
-                        "run_id": run_id,
-                        "status": "pending_approval",
-                        "approval_id": approval_id,
-                        "timeout_seconds": approval_timeout,
-                    },
-                )
+                yield stream_event("approval_waiting", {"run_id": run_id, "status": "pending_approval", "approval_id": approval_id, "timeout_seconds": approval_timeout})
 
                 while True:
                     approval = get_approval_request(int(approval_id))
                     if approval is None:
-                        self.update_run_record(
-                            run_id,
-                            status="failed",
-                            result={"approval_id": approval_id, "detail": "Approval request not found"},
-                        )
-                        yield stream_event(
-                            "error",
-                            {
-                                "run_id": run_id,
-                                "status": "failed",
-                                "approval_id": approval_id,
-                                "detail": "Approval request not found",
-                            },
-                        )
+                        self.update_run_record(run_id, status="failed", result={"approval_id": approval_id, "detail": "Approval request not found"})
+                        yield stream_event("error", {"run_id": run_id, "status": "failed", "approval_id": approval_id, "detail": "Approval request not found"})
                         return
 
                     if approval["status"] == "pending":
                         if time.monotonic() >= deadline:
-                            yield stream_event(
-                                "approval_timeout",
-                                {
-                                    "run_id": run_id,
-                                    "status": "pending_approval",
-                                    "approval_id": approval_id,
-                                },
-                            )
+                            yield stream_event("approval_timeout", {"run_id": run_id, "status": "pending_approval", "approval_id": approval_id})
                             return
-
                         time.sleep(poll_interval)
-                        yield stream_event(
-                            "approval_waiting",
-                            {
-                                "run_id": run_id,
-                                "status": "pending_approval",
-                                "approval_id": approval_id,
-                            },
-                        )
+                        yield stream_event("approval_waiting", {"run_id": run_id, "status": "pending_approval", "approval_id": approval_id})
                         continue
 
                     if approval["status"] == "rejected":
-                        final_response = {
-                            "run_id": run_id,
-                            "status": "rejected",
-                            "message": "Approval was rejected",
-                            "approval_id": approval_id,
-                            "steps": steps,
-                        }
+                        final_response = {"run_id": run_id, "status": "rejected", "message": "Approval was rejected", "approval_id": approval_id, "steps": steps}
                         self.update_run_record(run_id, status="rejected", result=final_response)
-                        self.audit_writer(
-                            "agent.run.rejected",
-                            {"run_id": run_id, "approval_id": approval_id, "streaming": True},
-                        )
+                        self.audit_writer("agent.run.rejected", {"run_id": run_id, "approval_id": approval_id, "streaming": True})
                         yield stream_event("approval_rejected", final_response)
                         return
 
                     if approval["status"] != "approved":
-                        final_response = {
-                            "run_id": run_id,
-                            "status": "blocked",
-                            "approval_id": approval_id,
-                            "detail": f"Unsupported approval status: {approval['status']}",
-                        }
+                        final_response = {"run_id": run_id, "status": "blocked", "approval_id": approval_id, "detail": f"Unsupported approval status: {approval['status']}"}
                         self.update_run_record(run_id, status="blocked", result=final_response)
                         yield stream_event("blocked", final_response)
                         return
 
                     self.update_run_record(run_id, status="running")
-                    yield stream_event(
-                        "approval_granted",
-                        {"run_id": run_id, "status": "running", "approval_id": approval_id},
-                    )
+                    yield stream_event("approval_granted", {"run_id": run_id, "status": "running", "approval_id": approval_id})
                     try:
                         response = self.approved_tool_executor(int(approval_id))
                     except HTTPException as exc:
                         status = "blocked" if exc.status_code == 403 else "failed"
                         event_name = "blocked" if exc.status_code == 403 else "error"
-                        self.update_run_record(
-                            run_id,
-                            status=status,
-                            result={
-                                "approval_id": approval_id,
-                                "status_code": exc.status_code,
-                                "detail": exc.detail,
-                            },
-                        )
-                        yield stream_event(
-                            event_name,
-                            {
-                                "run_id": run_id,
-                                "status": status,
-                                "approval_id": approval_id,
-                                "status_code": exc.status_code,
-                                "detail": exc.detail,
-                            },
-                        )
+                        self.update_run_record(run_id, status=status, result={"approval_id": approval_id, "status_code": exc.status_code, "detail": exc.detail})
+                        yield stream_event(event_name, {"run_id": run_id, "status": status, "approval_id": approval_id, "status_code": exc.status_code, "detail": exc.detail})
                         return
                     except Exception as exc:
-                        self.update_run_record(
-                            run_id,
-                            status="failed",
-                            result={"approval_id": approval_id, "detail": str(exc)},
-                        )
-                        yield stream_event(
-                            "error",
-                            {
-                                "run_id": run_id,
-                                "status": "failed",
-                                "approval_id": approval_id,
-                                "detail": str(exc),
-                            },
-                        )
+                        self.update_run_record(run_id, status="failed", result={"approval_id": approval_id, "detail": str(exc)})
+                        yield stream_event("error", {"run_id": run_id, "status": "failed", "approval_id": approval_id, "detail": str(exc)})
                         return
 
                     step = build_step(index, call, response)
@@ -532,31 +324,11 @@ class AgentRuntime:
                     break
 
             result = response.get("result")
-            result_entry = {
-                "tool": call.tool,
-                "parameters": call.parameters,
-                "summary": summarize_tool_result(call.tool, result),
-                "result": result,
-            }
+            result_entry = {"tool": call.tool, "parameters": call.parameters, "summary": summarize_tool_result(call.tool, result), "result": result}
             results.append(result_entry)
-            yield stream_event(
-                "tool_completed",
-                {
-                    "run_id": run_id,
-                    "step": index,
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                    "summary": result_entry["summary"],
-                },
-            )
+            yield stream_event("tool_completed", {"run_id": run_id, "step": index, "tool": call.tool, "parameters": call.parameters, "summary": result_entry["summary"]})
 
-        final_response = {
-            "run_id": run_id,
-            "status": "completed",
-            "message": "Agent run completed",
-            "steps": steps,
-            "results": results,
-        }
+        final_response = {"run_id": run_id, "status": "completed", "message": "Agent run completed", "steps": steps, "results": results}
         self.update_run_record(run_id, status="completed", pending_approval_id=None, result=final_response)
         self.audit_writer("agent.run.completed", {"run_id": run_id, "steps": len(steps), "streaming": True})
         yield stream_event("run_completed", final_response)
@@ -566,14 +338,8 @@ class AgentRuntime:
         run_id = str(approval.get("run_id") if approval and approval.get("run_id") else uuid4())
         if self.persist_runs and approval and not approval.get("run_id"):
             self.create_run_record(run_id, f"Continue approval #{approval_id}", streaming=True)
-        self.audit_writer(
-            "agent.resume.started",
-            {"run_id": run_id, "approval_id": approval_id, "streaming": True},
-        )
-        yield stream_event(
-            "resume_started",
-            {"run_id": run_id, "status": "running", "approval_id": approval_id},
-        )
+        self.audit_writer("agent.resume.started", {"run_id": run_id, "approval_id": approval_id, "streaming": True})
+        yield stream_event("resume_started", {"run_id": run_id, "status": "running", "approval_id": approval_id})
 
         try:
             response = self.approved_tool_executor(approval_id)
@@ -581,115 +347,39 @@ class AgentRuntime:
             status = "rejected" if approval and approval.get("status") == "rejected" else "blocked"
             if exc.status_code >= 500:
                 status = "failed"
-            event_name = "approval_rejected" if status == "rejected" else "blocked"
-            if status == "failed":
-                event_name = "error"
-            self.update_run_record(
-                run_id,
-                status=status,
-                result={"approval_id": approval_id, "status_code": exc.status_code, "detail": exc.detail},
-            )
-            self.audit_writer(
-                "agent.resume.blocked",
-                {
-                    "run_id": run_id,
-                    "approval_id": approval_id,
-                    "status_code": exc.status_code,
-                    "detail": exc.detail,
-                },
-            )
-            yield stream_event(
-                event_name,
-                {
-                    "run_id": run_id,
-                    "status": status,
-                    "approval_id": approval_id,
-                    "status_code": exc.status_code,
-                    "detail": exc.detail,
-                },
-            )
+            event_name = "approval_rejected" if status == "rejected" else ("error" if status == "failed" else "blocked")
+            self.update_run_record(run_id, status=status, result={"approval_id": approval_id, "status_code": exc.status_code, "detail": exc.detail})
+            self.audit_writer("agent.resume.blocked", {"run_id": run_id, "approval_id": approval_id, "status_code": exc.status_code, "detail": exc.detail})
+            yield stream_event(event_name, {"run_id": run_id, "status": status, "approval_id": approval_id, "status_code": exc.status_code, "detail": exc.detail})
             return
         except Exception as exc:
             self.update_run_record(run_id, status="failed", result={"approval_id": approval_id, "detail": str(exc)})
-            self.audit_writer(
-                "agent.resume.failed",
-                {"run_id": run_id, "approval_id": approval_id, "detail": str(exc)},
-            )
-            yield stream_event(
-                "error",
-                {
-                    "run_id": run_id,
-                    "status": "failed",
-                    "approval_id": approval_id,
-                    "detail": str(exc),
-                },
-            )
+            self.audit_writer("agent.resume.failed", {"run_id": run_id, "approval_id": approval_id, "detail": str(exc)})
+            yield stream_event("error", {"run_id": run_id, "status": "failed", "approval_id": approval_id, "detail": str(exc)})
             return
 
-        call = PlannedToolCall(
-            tool=str(response.get("tool", "")),
-            parameters=dict(response.get("parameters", {})),
-        )
+        call = PlannedToolCall(tool=str(response.get("tool", "")), parameters=dict(response.get("parameters", {})))
         step = build_step(1, call, response)
 
         if response.get("status") == "pending":
-            self.update_run_record(
-                run_id,
-                status="pending_approval",
-                pending_approval_id=approval_id,
-                result={"message": response.get("message", "Approval is still pending"), "steps": [step]},
-            )
-            self.audit_writer(
-                "agent.resume.pending_approval",
-                {"run_id": run_id, "approval_id": approval_id, "streaming": True},
-            )
-            yield stream_event(
-                "approval_pending",
-                {
-                    "run_id": run_id,
-                    "status": "pending_approval",
-                    "message": response.get("message", "Approval is still pending"),
-                    "approval_id": approval_id,
-                    "risk_level": response.get("risk_level"),
-                    "steps": [step],
-                    "next_action": "approve_or_reject",
-                },
-            )
+            self.update_run_record(run_id, status="pending_approval", pending_approval_id=approval_id, result={"message": response.get("message", "Approval is still pending"), "steps": [step]})
+            self.audit_writer("agent.resume.pending_approval", {"run_id": run_id, "approval_id": approval_id, "streaming": True})
+            yield stream_event("approval_pending", {"run_id": run_id, "status": "pending_approval", "message": response.get("message", "Approval is still pending"), "approval_id": approval_id, "risk_level": response.get("risk_level"), "steps": [step], "next_action": "approve_or_reject"})
             return
 
         result = response.get("result")
         summary = summarize_tool_result(call.tool, result)
-        yield stream_event(
-            "tool_completed",
-            {
-                "run_id": run_id,
-                "approval_id": approval_id,
-                "step": 1,
-                "tool": call.tool,
-                "parameters": call.parameters,
-                "summary": summary,
-            },
-        )
+        yield stream_event("tool_completed", {"run_id": run_id, "approval_id": approval_id, "step": 1, "tool": call.tool, "parameters": call.parameters, "summary": summary})
         final_response = {
             "run_id": run_id,
             "status": "completed",
             "message": "Approved tool call executed",
             "approval_id": approval_id,
             "steps": [step],
-            "results": [
-                {
-                    "tool": call.tool,
-                    "parameters": call.parameters,
-                    "summary": summary,
-                    "result": result,
-                }
-            ],
+            "results": [{"tool": call.tool, "parameters": call.parameters, "summary": summary, "result": result}],
         }
         self.update_run_record(run_id, status="completed", pending_approval_id=None, result=final_response)
-        self.audit_writer(
-            "agent.resume.completed",
-            {"run_id": run_id, "approval_id": approval_id, "tool": call.tool, "streaming": True},
-        )
+        self.audit_writer("agent.resume.completed", {"run_id": run_id, "approval_id": approval_id, "tool": call.tool, "streaming": True})
         yield stream_event("resume_completed", final_response)
 
 
@@ -697,7 +387,6 @@ def plan_tool_calls(task: str) -> list[PlannedToolCall]:
     urls = [clean_url(match.group(0)) for match in URL_PATTERN.finditer(task)]
     if urls:
         return [PlannedToolCall("fetch", {"url": url}) for url in urls]
-
     return [PlannedToolCall("search", {"query": task.strip()})]
 
 
@@ -732,11 +421,7 @@ def summarize_tool_result(tool_name: str, result: Any) -> dict[str, Any]:
 
     if tool_name == "fetch":
         text = str(result.get("text", ""))
-        return {
-            "title": result.get("title", ""),
-            "text_preview": text[:500],
-            "text_length": len(text),
-        }
+        return {"title": result.get("title", ""), "text_preview": text[:500], "text_length": len(text)}
 
     if tool_name == "search":
         raw_results = result.get("results")
@@ -744,11 +429,7 @@ def summarize_tool_result(tool_name: str, result: Any) -> dict[str, Any]:
             return {
                 "result_count": len(raw_results),
                 "top_results": [
-                    {
-                        "title": item.get("title"),
-                        "url": item.get("url"),
-                        "content": str(item.get("content", ""))[:240],
-                    }
+                    {"title": item.get("title"), "url": item.get("url"), "content": str(item.get("content", ""))[:240]}
                     for item in raw_results[:5]
                     if isinstance(item, dict)
                 ],
