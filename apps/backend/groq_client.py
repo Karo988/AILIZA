@@ -41,6 +41,10 @@ class GroqClientWithCompliance:
         self.api_key = os.getenv("GROQ_API_KEY", "")
         self.compliance_mgr = ComplianceContextManager()
 
+    @staticmethod
+    def _external_llm_enabled() -> bool:
+        return os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").lower() == "true"
+
     def chat(
         self,
         message: str,
@@ -48,9 +52,13 @@ class GroqClientWithCompliance:
         context: list = None,
         additional_rules: list = None,
     ) -> ChatResponse:
-        """
-        Sendet eine Nachricht an Groq mit automatischem Compliance-Kontext.
-        """
+        if not self._external_llm_enabled():
+            return ChatResponse(
+                text="Externe LLM-Aufrufe sind deaktiviert (AILIZA_EXTERNAL_LLM_ENABLED=false).",
+                model=model,
+                error="external_llm_disabled"
+            )
+
         if not self.api_key:
             return ChatResponse(
                 text="Kein Groq API-Key konfiguriert.",
@@ -58,26 +66,20 @@ class GroqClientWithCompliance:
                 error="no_api_key"
             )
 
-        # ── Compliance-Kontext automatisch aufbauen ──────────────────────────
         system_prompt, compliance = self.compliance_mgr.build_system_prompt(
             user_message=message,
             conversation_context=context or [],
             additional_rules=additional_rules or [],
         )
 
-        # ── Nachrichten aufbauen ─────────────────────────────────────────────
         messages = [{"role": "system", "content": system_prompt}]
-
-        # Kontext hinzufügen (max. 10 Nachrichten — Token-Sparsamkeit)
         for m in (context or [])[-10:]:
             role = m.get("role", "user")
             if role == "ai":
                 role = "assistant"
             messages.append({"role": role, "content": m.get("content", "")})
-
         messages.append({"role": "user", "content": message})
 
-        # ── API-Aufruf ───────────────────────────────────────────────────────
         payload = json.dumps({
             "model": model,
             "messages": messages,
@@ -97,17 +99,14 @@ class GroqClientWithCompliance:
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = json.loads(r.read())
-
             text = data["choices"][0]["message"]["content"]
             tokens = data.get("usage", {}).get("total_tokens", 0)
-
             return ChatResponse(
                 text=text,
                 model=model,
                 tokens_used=tokens,
                 compliance_summary=self.compliance_mgr.get_compliance_summary(compliance),
             )
-
         except urllib.error.HTTPError as e:
             error_body = e.read().decode()
             return ChatResponse(
@@ -123,4 +122,4 @@ class GroqClientWithCompliance:
             )
 
     def is_configured(self) -> bool:
-        return bool(self.api_key)
+        return self._external_llm_enabled() and bool(self.api_key)

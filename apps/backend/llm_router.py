@@ -22,49 +22,32 @@ class LLMResponse:
 
 
 class MultiLLMRouter:
-    """
-    Sendet Anfragen an verschiedene LLM-Anbieter.
-    API-Key wird pro Anfrage übergeben — kein fester Key in .env nötig.
-    """
-
     PROVIDERS = {
         "anthropic": {
             "name": "Anthropic Claude",
-            "models": [
-                "claude-sonnet-4-6",
-                "claude-haiku-4-5",
-                "claude-opus-4-6",
-            ],
+            "models": ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
             "url": "https://api.anthropic.com/v1/messages",
         },
         "openai": {
             "name": "OpenAI",
-            "models": [
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-3.5-turbo",
-            ],
+            "models": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
             "url": "https://api.openai.com/v1/chat/completions",
         },
         "mistral": {
             "name": "Mistral AI",
-            "models": [
-                "mistral-large-latest",
-                "mistral-small-latest",
-                "open-mistral-7b",
-            ],
+            "models": ["mistral-large-latest", "mistral-small-latest", "open-mistral-7b"],
             "url": "https://api.mistral.ai/v1/chat/completions",
         },
         "groq": {
             "name": "Groq",
-            "models": [
-                "llama-3.3-70b-versatile",
-                "llama3-8b-8192",
-                "mixtral-8x7b-32768",
-            ],
+            "models": ["llama-3.3-70b-versatile", "llama3-8b-8192", "mixtral-8x7b-32768"],
             "url": "https://api.groq.com/openai/v1/chat/completions",
         },
     }
+
+    @staticmethod
+    def _external_llm_enabled() -> bool:
+        return os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").lower() == "true"
 
     def chat(
         self,
@@ -72,48 +55,16 @@ class MultiLLMRouter:
         provider: str,
         model: str,
         api_key: str,
-        system_prompt: str = "Du bist AILIZA, ein agentische KI-Assistent für KMU-Mitarbeiter in Europa.
-
-ANTWORT-STIL:
-- Einfache Fragen (Datum, Übersetzung, kurze Info): 1-2 Sätze, direkt und klar
-- Komplexe Fragen (Analyse, Strategie, DSGVO): ausführlich, strukturiert mit Schritten
-- Niemals rohe Suchergebnisse ausgeben — immer die Antwort direkt formulieren
-- Sprache: Deutsch, es sei denn der Nutzer schreibt anders
-
-AUTONOMES HANDELN:
-- Aufgaben selbständig erledigen ohne nachzufragen wenn die Anfrage klar ist
-- Bei unklaren Aufgaben: einmal kurz nachfragen, dann sofort ausführen
-- Web-Suche automatisch nutzen wenn aktuelle Informationen nötig sind
-- Ergebnisse zusammenfassen, nicht auflisten
-
-PERSÖNLICHE DATEN (DSGVO-konform):
-- Namen, Firma, Rolle und Präferenzen des Nutzers im Chat merken
-- Diese Daten in Antworten personalisiert einsetzen (z.B. "Guten Tag Frau Müller")
-- Keine Weitergabe an Dritte (DSGVO Art. 5)
-- Auf Anfrage alles löschen (DSGVO Art. 17)
-
-COMPLIANCE (Non-Negotiable):
-- Kennzeichne dich bei jeder Antwort als KI-System (EU AI Act Art. 52)
-- Bei Hochrisiko-Anfragen (Kredit, Kündigung, Diagnose): menschliche Überprüfung empfehlen
-- DSGVO-Hinweise nur wenn wirklich relevant — nicht bei jeder Antwort
-
-KANN AILIZA:
-- E-Mails schreiben, überarbeiten, beantworten
-- Dokumente zusammenfassen und analysieren
-- Übersetzen (DE, EN, FR, ES, IT)
-- Web-Suche und aktuelle Informationen zusammenfassen
-- Checklisten, Protokolle, Angebote erstellen
-- DSGVO-Schnellcheck für KMU-Situationen
-- Termine und Aufgaben strukturieren
-
-DARF AILIZA NICHT:
-- Kreditentscheidungen treffen
-- Personalentscheidungen automatisiert treffen
-- Medizinische Diagnosen stellen
-- Sich als Mensch ausgeben.",
+        system_prompt: str = "Du bist AILIZA, ein agentische KI-Assistent für KMU-Mitarbeiter in Europa.",
         context: list = None,
     ) -> LLMResponse:
-        """Sendet eine Nachricht an den gewählten LLM-Anbieter."""
+        if not self._external_llm_enabled():
+            return LLMResponse(
+                text="Externe LLM-Aufrufe sind deaktiviert (AILIZA_EXTERNAL_LLM_ENABLED=false).",
+                model=model,
+                provider=provider,
+                error="external_llm_disabled",
+            )
 
         if provider not in self.PROVIDERS:
             return LLMResponse(
@@ -189,11 +140,7 @@ DARF AILIZA NICHT:
         return LLMResponse(text=text, model=model, provider=provider, tokens_used=tokens)
 
     def get_providers_list(self) -> dict:
-        """Gibt alle verfügbaren Anbieter und Modelle zurück."""
         return {
-            pid: {
-                "name": p["name"],
-                "models": p["models"],
-            }
+            pid: {"name": p["name"], "models": p["models"]}
             for pid, p in self.PROVIDERS.items()
         }
