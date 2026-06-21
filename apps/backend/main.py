@@ -456,12 +456,17 @@ def list_agents() -> list[dict[str, Any]]:
 
 # ── Frontend ───────────────────────────────────────────────────────────────────
 
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+# Serve individual frontend assets at root paths (needed for PWA manifest, sw.js, config.js)
+_FRONTEND_FILES = {"manifest.json", "sw.js", "config.js", "icon.svg", "favicon.svg"}
+
+@app.get("/{filename}")
+def serve_frontend_file(filename: str):
+    if filename in _FRONTEND_FILES:
+        return FileResponse(FRONTEND_DIR / filename)
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 @app.get("/")
 def index():
     return FileResponse(FRONTEND_DIR / "index.html")
 
-@app.get("/dashboard")
-def dashboard():
-    return FileResponse(FRONTEND_DIR / "index.html")
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")

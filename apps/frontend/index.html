@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#2D5F3F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="AILIZA">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon.svg">
 <title>AILIZA — Ihr autonomer KI-Assistent</title>
+<script src="/config.js"></script>
 <style>
 :root {
   --bg: #FAFAF7;
@@ -929,7 +936,7 @@ body{
 </div>
 
 <script>
-const API = "http://127.0.0.1:8001";
+const API = window.AILIZA_API || `${location.protocol}//${location.hostname}:8000`;
 
 const MODELS = {
   groq: ["llama3-70b-8192","llama3-8b-8192","mixtral-8x7b-32768"],
@@ -1470,6 +1477,10 @@ document.addEventListener("click", e=>{
 });
 
 init();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 </script>
 </body>
 </html>
