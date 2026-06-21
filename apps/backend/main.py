@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 import json
+import os
 import re
 from datetime import datetime
 from collections.abc import AsyncIterator, Iterable
@@ -35,12 +36,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("AILIZA_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(approvals_router)
 
@@ -154,12 +160,12 @@ def answer_simple_question(task: str) -> str | None:
 
     if not text:
         return None
-    if any(phrase in text for phrase in ("welchen tag haben wir heute", "welcher tag ist heute", "was ist heute fuer ein tag", "was ist heute für ein tag", "welches datum", "datum heute", "heutiges datum")):
+    if any(phrase in text for phrase in ("welchen tag haben wir heute", "welcher tag ist heute", "was ist heute fuer ein tag", "was ist heute fuer ein tag", "welches datum", "datum heute", "heutiges datum")):
         return now.strftime("%d.%m.%Y")
     if "wochentag" in text:
         weekdays = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
         return weekdays[now.weekday()]
-    if "uhrzeit" in text or "wie spaet" in text or "wie spät" in text:
+    if "uhrzeit" in text or "wie spaet" in text or "wie spaet" in text:
         return now.strftime("%H:%M Uhr")
     if "welches jahr" in text or "jahr haben wir" in text:
         return str(now.year)
@@ -168,12 +174,12 @@ def answer_simple_question(task: str) -> str | None:
         return months[now.month - 1]
     if text in {"hallo", "hi", "hey", "guten tag", "guten morgen", "guten abend"}:
         return "Hallo!"
-    if text in {"danke", "dankeschoen", "dankeschön", "vielen dank"}:
+    if text in {"danke", "dankeschoen", "dankeschoen", "vielen dank"}:
         return "Gern."
-    if "wer bist du" in text or "wie heisst du" in text or "wie heißt du" in text:
+    if "wer bist du" in text or "wie heisst du" in text or "wie heisst du" in text:
         return "Ich bin AILIZA."
     if "was kannst du" in text:
-        return "Ich helfe bei E-Mails, Recherche, Übersetzungen und Zusammenfassungen."
+        return "Ich helfe bei E-Mails, Recherche, Uebersetzungen und Zusammenfassungen."
 
     expression = text
     for prefix in ("was ist", "rechne", "berechne"):
@@ -218,6 +224,7 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
                             parts.append(line.strip())
 
     return "\n".join(parts).strip()
+
 @app.post("/agent/run")
 def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
     import os, urllib.request, json as _json
@@ -236,8 +243,9 @@ def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
 
     search_text = extract_agent_answer(result)
 
+    external_enabled = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").lower() == "true"
     api_key = os.getenv("GROQ_API_KEY")
-    if search_text and api_key:
+    if search_text and api_key and external_enabled:
         sys_prompt = "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. Antworte kurz und direkt auf Deutsch. Bei einfachen Fragen 1-2 Saetze. Keine Auflistung."
         user_msg = f'Frage: "{payload.task}"\n\nSuchergebnis:\n{search_text}\n\nFormuliere eine kurze direkte Antwort.'
         last_error = None
@@ -255,7 +263,7 @@ def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
                 req = urllib.request.Request(
                     "https://api.groq.com/openai/v1/chat/completions",
                     data=req_data,
-                    headers={"Content-Type":"application/json","Authorization":f"Bearer {api_key}"},
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
                 )
                 with urllib.request.urlopen(req, timeout=20) as r:
                     data = _json.loads(r.read())
@@ -273,6 +281,7 @@ def run_agent(payload: AgentRunRequest) -> dict[str, Any]:
 
     result["ai_response"] = result.get("message", "")
     return result
+
 @app.get("/agent/runs")
 def get_agent_runs(
     status: str | None = None,
@@ -349,10 +358,10 @@ def stream_agent_after_approval_post(approval_id: int) -> StreamingResponse:
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
-
 @app.get("/")
 def index():
     return FileResponse(FRONTEND_DIR / "index.html")
+
 @app.get("/dashboard")
 def dashboard():
     return FileResponse(FRONTEND_DIR / "index.html")
