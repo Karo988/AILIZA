@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AILIZA — Ihr autonomer KI-Assistent</title>
+<!-- PWA -->
+<meta name="theme-color" content="#2D5F3F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="AILIZA">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon.svg">
 <style>
 :root {
   --bg: #FAFAF7;
@@ -688,7 +695,7 @@ body{
 <div class="topbar">
   <div class="brand">
     AI<span class="brand-mark">LIZA</span>
-    <span class="brand-sub">v0.4 · KMU · EU-konform</span>
+    <span class="brand-sub">v0.5 · KMU · EU-konform</span>
   </div>
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
@@ -929,11 +936,12 @@ body{
 </div>
 
 <script>
-const API = "http://127.0.0.1:8001";
+// API-URL automatisch auf aktuelle IP setzen (funktioniert auf PC und Handy)
+const API = `http://${location.hostname}:8000`;
 
 const MODELS = {
-  groq: ["llama3-70b-8192","llama3-8b-8192","mixtral-8x7b-32768"],
-  anthropic: ["claude-haiku-4-5","claude-sonnet-4-6","claude-opus-4-6"],
+  groq: ["llama-3.3-70b-versatile","llama3-70b-8192","llama3-8b-8192","mixtral-8x7b-32768"],
+  anthropic: ["claude-haiku-4-5","claude-sonnet-4-6"],
   openai: ["gpt-4o-mini","gpt-4o","gpt-3.5-turbo"],
   mistral: ["mistral-small-latest","mistral-large-latest"],
 };
@@ -988,6 +996,11 @@ function init(){
   renderPrivacyMemory();
   checkStatus();
   setInterval(checkStatus, 15000);
+
+  // PWA Service Worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
 }
 
 function showView(name, el){
@@ -1046,12 +1059,8 @@ function normalizePrivacyValue(value){
 
 function detectPrivacyItems(currentInput=""){
   const chunks = [];
-  chatHistory.forEach(m => {
-    if(m && m.content) chunks.push(m.content);
-  });
-  context.forEach(m => {
-    if(m && m.content) chunks.push(m.content);
-  });
+  chatHistory.forEach(m => { if(m && m.content) chunks.push(m.content); });
+  context.forEach(m => { if(m && m.content) chunks.push(m.content); });
   if(currentInput && currentInput.trim()) chunks.push(currentInput);
 
   const source = chunks.join("\n");
@@ -1073,7 +1082,6 @@ function detectPrivacyItems(currentInput=""){
       if(match.index === rule.pattern.lastIndex) rule.pattern.lastIndex++;
     }
   }
-
   return items;
 }
 
@@ -1104,13 +1112,12 @@ function quickPrompt(text){
   inp.value = text;
   inp.focus();
   autoResize(inp);
-  // Wenn vollständig → direkt senden
   if(!text.endsWith(": ") && !text.endsWith("? ")) sendMessage();
 }
 
 function renderSkills(){
   document.getElementById("skill-tiles").innerHTML = SKILLS.map(s=>`
-    <div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}');">
+    <div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"> 
       <div class="skill-ic">${s.ic}</div>
       <div class="skill-n">${s.n}</div>
       <div class="skill-d">${s.d}</div>
@@ -1266,7 +1273,6 @@ async function sendMessage(){
   inp.value = ""; autoResize(inp);
   document.getElementById("send-btn").disabled = true;
 
-  // Welcome entfernen wenn vorhanden
   if(chatHistory.length === 0) document.getElementById("chat-inner").innerHTML = "";
 
   chatHistory.push({role:"user", content:text, time:new Date().toISOString()});
@@ -1281,7 +1287,6 @@ async function sendMessage(){
   showTyping();
 
   try{
-    // Versuche LLM-Chat wenn Key vorhanden
     if(apiKey){
       const r = await fetch(`${API}/llm/chat`,{
         method:"POST",
@@ -1297,7 +1302,6 @@ async function sendMessage(){
         context.push({role:"assistant",content:reply});
         if(context.length > 20) context = context.slice(-20);
       } else {
-        // Fallback: Web-Suche
         await runAgent(text);
       }
     } else if(tools.search){
@@ -1322,25 +1326,18 @@ async function runAgent(text){
     body:JSON.stringify({task:text})
   });
   hideTyping();
-  if(!r.ok){
-    addAiMessage("Suche fehlgeschlagen.","HTTP "+r.status);
-    return;
-  }
+  if(!r.ok){ addAiMessage("Suche fehlgeschlagen.","HTTP "+r.status); return; }
   const data = await r.json();
-  // Wenn Backend bereits einen LLM-zusammengefassten Text liefert
   let answer = data.ai_response || "";
   if(data.message && data.message !== "Agent run completed") answer = data.message;
-  if(!answer){
-    // Aus den Results extrahieren
-    if(data.results){
-      for(const res of data.results){
-        const sources = [res.result || {}, res.summary || {}];
-        for(const s of sources){
-          if(s.summary){ answer += s.summary + " "; }
-          else if(s.top_results && s.top_results.length){
-            const t = s.top_results[0];
-            answer += (t.title||"") + ": " + (t.content||"").slice(0,300) + " ";
-          }
+  if(!answer && data.results){
+    for(const res of data.results){
+      const sources = [res.result || {}, res.summary || {}];
+      for(const s of sources){
+        if(s.summary){ answer += s.summary + " "; }
+        else if(s.top_results && s.top_results.length){
+          const t = s.top_results[0];
+          answer += (t.title||"") + ": " + (t.content||"").slice(0,300) + " ";
         }
       }
     }
@@ -1360,10 +1357,7 @@ function addAiMessage(text, warn){
 }
 
 function handleKey(e){
-  if(e.key === "Enter" && !e.shiftKey){
-    e.preventDefault();
-    sendMessage();
-  }
+  if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendMessage(); }
 }
 function autoResize(el){
   el.style.height = "auto";
@@ -1377,18 +1371,14 @@ function saveProject(){
   const name = document.getElementById("proj-name").value.trim();
   if(!name) return;
   projects.push({
-    id:Date.now(),
-    name,
+    id:Date.now(), name,
     desc:document.getElementById("proj-desc").value,
     prio:document.getElementById("proj-prio").value,
-    created:new Date().toISOString(),
-    tasks:[],
-    chats:[]
+    created:new Date().toISOString(), tasks:[], chats:[]
   });
   localStorage.setItem("ailiza_projects", JSON.stringify(projects));
   closeProjModal();
-  renderProjects();
-  renderProjectList();
+  renderProjects(); renderProjectList();
   document.getElementById("proj-name").value = "";
   document.getElementById("proj-desc").value = "";
 }
@@ -1396,14 +1386,13 @@ function deleteProject(i){
   if(!confirm("Projekt wirklich löschen?")) return;
   projects.splice(i,1);
   localStorage.setItem("ailiza_projects", JSON.stringify(projects));
-  renderProjects();
-  renderProjectList();
+  renderProjects(); renderProjectList();
 }
 function renderProjects(){
   document.getElementById("proj-count").textContent = projects.length;
   const grid = document.getElementById("proj-grid");
   if(projects.length === 0){
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">Noch keine Projekte. Erstelle eines, um Aufgaben und Chats zu gruppieren.</div>';
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';
     return;
   }
   grid.innerHTML = projects.map((p,i)=>`
@@ -1411,9 +1400,8 @@ function renderProjects(){
       <div class="card-h">${p.name}</div>
       <div class="card-desc">${p.desc || "Keine Beschreibung"}</div>
       <div class="card-meta">
-        <span class="meta-pill ${p.prio==='Hoch'?'hi':''}">${p.prio}</span>
+        <span class="meta-pill ${p.prio==='Hoch'?'hi':''}">  ${p.prio}</span>
         <span class="meta-pill">${new Date(p.created).toLocaleDateString('de-DE')}</span>
-        <span class="meta-pill">${(p.chats||[]).length} Chats</span>
         <button class="meta-pill del" onclick="deleteProject(${i})">✕</button>
       </div>
     </div>`).join("");
@@ -1425,10 +1413,7 @@ function renderProjectList(){
     return;
   }
   el.innerHTML = projects.slice(-8).map(p=>`
-    <div class="side-list-item">
-      <span class="dot"></span>
-      <span class="side-list-text">${p.name}</span>
-    </div>`).join("");
+    <div class="side-list-item"><span class="dot"></span><span class="side-list-text">${p.name}</span></div>`).join("");
 }
 
 // ── STATUS ──
@@ -1460,7 +1445,6 @@ async function loadStatus(){
   } catch{}
 }
 
-// Click outside to close key pop
 document.addEventListener("click", e=>{
   const pop = document.getElementById("key-pop");
   if(pop.classList.contains("open") && !pop.contains(e.target)
