@@ -10,14 +10,6 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon.svg">
 <title>AILIZA — Ihr autonomer KI-Assistent</title>
-<!-- PWA -->
-<meta name="theme-color" content="#2D5F3F">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="AILIZA">
-<link rel="manifest" href="/manifest.json">
-<link rel="apple-touch-icon" href="/icon.svg">
-<!-- API-URL Konfiguration (config.js anpassen) -->
 <script src="/config.js"></script>
 <style>
 :root {
@@ -472,10 +464,6 @@ async function checkStatus(){const b=document.getElementById("conn-status");try{
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 init();
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
 </script>
 </body>
 </html>
