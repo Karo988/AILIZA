@@ -125,7 +125,7 @@ Jedes aktivierbare Modul hat eigene Testfälle in seiner Moduldatei:
 | `ag-core.md` | Standardagent, Basisfluss, Routing, Datenschutzregeln | ✅ aktiv |
 | `module-routing.toon` | Routing-Registry aller Module mit Status und Verhalten | ✅ aktuell |
 | `agents.index.toon` | TOON-Registry aller Agenten | ✅ aktuell |
-| `basis-smoke-tests.md` | 10 Basis-Smoke-Tests | ☐ ausführen |
+| `basis-smoke-tests.md` | 11 Basis-Smoke-Tests (inkl. BS-11 Immutable Doc) | BS-01–10 ✅, BS-11 ☐ |
 | `core-testcases.md` | 5 Core-Routing-Tests, alle bestanden | ✅ 2026-06-22 |
 | `ag-compliance.md` | Compliance-Zusatzmodul | 🟡 aktivierbar |
 | `ag-allrounder.md` | Generalist-Zusatzmodul | 🟡 aktivierbar |
@@ -134,6 +134,39 @@ Jedes aktivierbare Modul hat eigene Testfälle in seiner Moduldatei:
 | `ag-recherche.md` | Recherche-Zusatzmodul, Tests ausstehend | 🔵 geplant |
 | `ag-buchhaltung-blocked-review.md` | Entscheidungsgrundlage Buchhaltung (Voraussetzungen V-01–V-08) | 🔴 gesperrt |
 | `ailiza-masterprompt.md` | Governance-Referenzdokument v2.0-rc (historisch) | 📄 Referenz |
+
+---
+
+## Unveränderbare Dokumentation
+
+### Warum existiert sie?
+
+AILIZA trifft keine Entscheidungen ohne Nachvollziehbarkeit. Bei freigabepflichtigen, sensiblen oder wirkungsrelevanten Aktionen muss dokumentiert sein, was entschieden wurde, auf welcher Grundlage, welche Risiken bekannt waren und wer die menschliche Verantwortung trägt. Diese Dokumentation bildet die Grundlage für Verantwortungsübergabe, Freigabenachweise und spätere Prüfungen.
+
+### Wann wird sie ausgelöst?
+
+Unveränderbare Dokumentation ist Pflicht bei:
+- freigabepflichtigen Aktionen
+- sensiblen Daten (personenbezogen, besonders schützenswert, vertraulich)
+- wirkungsrelevanten Aktionen (Außenwirkung, Upload, Systemänderung)
+- `blocked` / `responsibility_handoff`-Fällen
+- Hochrisiko- oder Sonderkorridor-Fällen (EU AI Act, Art. 9 DSGVO)
+- Incidents und sicherheitsrelevanten Auffälligkeiten
+
+### Wie funktionieren Korrekturen?
+
+Einmal erzeugte Dokumentation darf **nicht** geändert, gelöscht, überschrieben oder ergänzt werden.
+
+Korrekturen sind ausschließlich als **neuer Nachtrag** möglich. Der ursprüngliche Eintrag bleibt unverändert. So bleibt die Dokumentationskette lückenlos nachvollziehbar.
+
+### Warum ist das wichtig?
+
+- **Nachvollziehbarkeit:** Entscheidungen, Risiken und Freigaben sind dauerhaft einsehbar
+- **Freigabenachweise:** Wer hat was freigegeben, wann, für welche Aktion
+- **Verantwortungsübergabe:** Bei blocked-Modulen ist die Übergabe an die Fachrolle dokumentiert
+- **GoBD / DSGVO:** Buchungs- und Verarbeitungsentscheidungen müssen unveränderlich protokolliert sein
+
+Regelgrundlage: `ag-master.md §10`
 
 ---
 
@@ -151,7 +184,7 @@ Diese Grenzen gelten immer — sie können nicht durch Nutzerfreigabe überwunde
 
 ## Nächste Schritte
 
-1. ☐ Basis-Smoke-Tests durchführen (BS-01–BS-10)
+1. ☐ Basis-Smoke-Tests BS-11 durchführen (BS-01–10 bestanden 2026-06-22)
 2. ☐ ag-recherche Tests TR-01–TR-05 durchführen → bei Bestehen: activatable
 3. ☐ ag-buchhaltung: Voraussetzungen V-01–V-08 klären → erst dann entsperren
 4. ☐ ag-hr: AVV + DPIA klären → erst dann entsperren

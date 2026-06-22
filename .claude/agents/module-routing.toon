@@ -28,6 +28,21 @@ ag-hr | blocked | responsibility_handoff | AVV ausstehend; DPIA/DSFA für HR-Dat
 # → Freigabe wird intern dokumentiert (Datum, Aktion, Risiken bestätigt)
 # → kein Silent-Fail, kein Redirect ohne Risikohinweis
 # → kein harter Abbruch ohne Hilfe
+#
+# immutable_documentation_required: true
+# addendum_only_corrections: true
+# Pflichtfelder: dokumentations_id, timestamp, user_request_summary, selected_agent,
+#   module_status, data_class, risk_mode, decision, reason, required_human_role,
+#   approval_status, sources_or_basis, next_safe_step
+# Nachtrags-Pflichtfelder: addendum_id, timestamp, refers_to_dokumentations_id,
+#   reason_for_addendum, new_information, responsible_role
+
+# Globale Routing-Regel — unveränderbare Dokumentation erforderlich bei:
+# → responsibility_handoff (blocked)
+# → Freigabepflicht (ag-master §7)
+# → Hochrisiko-Kontext (ai-act-hochrisiko-prüfen)
+# → Sonderkorridor (sonderkorridor-prüfen, Art. 9 DSGVO)
+# → Incident oder sicherheitsrelevante Auffälligkeit
 
 # Verhalten bei return_planned:
 # → keine operative Ausführung

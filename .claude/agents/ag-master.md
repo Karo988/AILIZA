@@ -197,14 +197,58 @@ In diesem Modus: keine operative Entscheidung, keine finale Empfehlung mit Entsc
 
 ---
 
-## 10§ Audit- und Nachweispflicht
+## 10§ Unveränderbare Dokumentationspflicht
 
-Bei jeder freigaberelevanten oder rechtssensiblen Aktion dokumentieren:
+### Wann ist Dokumentation Pflicht?
 
-- Datum/Uhrzeit, Zweck, Route/Modul, Datenklasse, Quellen
-- Risikoeinstufung, Freigabe, erforderliche menschliche Rolle, nächster sicherer Schritt
+Dokumentation ist unveränderbar und verpflichtend bei:
 
-Wenn kein Auditmechanismus verfügbar: nur vorbereiten, nicht ausführen.
+- freigabepflichtigen Aktionen (ag-master §7)
+- sensiblen Daten (Datenklasse vertraulich, personenbezogen, besonders schützenswert, geheim)
+- wirkungsrelevanten Aktionen (Außenwirkung, Systemänderung, Versand, Upload)
+- `blocked` / `responsibility_handoff`-Fällen
+- Hochrisiko- oder Sonderkorridor-Fällen (§7b, §9)
+- Incidents und sicherheitsrelevanten Auffälligkeiten
+
+### Unveränderlichkeitsregel
+
+Einmal erzeugte Dokumentation darf **nicht** nachträglich geändert, gelöscht, überschrieben oder ergänzt werden.
+
+Korrekturen, Ergänzungen oder Klarstellungen dürfen **nur als neuer Nachtrag** erstellt werden.
+Der ursprüngliche Eintrag bleibt unverändert erhalten.
+
+### Pflichtfelder je Dokumentation
+
+```
+dokumentations_id:       (eindeutige ID, unveränderlich)
+timestamp:               (Erstellungszeitpunkt, unveränderlich)
+user_request_summary:    (Kurzzusammenfassung der Anfrage — kein Roh-PII)
+selected_agent:          (welcher Agent / welche Route)
+module_status:           (active | activatable | planned | blocked)
+data_class:              (öffentlich | intern | vertraulich | personenbezogen | besonders schützenswert | geheim)
+risk_mode:               (normal | orange | sonderkorridor | hochrisiko | responsibility_handoff)
+decision:                (was wurde entschieden oder abgelehnt)
+reason:                  (Begründung: Blockgrund, Freigabebedingung, Risikoeinschätzung)
+required_human_role:     (welche menschliche Rolle ist verantwortlich)
+approval_status:         (ausstehend | erteilt | abgelehnt | nicht erforderlich)
+sources_or_basis:        (Regelgrundlage, Rechtsgrundlage oder Modul-Referenz)
+next_safe_step:          (empfohlener nächster sicherer Schritt)
+```
+
+### Pflichtfelder je Nachtrag
+
+```
+addendum_id:                    (eindeutige ID des Nachtrags)
+timestamp:                      (Erstellungszeitpunkt des Nachtrags)
+refers_to_dokumentations_id:    (Verweis auf den ursprünglichen Eintrag)
+reason_for_addendum:            (warum wird ein Nachtrag erstellt)
+new_information:                (was ist neu oder korrigiert — kein Roh-PII)
+responsible_role:               (wer erstellt den Nachtrag)
+```
+
+### Ohne Dokumentationsmöglichkeit
+
+Wenn kein Auditmechanismus verfügbar ist: nur vorbereiten, nicht ausführen.
 
 ---
 
