@@ -1,9 +1,8 @@
 # AILIZA — Beta-Freigabebericht
 
-**Stand:** 2026-06-22
+**Stand:** 2026-06-22 (aktualisiert: Gate 6 implementiert)
 **Branch:** `claude/admiring-curie-9my9rf`
-**Commit:** `16051d3`
-**Testsuite:** 536/536 grün
+**Testsuite:** 569/569 grün
 
 ---
 
@@ -17,7 +16,7 @@
 | Gate 4 | Rollenbasiertes Approval (security_lead/privacy/legal/owner) | ✅ Sprint 1 | `APPROVAL_ROLES`, `can_approve()` |
 | Gate 5 | Retention (approval_requests 90d, agent_runs 30d) + Cleanup-Job | ✅ Sprint 1 | `retention_cleanup.py` |
 | Gate 5b | Audit-Sauberkeit in Fehlerpfaden | ✅ Sprint 1 | `_safe_param_summary()`, kein Inhalt in Logs |
-| Gate 6 | Prompt-Injection-Erkennung in Dokumenten/PDFs | 🔴 Offen | `scan_document()` erkennt Injection-Muster noch nicht |
+| Gate 6 | Prompt-Injection-Erkennung in Dokumenten/PDFs | ✅ Sprint 3 | `_scan_for_injection()`, 14 Pattern, `SECURITY_SENSITIVE`, Audit-Light |
 | Gate 7 | TOTP-Secret at rest (AES-256-GCM) | 🔴 Produktions-Gate | Aktuell kein KMS/Vault; Beta: kein TOTP-Geheimnis an externe Provider |
 | Gate 8 | Local Device Protection (Sandbox, Symlink, Approval-Reuse) | ✅ Sprint 1 | `sandbox.py`, `SandboxApproval` |
 | Gate 9 | Capability Risk Manifest (No-Fallback-No-Go, AVV-Gate) | ✅ Sprint 2 | `capability_manifest.py` |
@@ -82,22 +81,11 @@ startet AILIZA nicht normal und fällt fail-closed in den `kill_switch_active`-M
 
 ## Bekannte Lücken (Beta-Auflagen)
 
-### Gate 6 — Prompt-Injection in Dokumenten (offen)
-`scan_document()` prüft Dateityp, Größe und Datenklassifikation, erkennt aber keine
-Injection-Muster wie `"Ignore all previous instructions"` oder `"Act as DAN"`.
-
-**Risiko:** Ein präpariertes PDF/TXT könnte Instruktionen enthalten, die der LLM ausführt.
-
-**Maßnahme vor Pilot-Kunden:**
-```python
-# In document_handler.py ergänzen:
-_INJECTION_PATTERNS = [
-    re.compile(r"ignore\s+(?:all\s+)?(?:previous\s+)?instructions", re.I),
-    re.compile(r"act\s+as\s+(?:dan|jailbreak|unrestricted)", re.I),
-    re.compile(r"you\s+are\s+now\s+(?:a\s+)?(?:free|unrestricted|unfiltered)", re.I),
-    re.compile(r"system\s*:\s*you\s+(?:must|shall|will)", re.I),
-]
-```
+### Gate 6 — Prompt-Injection in Dokumenten ✅ implementiert
+`_scan_for_injection()` in `document_handler.py` erkennt 14 Pattern (EN + DE),
+setzt `SECURITY_SENSITIVE + needs_review=True`, blockiert externe Verarbeitung.
+Audit-Light: nur Metadaten (injection_detected, pattern_count) — kein Treffertext.
+Testsuite: 33 Tests (33/33 grün).
 
 ### Gate 7 — TOTP at rest (Produktions-Gate)
 TOTP-Secrets sind nicht mit AES-256-GCM verschlüsselt.
@@ -112,8 +100,8 @@ Keine echten personenbezogenen Daten an externe LLMs bis AVV bestätigt:
 - Notion/CRM (falls geplant)
 
 ### Branch / Release-Tag
-Aktuell: Feature-Branch `claude/admiring-curie-9my9rf`.
-Für echte Freigabe: in geschützten Release-Branch mergen + `git tag v0.1.0-beta`.
+Feature-Branch `claude/admiring-curie-9my9rf`, Tag `v0.1.0-beta` gesetzt (2026-06-22).
+Für Pilot: in geschützten Release-Branch mergen.
 
 ### Manifest-Signierung
 `governance_integrity.json` ist SHA-256-basiert — ausreichend für interne Beta.
@@ -125,7 +113,7 @@ Produktionsanforderung: GPG-Signatur oder HSM-basierte Signierung.
 
 | Punkt | Pilot-Blocker | Produktions-Gate |
 |-------|:---:|:---:|
-| Gate 6: Prompt-Injection in Dokumenten | ✅ | ✅ |
+| Gate 6: Prompt-Injection in Dokumenten | ✅ erledigt | ✅ |
 | AVV-Abschluss Groq/Anthropic | ✅ | ✅ |
 | AVV-Abschluss Telegram/Notion | — | ✅ |
 | Gate 7: TOTP AES-256-GCM | — | ✅ |
@@ -133,7 +121,7 @@ Produktionsanforderung: GPG-Signatur oder HSM-basierte Signierung.
 | DPIA für HR-Use-Cases | ✅ | ✅ |
 | DPIA für Biometrie (Art. 9) | ✅ | ✅ |
 | `enforce_integrity()` in CI/CD Pre-Deploy | — | ✅ |
-| Release-Branch + `v0.1.0-beta` Tag | ✅ | ✅ |
+| Release-Branch + `v0.1.0-beta` Tag | ✅ erledigt | ✅ |
 | Smoke-Test mit echtem Backend-Start (uvicorn) | ✅ | ✅ |
 
 ---
@@ -143,9 +131,10 @@ Produktionsanforderung: GPG-Signatur oder HSM-basierte Signierung.
 | Testdatei | Tests | Beschreibung |
 |-----------|-------|-------------|
 | `test_sprint1_governance.py` | 40 | Gate 1–5b |
+| `test_gate6_prompt_injection.py` | 33 | Pattern-Erkennung, Audit-Light, Scan |
 | `test_gate8_device_protection.py` | 68 | Sandbox, Symlink, Approval-Reuse |
 | `test_gate9_capability_manifest.py` | 42 | Manifest, No-Fallback-No-Go, AVV |
 | `test_gate10_config_integrity.py` | 40 | Integrity-Check, Manifest |
 | `test_gate10_runtime_enforcement.py` | 38 | Lifespan, Kill-Switch nach Failure, Smoke |
 | Bestands-Tests | 308 | E2E, Auth, Approval, Redaktion, VVT, … |
-| **Gesamt** | **536** | **536/536 grün** |
+| **Gesamt** | **569** | **569/569 grün** |
