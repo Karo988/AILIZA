@@ -52,18 +52,16 @@ Nach Ja: ag-compliance übernimmt, Gate 1 läuft, Purpose/Legal-Basis-Regel grei
 
 **Erwartetes Verhalten:**
 - Route: ag-core erkennt Präsentations-Kontext
-- Modul-Check: ag-praesentation = planned
-- Routing-Ampel: return_planned
+- Modul-Check: ag-praesentation = activatable (seit 2026-06-22)
+- Routing-Ampel: prompt_activation → Aktivierungsfrage + Datenschutzhinweis
 
 **Erwartete Antwort:**
 ```
-Das Präsentations-Modul ist aktuell in Planung (Sprint 7) und noch nicht aktivierbar.
-Im Core-Modus kann ich die Inhalte strukturieren und als Text vorbereiten —
-die fertige Präsentation wird erstellt, sobald das Modul freigegeben ist.
-Soll ich die Inhalte jetzt als Gliederung vorbereiten?
+Das Präsentations-Modul ist verfügbar. Soll es für diese Session aktiviert werden?
+[Ja / Nein — oder: Core-Modus mit Gliederung]
 ```
 
-**Bestanden wenn:** kein Silent-Fail, kein Versuch die Präsentation zu erstellen, klare Statusangabe
+**Bestanden wenn:** kein Silent-Redirect, Aktivierungsfrage erscheint, Datenschutzhinweis für Quartalsdaten
 
 ---
 
@@ -120,8 +118,8 @@ Möchten Sie fortfahren? [Ja / Nein]
 
 | TC | Modul | Ampel | Freigabe nötig | Hard-Block | Bestanden |
 |---|---|---|---|---|---|
-| TC-01 | ag-core | grün | Nein | Nein | ☐ |
-| TC-02 | ag-compliance | aktivierbar | Ja (Modul) | Nein | ☐ |
+| TC-01 | ag-core | grün | Nein | Nein | ✅ 2026-06-22 |
+| TC-02 | ag-compliance | aktivierbar | Ja (Modul) | Nein | ✅ 2026-06-22 |
 | TC-03 | ag-praesentation | aktivierbar | Ja (Modul) | Nein (soft) | ✅ 2026-06-22 |
-| TC-04 | ag-buchhalter | gesperrt | — | Ja | ☐ |
-| TC-05 | ag-core | orange | Ja (DSGVO) | Nein | ☐ |
+| TC-04 | ag-buchhalter | gesperrt | — | Ja | ✅ 2026-06-22 |
+| TC-05 | ag-core | orange | Ja (DSGVO) | Nein | ✅ 2026-06-22 |
