@@ -27,6 +27,7 @@ MESSAGES: dict[str, str] = {
     "totp_not_configured": "Fuer Ihren Account ist kein TOTP konfiguriert. Bitte richten Sie die Zwei-Faktor-Authentifizierung ein.",
     "totp_already_confirmed": "TOTP ist bereits eingerichtet. Loeschen Sie das bestehende Setup, bevor Sie ein neues erstellen.",
     "totp_pending_invalid": "Der Zwei-Schritt-Login-Token ist ungueltig oder abgelaufen. Bitte melden Sie sich erneut an.",
+    "sandbox_blocked": "Diese Aktion ist außerhalb des erlaubten AILIZA-Arbeitsbereichs nicht gestattet. Bitte beschränken Sie die Aktion auf den freigegebenen Workspace oder holen Sie eine explizite Freigabe ein.",
 }
 
 

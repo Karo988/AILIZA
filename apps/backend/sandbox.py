@@ -1,0 +1,280 @@
+"""
+AILIZA Gate 8 — Local Device Protection (Sandbox-Gate)
+=======================================================
+AILIZA handelt autonom *innerhalb* definierter, geprüfter Arbeitsbereiche.
+Änderungen an externen Programmen, Betriebssystem, Handy-Daten oder fremden
+Dateien erfolgen nie ohne explizite, nachvollziehbare Freigabe.
+
+Standardverhalten:
+  - Lesen:    nur freigegebene Dateien (AILIZA_WORKSPACE_PATH)
+  - Schreiben: nur im Workspace oder explizit gewähltem Zielordner
+  - Löschen:  verboten (außer Wartungsmodus oder owner-Freigabe)
+  - System:   keine Shell, keine Einstellungen, keine Programme
+
+Env-Variablen:
+  AILIZA_WORKSPACE_PATH   — Pfad des freigegebenen Arbeitsordners (Default: ./ailiza_workspace)
+  AILIZA_MAINTENANCE_MODE — "1"/"true" erlaubt destruktive Aktionen im Workspace für Admins
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+try:
+    from .errors import AILIZAError
+except ImportError:
+    from errors import AILIZAError
+
+
+class ActionClass(str, Enum):
+    # Datei-Operationen
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    DELETE_FILE = "delete_file"
+    MOVE_FILE = "move_file"
+
+    # System / Programme
+    INSTALL_APP = "install_app"
+    UNINSTALL_APP = "uninstall_app"
+    MODIFY_APP = "modify_app"
+    EXECUTE_SHELL = "execute_shell"
+    CHANGE_SETTINGS = "change_settings"
+    MODIFY_AUTOSTART = "modify_autostart"
+    MODIFY_REGISTRY = "modify_registry"
+    CHANGE_PERMISSIONS = "change_permissions"
+    MODIFY_SECURITY_SOFTWARE = "modify_security_software"
+
+    # Mobile / Persönliche Daten
+    ACCESS_CONTACTS = "access_contacts"
+    ACCESS_PHOTOS = "access_photos"
+    ACCESS_CALENDAR = "access_calendar"
+    MODIFY_CALENDAR = "modify_calendar"
+    SEND_MESSAGE = "send_message"
+    READ_SENSITIVE_LOCAL_DATA = "read_sensitive_local_data"
+
+    # Externe Apps
+    REMOTE_CONTROL_APP = "remote_control_app"
+    READ_EXTERNAL_APP = "read_external_app"
+
+
+# Aktionen die IMMER geblockt werden — auch mit Approval nicht möglich
+_ALWAYS_BLOCKED: frozenset[ActionClass] = frozenset({
+    ActionClass.INSTALL_APP,
+    ActionClass.UNINSTALL_APP,
+    ActionClass.MODIFY_APP,
+    ActionClass.MODIFY_AUTOSTART,
+    ActionClass.MODIFY_REGISTRY,
+    ActionClass.CHANGE_PERMISSIONS,
+    ActionClass.MODIFY_SECURITY_SOFTWARE,
+    ActionClass.REMOTE_CONTROL_APP,
+})
+
+# Aktionen die Owner-Approval benötigen (destruktiv oder systemkritisch)
+_REQUIRE_OWNER_APPROVAL: frozenset[ActionClass] = frozenset({
+    ActionClass.DELETE_FILE,
+    ActionClass.MOVE_FILE,
+    ActionClass.EXECUTE_SHELL,
+    ActionClass.CHANGE_SETTINGS,
+    ActionClass.READ_SENSITIVE_LOCAL_DATA,
+})
+
+# Aktionen die mindestens eine normale Approval benötigen
+_REQUIRE_APPROVAL: frozenset[ActionClass] = frozenset({
+    ActionClass.WRITE_FILE,
+    ActionClass.ACCESS_CONTACTS,
+    ActionClass.ACCESS_PHOTOS,
+    ActionClass.ACCESS_CALENDAR,
+    ActionClass.MODIFY_CALENDAR,
+    ActionClass.SEND_MESSAGE,
+    ActionClass.READ_EXTERNAL_APP,
+})
+
+# Im Workspace autonom erlaubte Aktionen
+_WORKSPACE_AUTONOMOUS: frozenset[ActionClass] = frozenset({
+    ActionClass.READ_FILE,
+    ActionClass.WRITE_FILE,
+})
+
+
+def _get_workspace() -> Path:
+    raw = os.getenv("AILIZA_WORKSPACE_PATH", "./ailiza_workspace")
+    return Path(raw).resolve()
+
+
+def _is_maintenance_mode() -> bool:
+    raw = os.getenv("AILIZA_MAINTENANCE_MODE", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _is_in_workspace(target_path: str | None) -> bool:
+    if not target_path:
+        return False
+    workspace = _get_workspace()
+    try:
+        resolved = Path(target_path).resolve()
+        return resolved == workspace or workspace in resolved.parents
+    except Exception:
+        return False
+
+
+@dataclass(frozen=True)
+class SandboxResult:
+    allowed: bool
+    action_class: str
+    target: str
+    reason: str
+    requires_approval: bool = False
+    requires_owner_approval: bool = False
+    in_workspace: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "action_class": self.action_class,
+            "target": self.target,
+            "reason": self.reason,
+            "requires_approval": self.requires_approval,
+            "requires_owner_approval": self.requires_owner_approval,
+            "in_workspace": self.in_workspace,
+        }
+
+
+def assess_local_action(
+    action_class: ActionClass | str,
+    target_path: str | None = None,
+) -> SandboxResult:
+    """
+    Prüft ob eine lokale Geräte-Aktion erlaubt ist.
+
+    Rückgabe: SandboxResult mit allowed=False wenn geblockt,
+              requires_owner_approval=True wenn Owner-Freigabe nötig,
+              requires_approval=True wenn Nutzer-Freigabe nötig.
+    """
+    try:
+        ac = ActionClass(action_class)
+    except ValueError:
+        return SandboxResult(
+            allowed=False,
+            action_class=str(action_class),
+            target=target_path or "<unknown>",
+            reason=f"Unbekannte Aktionsklasse '{action_class}' — fail-closed geblockt.",
+        )
+
+    in_ws = _is_in_workspace(target_path)
+    target_label = "<workspace>" if in_ws else (target_path or "<unknown>")
+
+    # Immer geblockt — keine Freigabe möglich
+    if ac in _ALWAYS_BLOCKED:
+        return SandboxResult(
+            allowed=False,
+            action_class=ac.value,
+            target=target_label,
+            reason=f"Aktion '{ac.value}' ist permanent gesperrt (Device Protection Gate).",
+            in_workspace=in_ws,
+        )
+
+    # Destruktive Aktionen: nur im Wartungsmodus und nur im Workspace
+    if ac in _REQUIRE_OWNER_APPROVAL:
+        if ac == ActionClass.DELETE_FILE and _is_maintenance_mode() and in_ws:
+            return SandboxResult(
+                allowed=True,
+                action_class=ac.value,
+                target=target_label,
+                reason="Wartungsmodus aktiv — Löschen im Workspace erlaubt.",
+                in_workspace=True,
+            )
+        return SandboxResult(
+            allowed=False,
+            action_class=ac.value,
+            target=target_label,
+            reason=f"Aktion '{ac.value}' erfordert explizite Owner-Freigabe.",
+            requires_owner_approval=True,
+            in_workspace=in_ws,
+        )
+
+    # Approval-pflichtige Aktionen
+    if ac in _REQUIRE_APPROVAL:
+        # Write im Workspace autonom erlaubt
+        if ac == ActionClass.WRITE_FILE and in_ws:
+            return SandboxResult(
+                allowed=True,
+                action_class=ac.value,
+                target=target_label,
+                reason="Schreiben im Workspace ist autonom erlaubt.",
+                in_workspace=True,
+            )
+        # Write außerhalb Workspace → Owner-Approval
+        if ac == ActionClass.WRITE_FILE and not in_ws:
+            return SandboxResult(
+                allowed=False,
+                action_class=ac.value,
+                target=target_label,
+                reason="Schreiben außerhalb des Workspace erfordert Owner-Freigabe.",
+                requires_owner_approval=True,
+                in_workspace=False,
+            )
+        return SandboxResult(
+            allowed=False,
+            action_class=ac.value,
+            target=target_label,
+            reason=f"Aktion '{ac.value}' erfordert explizite Nutzer-Freigabe mit Vorschau.",
+            requires_approval=True,
+            in_workspace=in_ws,
+        )
+
+    # Lesen: nur im Workspace
+    if ac == ActionClass.READ_FILE:
+        if in_ws:
+            return SandboxResult(
+                allowed=True,
+                action_class=ac.value,
+                target=target_label,
+                reason="Lesen im Workspace ist erlaubt.",
+                in_workspace=True,
+            )
+        return SandboxResult(
+            allowed=False,
+            action_class=ac.value,
+            target=target_label,
+            reason="Lesen außerhalb des Workspace erfordert explizite Freigabe.",
+            requires_approval=True,
+            in_workspace=False,
+        )
+
+    return SandboxResult(
+        allowed=False,
+        action_class=ac.value,
+        target=target_label,
+        reason=f"Aktion '{ac.value}' ist nicht im erlaubten Standardverhalten.",
+        in_workspace=in_ws,
+    )
+
+
+def enforce_sandbox(action_class: ActionClass | str, target_path: str | None = None) -> None:
+    """Wirft AILIZAError wenn die lokale Aktion nicht erlaubt ist."""
+    result = assess_local_action(action_class, target_path)
+    if not result.allowed:
+        raise AILIZAError(
+            message_de=result.reason,
+            code="sandbox_blocked",
+            safe_alternatives=[
+                "Aktion auf den freigegebenen AILIZA-Workspace beschränken",
+                "Explizite Nutzerfreigabe einholen",
+                "Administrator kontaktieren",
+            ],
+        )
+
+
+def sandbox_status() -> dict[str, Any]:
+    """Gibt Sandbox-Konfiguration zurück (für Admin-Endpoint)."""
+    return {
+        "workspace_path": str(_get_workspace()),
+        "maintenance_mode": _is_maintenance_mode(),
+        "always_blocked": sorted(a.value for a in _ALWAYS_BLOCKED),
+        "require_owner_approval": sorted(a.value for a in _REQUIRE_OWNER_APPROVAL),
+        "require_approval": sorted(a.value for a in _REQUIRE_APPROVAL),
+        "workspace_autonomous": sorted(a.value for a in _WORKSPACE_AUTONOMOUS),
+    }
