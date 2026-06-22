@@ -2,7 +2,7 @@
 ## AILIZA – Autonomer KI-Assistent für KMU
 
 **Stand:** 2026-06-20  
-**Version:** 0.3 (Entwurf – noch nicht fachlich geprüft)  
+**Version:** 0.4 (Entwurf – noch nicht fachlich geprüft)  
 **Verantwortlicher:** [Unternehmensname, Anschrift – einzutragen]  
 **DSB (falls benannt):** [Name, Kontakt – einzutragen]  
 **Erstellt durch:** Technische Implementierung AILIZA  
@@ -77,9 +77,9 @@
 | **Verarbeitete Daten** | Audit-Log: action (Ereignistyp), Metadaten (user_id, role, tenant_id – nie Passwort, TOTP-Secret, Code, Backup-Code oder Prompt-Inhalt), Zeitstempel; Security-Log: incident_type, severity, tenant_id; Performance-Log: latency_ms, provider, error_type – keine personenbezogenen Daten; Cost-Log: tokens_in, tokens_out, provider, model, use_case, cost_estimate – keine personenbezogenen Daten |
 | **Empfänger** | Keine Weitergabe; nur interner DB-Zugriff durch Admins und DSB |
 | **Drittlandtransfer** | Keiner |
-| **Speicherdauer** | Konfigurierbar via Retention-Cleanup (APScheduler); Empfehlung: Audit-Logs 90 Tage, Security-Logs 180 Tage, Performance/Cost-Logs 30 Tage; **Retention-Policy noch nicht produktiv konfiguriert (offener Punkt)** |
-| **TOM** | Getrennte Log-Tabellen (Audit, Security, Performance, Cost), kein Prompt-Inhalt, kein Secret, keine Backup-Codes in Logs (durch Tests gesichert), tenant_id-Isolation, nur ADMIN/DSB-Lesezugriff |
-| **Offene Punkte** | Retention-Zeiträume noch nicht per Konfiguration festgelegt und dokumentiert |
+| **Speicherdauer** | Konfigurierbar via Env-Variablen; Standardwerte: Audit-Logs 90 Tage (`AILIZA_RETAIN_AUDIT_DAYS`), Security-Logs 180 Tage (`AILIZA_RETAIN_SECURITY_DAYS`), Performance-Logs 30 Tage (`AILIZA_RETAIN_PERFORMANCE_DAYS`), Cost-Logs 30 Tage (`AILIZA_RETAIN_COST_DAYS`); Cleanup via APScheduler oder manuell über `POST /admin/cleanup` |
+| **TOM** | Getrennte Log-Tabellen (Audit, Security, Performance, Cost), kein Prompt-Inhalt, kein Secret, keine Backup-Codes in Logs (durch Tests gesichert), tenant_id-Isolation, nur ADMIN/DSB-Lesezugriff, automatischer Retention-Cleanup |
+| **Offene Punkte** | Cleanup-Schedule (APScheduler) noch nicht in Produktiv-Deployment konfiguriert |
 
 ---
 
@@ -94,7 +94,7 @@
 | **Verarbeitete Daten** | reflection_facts: Inhalt (keine PII nach Redaction), data_classes, quality_score, pii_cleared-Flag, created_at, expires_at, tenant_id, user_id (optional); skills: Name, Beschreibung, steps_summary, status, proposed_by |
 | **Empfänger** | Keine Weitergabe; LLM-Provider erhält Kontext-Facts als Teil des Prompts (→ VT 3) |
 | **Drittlandtransfer** | Indirekt via LLM-Provider (→ VT 3) |
-| **Speicherdauer** | reflection_facts: expires_at-Feld (konfigurierbar, Empfehlung: 90 Tage); bei Widerruf: Löschung aller Facts des Tenants |
+| **Speicherdauer** | reflection_facts: expires_at-Feld, Standard 90 Tage (`AILIZA_RETAIN_REFLECTION_DAYS`), Retention-Cleanup bereinigt abgelaufene Einträge; bei Widerruf: Löschung aller Facts des Tenants |
 | **TOM** | opt_in_confirmed-Pflicht, pii_cleared-Flag, Redaction vor Speicherung, Datenklassen-Klassifikation, tenant_id-Isolation, Quality-Score-System (negative Bewertungen reduzieren Score) |
 | **Offene Punkte** | Widerrufsweg für Memory-Opt-in noch nicht über UI erreichbar (nur API); Opt-in-Text noch nicht als Datenschutzhinweis formuliert |
 
@@ -111,9 +111,26 @@
 | **Verarbeitete Daten** | user_id, tenant_id, Rolle, created_at, active-Flag; bei TOTP-Admin-Reset: target_user_id, ausführender Admin (user_id), Begründung (Pflichtfeld), Zeitstempel |
 | **Empfänger** | Keine Weitergabe |
 | **Drittlandtransfer** | Keiner |
-| **Speicherdauer** | Nutzerkonto: bis Admin-Löschung oder Betroffenenantrag (Art. 17 DSGVO); Admin-Aktions-Log (Audit): → VT 4 |
+| **Speicherdauer** | Nutzerkonto: bis Admin-Löschung oder Betroffenenantrag (Art. 17 DSGVO); Admin-Aktions-Log (Audit): → VT 4; TOTP-Backup-Codes (genutzte): 365 Tage (`AILIZA_RETAIN_TOTP_BACKUP_DAYS`) |
 | **TOM** | Nur ADMIN-Rolle darf Nutzer anlegen/löschen/TOTP-Reset; TOTP-Reset nur mit Pflichtbegründung; alle Admin-Aktionen im Audit-Log; Rate-Limiting auf Register-Endpoint (5/min) |
 | **Offene Punkte** | Vier-Augen-Prinzip für Admin-Reset noch nicht implementiert (Empfehlung für höheres Schutzlevel); Passwort-Reset-Flow noch nicht implementiert |
+
+---
+
+## Verarbeitungstätigkeit 7: Capability- und Provider-Governance
+
+| Feld | Inhalt |
+|---|---|
+| **Bezeichnung** | Steuerung und Protokollierung der KI-Fähigkeiten (Capabilities) und Provider-Auswahl; Policy-Gateway und Datenklassen-Prüfung |
+| **Zweck** | Sicherstellung dass nur zulässige Daten an externe LLM-Provider weitergeleitet werden; Durchsetzung von Nutzungsbeschränkungen (EU AI Act Art. 50, DSGVO Art. 5 Abs. 1 lit. b – Zweckbindung); Fail-Closed-Prinzip |
+| **Rechtsgrundlage** | Art. 6 Abs. 1 lit. c (rechtliche Verpflichtung: EU AI Act, DSGVO-Compliance) und Art. 6 Abs. 1 lit. f (berechtigtes Interesse: Risikominimierung) |
+| **Betroffene Personen** | Nutzer die Anfragen stellen; indirekt alle Personen deren Daten in Anfragen enthalten sein könnten |
+| **Verarbeitete Daten** | Datenklassifikations-Ergebnis (PUBLIC/INTERNAL/CONFIDENTIAL/SECRET/CREDENTIALS/SPECIAL_CATEGORY – kein Klartext), Capability-Typ (SIMPLE/MODERATE/COMPLEX/RISKY), Provider-ID, allowed_use_cases, Routing-Entscheidung, Policy-Ergebnis (erlaubt/blockiert/Begründung), Zeitstempel |
+| **Empfänger** | Keine Weitergabe; Entscheidungen werden nur intern für Routing-Zwecke verwendet |
+| **Drittlandtransfer** | Keiner (die Governance selbst überträgt keine Daten; Transfer findet erst nach positiver Prüfung in VT 3 statt) |
+| **Speicherdauer** | Routing- und Policy-Entscheidungen werden nicht persistent gespeichert (flüchtig, nur für den Request); Cost- und Performance-Logs → VT 4 |
+| **TOM** | Kill-Switch vor jedem externen Call, 5-stufige Pipeline (Klassifikation → Policy → Redaction → Orchestrator → Provider), Fail-Closed (unbekannte Capability oder Provider → Block), ProviderProfile mit TransferBasis-Enum, `admin_disabled`-Flag für deaktivierte Provider (OpenRouter), `logs_prompts`-Flag als Ausschlusskriterium |
+| **Offene Punkte** | Capability-Routing für RISKY-Klasse noch nicht vollständig implementiert (Stub); ProviderProfile-Konfiguration noch nicht über Admin-UI verwaltbar |
 
 ---
 
@@ -150,7 +167,7 @@
 | 2 | AVV/DPA mit Groq abschließen | Hoch | Rechtlich |
 | 3 | AVV/DPA mit Anthropic abschließen | Hoch | Rechtlich |
 | 4 | TOTP-Secret at rest: AES-GCM oder KMS/Vault | Hoch | Technisch (Production-Gate) |
-| 5 | Retention-Zeiträume konfigurieren und dokumentieren | Mittel | Technisch + DSB |
+| 5 | ~~Retention-Zeiträume konfigurieren und dokumentieren~~ | ✅ Erledigt (v0.4) | – |
 | 6 | Datenschutzerklärung mit Telegram-Abschnitt veröffentlichen | Hoch | Rechtlich |
 | 7 | Betroffenenrechte Art. 18, 20 implementieren | Mittel | Technisch |
 | 8 | Memory-Opt-in-Widerruf über UI | Mittel | Technisch |
@@ -158,6 +175,9 @@
 | 10 | Vier-Augen-Prinzip für Admin-TOTP-Reset | Niedrig | Technisch |
 | 11 | VVT fachliche Prüfung durch DSB | Hoch | DSB |
 | 12 | OpenRouter AVV + Subverarbeiter-Liste | Niedrig (deaktiviert) | Rechtlich (bei Bedarf) |
+| 13 | Capability-Routing RISKY-Klasse vollständig implementieren | Mittel | Technisch |
+| 14 | ProviderProfile-Konfiguration über Admin-UI | Niedrig | Technisch |
+| 15 | Cleanup-Schedule (APScheduler) in Produktiv-Deployment konfigurieren | Mittel | Betrieb + DSB |
 
 ---
 

@@ -91,7 +91,7 @@ class AgentRuntime:
         self.create_run_record(run_id, task)
         self.audit_writer(
             "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan)},
+            {"run_id": run_id, "planned_steps": len(plan)},
         )
 
         steps: list[dict[str, Any]] = []
@@ -103,7 +103,7 @@ class AgentRuntime:
                     "run_id": run_id,
                     "step": index,
                     "tool": call.tool,
-                    "parameters": call.parameters,
+                    "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                 },
             )
 
@@ -140,7 +140,7 @@ class AgentRuntime:
                         "run_id": run_id,
                         "approval_id": approval_id,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                     },
                 )
                 return {
@@ -254,7 +254,7 @@ class AgentRuntime:
         self.create_run_record(run_id, task, streaming=True)
         self.audit_writer(
             "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan), "streaming": True},
+            {"run_id": run_id, "planned_steps": len(plan), "streaming": True},
         )
         yield stream_event(
             "run_started",
@@ -270,7 +270,7 @@ class AgentRuntime:
                     "run_id": run_id,
                     "step": index,
                     "tool": call.tool,
-                    "parameters": call.parameters,
+                    "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                     "streaming": True,
                 },
             )
@@ -372,7 +372,7 @@ class AgentRuntime:
                         "run_id": run_id,
                         "approval_id": approval_id,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                         "streaming": True,
                     },
                 )
