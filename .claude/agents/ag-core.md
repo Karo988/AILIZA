@@ -95,7 +95,7 @@ Nutzeranfrage
 | Analyse, Compliance, Recht | Starkes Modell | < 10 s |
 | Dokument / Konzept erstellen | Starkes Modell, höheres Token-Budget | < 15 s |
 | Freigabepflichtige Aktion (3§) | Stopp → Nutzerfreigabe → dann Ausführung | variabel |
-| Gesperrte Aktion (4§) | Hard-Block, keine Option | sofort |
+| Gesperrte Aktion (4§) | Verantwortungs- und Übergabemodus: Blockgrund + Risiken + fehlende Voraussetzungen + verantwortliche Rolle + sichere Übergabe dokumentieren; Ausführung nur nach expliziter Nutzerfreigabe | sofort |
 
 ## 7§ Datenschutzregeln
 

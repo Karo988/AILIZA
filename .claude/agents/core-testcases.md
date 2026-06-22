@@ -135,10 +135,10 @@ Möchten Sie fortfahren? [Ja / Nein]
 
 ## Testmatrix
 
-| TC | Modul | Ampel | Freigabe nötig | Hard-Block | Bestanden |
+| TC | Modul | Ampel | Freigabe nötig | Verantwortungs- und Übergabemodus | Bestanden |
 |---|---|---|---|---|---|
 | TC-01 | ag-core | grün | Nein | Nein | ✅ 2026-06-22 |
 | TC-02 | ag-compliance | aktivierbar | Ja (Modul) | Nein | ✅ 2026-06-22 |
 | TC-03 | ag-praesentation | aktivierbar | Ja (Modul) | Nein (soft) | ✅ 2026-06-22 |
-| TC-04 | ag-buchhaltung | gesperrt | — | Ja | ✅ 2026-06-22 |
+| TC-04 | ag-buchhaltung | gesperrt | Ja (nach Risikohinweis) | Ja | ✅ 2026-06-22 |
 | TC-05 | ag-core | orange | Ja (DSGVO) | Nein | ✅ 2026-06-22 |
