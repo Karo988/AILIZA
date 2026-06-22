@@ -65,7 +65,46 @@ except ImportError:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # ── Gate 10: Config Integrity — muss als ERSTES laufen ───────────────────
+    # AILIZA darf niemals normal starten wenn Governance-Dateien fehlen,
+    # beschädigt oder unautorisiert verändert sind.
+    _base_dir = Path(__file__).resolve().parent
+    _manifest_path = _base_dir / "governance_integrity.json"
+    try:
+        from .config_integrity import verify_integrity, IntegrityStatus
+    except ImportError:
+        from config_integrity import verify_integrity, IntegrityStatus
+
+    _integrity = verify_integrity(_base_dir, _manifest_path)
+    _integrity_ok = _integrity.all_ok
+
+    if not _integrity_ok:
+        # Fail-closed: sofort kill_switch_active setzen
+        os.environ["AILIZA_OPERATION_MODE"] = "kill_switch_active"
+        os.environ["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+        import logging as _logging
+        _logging.getLogger(__name__).critical(
+            "Gate 10 FAILED — Governance-Integrität verletzt. "
+            "Status: %s. Modus: kill_switch_active. "
+            "Betroffene Dateien: %d. Keine externen Calls, keine Schreibaktionen.",
+            _integrity.overall_status,
+            sum(1 for r in _integrity.file_results if r.decision == "blocked"),
+        )
+        # Kein raise — Backend startet im kill_switch_active Modus,
+        # damit Health/Status-Endpoints erreichbar bleiben für Monitoring.
+        # Alle Governance-abhängigen Endpoints werden durch enforce_kill_switch() geblockt.
+    # ── Ende Gate 10 ─────────────────────────────────────────────────────────
+
     init_db()
+
+    # Audit-Light: Gate-10-Ergebnis protokollieren (keine Inhalte, keine Hashes)
+    _audit_meta = _integrity.to_audit_dict()
+    _audit_meta["event_type"] = "startup.integrity_check"
+    write_audit_entry(
+        action="startup.integrity_check",
+        metadata=_audit_meta,
+    )
+
     try:
         from .maintenance.retention_cleanup import run_cleanup
     except ImportError:
