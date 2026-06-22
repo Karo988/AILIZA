@@ -189,7 +189,7 @@ Nächste geplante Agenten auf Basis dieses Allrounders:
 
 | Agent | Domain | Zusätzliche Skills | Status |
 |---|---|---|---|
-| ag-buchhalter | buchhaltung | skr-lookup, gobd-vault | Geplant Sprint 6 |
+| ag-buchhaltung | buchhaltung | skr-lookup, gobd-vault | Geplant Sprint 6 |
 | ag-praesentation | praesentation | echarts, python-pptx | Geplant Sprint 7 |
 | ag-compliance | compliance | audit-legal (erweiterter Scope) | Geplant Sprint 8 |
 | ag-hr | hr | — | Geplant (nach AVV-Abschluss) |

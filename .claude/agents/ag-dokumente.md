@@ -31,7 +31,7 @@ Weitergabe ohne Freigabe, keine rechtsverbindlichen Aussagen.
 Nicht automatisch aktiv. Core bleibt Standardagent.
 Testfreigabe erteilt: 2026-06-22, alle 6 Testfälle (TD-01–TD-06) bestanden.
 
-Nicht für: Buchhaltungsentscheidungen (→ ag-buchhalter), HR-Entscheidungen,
+Nicht für: Buchhaltungsentscheidungen (→ ag-buchhaltung), HR-Entscheidungen,
 Rechtsgutachten, externe Veröffentlichung ohne Freigabe, Compliance-Audit-Gate (→ ag-cqo).
 
 ## 2§ Erlaubte Aufgaben

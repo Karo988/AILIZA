@@ -9,7 +9,7 @@ ag-compliance | activatable | prompt_activation | Nutzerfreigabe → aktiv für 
 ag-allrounder | activatable | prompt_activation | Nutzerfreigabe → aktiv für Session
 ag-praesentation | activatable | prompt_activation | Tests bestanden 2026-06-22; echarts + python-pptx ausstehend (kein PPTX-Export); Routing-Auswahl oder ausdrückliche Nutzerabsicht nötig
 ag-dokumente | activatable | prompt_activation | Tests bestanden 2026-06-22; Vertragsprüfung ≠ Rechtsgutachten; Routing-Auswahl oder Nutzerabsicht nötig
-ag-buchhalter | blocked | return_blocked | GoBD-Vault + skr-lookup + Provider-Profil fehlen
+ag-buchhaltung | blocked | return_blocked | GoBD-Vault + skr-lookup + Provider-Profil fehlen
 ag-hr | blocked | return_blocked | AVV ausstehend; DPIA/DSFA für HR-Daten fehlt
 
 # Verhalten bei blocked:

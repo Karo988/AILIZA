@@ -116,7 +116,7 @@ Vollständige Routing-Konfiguration: `module-routing.toon`
 | Compliance & Gates | ag-compliance | 🟡 aktivierbar | Hinweis + Aktivierungsfrage → nach Freigabe weiterleiten |
 | Allrounder / Basis | ag-allrounder | 🟡 aktivierbar | Hinweis + Aktivierungsfrage → nach Freigabe weiterleiten |
 | Präsentation | ag-praesentation | 🔵 geplant | Statusmeldung: Sprint 7, noch nicht aktivierbar |
-| Buchhaltung | ag-buchhalter | 🔴 gesperrt | Blockierung + Grund + nächster Schritt, kein Silent-Fail |
+| Buchhaltung | ag-buchhaltung | 🔴 gesperrt | Blockierung + Grund + nächster Schritt, kein Silent-Fail |
 | HR | ag-hr | 🔴 gesperrt | Blockierung: AVV + DPIA fehlen |
 | Qualitäts-Gate | ag-cqo | 🟢 aktiv | Direkt aufrufbar |
 | Strategie | ag-cso | 🟢 aktiv | Direkt aufrufbar |
@@ -128,4 +128,4 @@ Vollständige Routing-Konfiguration: `module-routing.toon`
 2. ☐ Tool- und Datenregeln technisch implementieren (`run_agent` / Routing-Patch)
 3. ☐ Modul-Auswahl in UI als auswählbare Struktur entwerfen
 4. ☐ ag-praesentation als erstes risikoarmes Modul
-5. ☐ ag-buchhalter nach Provider-Profil und GoBD-Prüfung
+5. ☐ ag-buchhaltung nach Provider-Profil und GoBD-Prüfung
