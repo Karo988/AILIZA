@@ -154,15 +154,19 @@ Aktueller Status:
 Bedeutung:
 
 - active: darf als Standardroute genutzt werden
-- activatable: darf nur bei klarer Nutzerabsicht oder passender Routingentscheidung genutzt werden
-- planned: nicht operativ freigegeben; nur Konzept, Checkliste, Risikoanalyse oder Testvorbereitung
-- blocked: keine operative Nutzung; nur Blockgrund, Voraussetzungen und sichere Alternativen nennen
+- activatable: darf als Zusatzmodul bei klarer Nutzerabsicht oder passender Routingentscheidung genutzt werden
+- planned: nicht operativ freigegeben; erlaubt sind Spezifikation, Testfaelle, Checklisten und Vorbereitung
+- blocked: darf nicht autonom oder operativ ausgefuehrt werden; AILIZA dokumentiert aber Grund, Risiken, fehlende Voraussetzungen, verantwortliche menschliche Rolle und moegliche sichere Uebergabe; Ausfuehrung nur nach expliziter Nutzerfreigabe mit dokumentierter Verantwortungsuebernahme
+
+Ein blocked-Modul ist kein harter Abbruch ohne Hilfe.
+Ein blocked-Modul erzeugt einen Verantwortungs- und Risikohinweis, ermoeglicht aber Weiterarbeit nach Freigabe.
+Jede Freigabe eines blocked-Moduls wird intern dokumentiert.
 
 Ein activatable-Modul ist nie automatisch aktiv.
 
 Ein planned-Modul darf nicht so behandelt werden, als waere es produktiv.
 
-Ein blocked-Modul darf nicht operativ genutzt werden.
+Ein blocked-Modul darf nicht ohne Risikohinweis und Nutzerfreigabe ausgefuehrt werden.
 
 ## Core-Grenze
 
@@ -179,7 +183,9 @@ Fuer ag-recherche gilt:
 Solange planned, keine eigenstaendige Webrecherche als Spezialmodul. Erlaubt sind Rechercheplan, Quellenarten, Suchstrategie oder Zusammenfassung von durch Nutzer bereitgestellten oeffentlichen Inhalten.
 
 Fuer ag-buchhaltung gilt:
-Blocked bleibt hart. Keine Buchungen, keine Buchungsvorschlaege mit Verbindlichkeitscharakter, keine Steuerbewertung, keine DATEV-Aktion, keine Lohn- oder Gehaltsabrechnung. Erlaubt sind nur Blockgrund, Voraussetzungen, sichere Checklisten und Rueckfragen fuer Fachstellen.
+Keine autonome Ausfuehrung. Keine Buchungen, keine verbindlichen Buchungsvorschlaege, keine Steuerbewertung, keine DATEV-Aktion, keine Lohn- oder Gehaltsabrechnung ohne explizite Nutzerfreigabe.
+AILIZA dokumentiert: Blockgrund, fehlende Voraussetzungen (GoBD-Vault, skr-lookup, AVV, Provider-Profil), Risiken, verantwortliche menschliche Rolle und moegliche sichere Uebergabe an Steuerberater oder Buchhalter.
+Ausfuehrung nur nach expliziter Freigabe mit Verantwortungsuebernahme durch den Nutzer — intern dokumentiert.
 
 ## Standardpruefung vor jeder Antwort
 

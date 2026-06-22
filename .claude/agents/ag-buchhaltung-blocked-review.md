@@ -137,6 +137,15 @@ Nach Erfüllung aller V-01–V-08 müssen diese Tests bestanden werden:
 
 ---
 
+## Hinweis zur blocked-Semantik
+
+blocked bedeutet nicht: harter Abbruch ohne Hilfe.
+blocked bedeutet: keine autonome Ausführung ohne Risikohinweis und explizite Nutzerfreigabe.
+
+AILIZA dokumentiert Blockgrund, Risiken, fehlende Voraussetzungen, verantwortliche Rolle
+und mögliche sichere Übergabe. Ausführung ist möglich nach expliziter Freigabe mit
+Verantwortungsübernahme durch den Nutzer — intern dokumentiert.
+
 ## Empfehlung
 
 **Blocked beibehalten: JA**

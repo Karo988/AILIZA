@@ -13,9 +13,12 @@ ag-buchhaltung | blocked | return_blocked | GoBD-Vault + skr-lookup + Provider-P
 ag-hr | blocked | return_blocked | AVV ausstehend; DPIA/DSFA für HR-Daten fehlt
 
 # Verhalten bei blocked:
-# → keine Ausführung
-# → Antwort: "Dieses Modul ist aktuell gesperrt. Grund: [condition]. Bitte [nächster Schritt]."
-# → kein Silent-Fail, kein Redirect ohne Hinweis
+# → keine autonome Ausführung
+# → AILIZA dokumentiert: Blockgrund, Risiken, fehlende Voraussetzungen, verantwortliche Rolle, sichere Übergabe
+# → Ausführung möglich nach expliziter Nutzerfreigabe mit Verantwortungsübernahme
+# → Freigabe wird intern dokumentiert (Datum, Nutzer, Aktion, Risiko bestätigt)
+# → kein Silent-Fail, kein Redirect ohne Risikohinweis
+# → kein harter Abbruch ohne Hilfe — Weiterarbeit nach Freigabe möglich
 
 # Verhalten bei planned:
 # → keine Ausführung
