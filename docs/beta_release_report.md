@@ -1,8 +1,9 @@
 # AILIZA — Beta-Freigabebericht
 
-**Stand:** 2026-06-22 (aktualisiert: Gate 6 implementiert)
+**Stand:** 2026-06-22 (finalisiert: Gate 6 + Gate 10 Integrity-Scope erweitert)
 **Branch:** `claude/admiring-curie-9my9rf`
-**Testsuite:** 569/569 grün
+**Tag:** `v0.1.1-beta`
+**Testsuite:** 577/577 grün
 
 ---
 
@@ -20,7 +21,7 @@
 | Gate 7 | TOTP-Secret at rest (AES-256-GCM) | 🔴 Produktions-Gate | Aktuell kein KMS/Vault; Beta: kein TOTP-Geheimnis an externe Provider |
 | Gate 8 | Local Device Protection (Sandbox, Symlink, Approval-Reuse) | ✅ Sprint 1 | `sandbox.py`, `SandboxApproval` |
 | Gate 9 | Capability Risk Manifest (No-Fallback-No-Go, AVV-Gate) | ✅ Sprint 2 | `capability_manifest.py` |
-| Gate 10 | Config Integrity + Runtime-Enforcement (`lifespan()`) | ✅ Sprint 2 | `config_integrity.py`, SHA-256 + fail-closed |
+| Gate 10 | Config Integrity + Runtime-Enforcement (`lifespan()`) | ✅ Sprint 3 | SHA-256, 8 Dateien inkl. `document_handler.py`, fail-closed |
 
 ---
 
@@ -36,6 +37,9 @@ HR-Entscheidungen, Biometrie, Massennachrichten, Shell-Kommandos und Systemeingr
 
 Gate 10 ist aktiv im Backend-Start eingebunden. Bei beschädigter Governance-Konfiguration
 startet AILIZA nicht normal und fällt fail-closed in den `kill_switch_active`-Modus.
+Integrity-Scope: 8 Dateien (approval.py, kill_switch.py, sandbox.py, capability_manifest.py,
+policy.py, governance/data_governance.py, governance/redaction.py, documents/document_handler.py).
+Manipulation oder Fehlen von `document_handler.py` blockiert den Start (Gate 6 unveränderbar).
 
 ---
 
@@ -76,6 +80,8 @@ startet AILIZA nicht normal und fällt fail-closed in den `kill_switch_active`-M
 | `AILIZA_OPERATION_MODE=restricted` → kein Write/Send | ✅ geblockt | Gate 3 |
 | `install_software` Capability prüfen | ✅ No-Fallback-No-Go, permanent blockiert | Gate 9 |
 | `biometric_vip_recognition` Capability prüfen | ✅ No-Fallback-No-Go, permanent blockiert | Gate 9 |
+| Dokument mit "ignore all previous instructions" | ✅ blockiert, `SECURITY_SENSITIVE`, `needs_review=True` | Gate 6 |
+| `document_handler.py` manipulieren → Start | ✅ `HASH_MISMATCH`, `kill_switch_active` | Gate 10 |
 
 ---
 
@@ -100,7 +106,8 @@ Keine echten personenbezogenen Daten an externe LLMs bis AVV bestätigt:
 - Notion/CRM (falls geplant)
 
 ### Branch / Release-Tag
-Feature-Branch `claude/admiring-curie-9my9rf`, Tag `v0.1.0-beta` gesetzt (2026-06-22).
+Feature-Branch `claude/admiring-curie-9my9rf`, Tag `v0.1.0-beta` gesetzt (2026-06-22),
+`v0.1.1-beta` nach Gate-6/10-Finalisierung.
 Für Pilot: in geschützten Release-Branch mergen.
 
 ### Manifest-Signierung
@@ -134,7 +141,7 @@ Produktionsanforderung: GPG-Signatur oder HSM-basierte Signierung.
 | `test_gate6_prompt_injection.py` | 33 | Pattern-Erkennung, Audit-Light, Scan |
 | `test_gate8_device_protection.py` | 68 | Sandbox, Symlink, Approval-Reuse |
 | `test_gate9_capability_manifest.py` | 42 | Manifest, No-Fallback-No-Go, AVV |
-| `test_gate10_config_integrity.py` | 40 | Integrity-Check, Manifest |
+| `test_gate10_config_integrity.py` | 48 | Integrity-Check, Manifest, document_handler.py-Scope |
 | `test_gate10_runtime_enforcement.py` | 38 | Lifespan, Kill-Switch nach Failure, Smoke |
 | Bestands-Tests | 308 | E2E, Auth, Approval, Redaktion, VVT, … |
-| **Gesamt** | **569** | **569/569 grün** |
+| **Gesamt** | **577** | **577/577 grün** |

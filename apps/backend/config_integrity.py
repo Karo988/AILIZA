@@ -11,6 +11,7 @@ Was Gate 10 schützt:
   - Policy-Gateway (policy.py) — Datenziel-Matrix, Policy-Regeln
   - Datenklassifikation (governance/data_governance.py) — SPECIAL_CATEGORY etc.
   - Redaktion (governance/redaction.py) — _BLOCK_CLASSES, _SECRET_PATTERNS
+  - Dokument-Sicherheitslogik (documents/document_handler.py) — Gate 6 Prompt-Injection
 
 Welche Dateien geprüft werden:
   Definiert in GOVERNANCE_FILES_RELATIVE (relativ zu base_dir = apps/backend).
@@ -60,6 +61,7 @@ GOVERNANCE_FILES_RELATIVE: tuple[str, ...] = (
     "policy.py",
     "governance/data_governance.py",
     "governance/redaction.py",
+    "documents/document_handler.py",  # Gate 6: Prompt-Injection-Erkennung
 )
 
 # Name der Integrity-Manifest-Datei (liegt in base_dir)
