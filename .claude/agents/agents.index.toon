@@ -8,4 +8,4 @@ ailiza-masterprompt | AILIZA Masterprompt v2.0-rc. Oberste Governance-Ebene: Vor
 ag-allrounder | Generalistischer KMU-Basisagent. Lernt aus vergangenen Chats. DSGVO warn-and-decide. Spezialisierbar für Buchhaltung, HR, Marketing, Präsentation. Ableitung aller Spezialagenten. | lean-review,audit-legal
 ag-compliance | AILIZA Compliance Assistant. Gate-Logik 1–10, DSGVO/EU-AI-Act-Prüfung, Beta-/Pilot-/Produktionsgrenzen, No-Go-Regeln. Abgeleitet aus ag-allrounder. | lean-review,audit-legal
 ag-praesentation | Präsentations-Modul. Gliederungen, Folienentwürfe, Storylines, Sprechertexte, Inhaltsverdichtung. Risikoarmes Modul. Status: aktivierbar (🟡). | lean-review
-ag-dokumente | Dokumenten-Modul. Strukturieren, zusammenfassen, verbessern, Entwürfe erstellen. Kein Rechtsgutachten, keine HR/Steuer-Entscheidungen. Status: geplant (🔵). | lean-review,audit-legal
+ag-dokumente | Dokumenten-Modul. Strukturieren, zusammenfassen, verbessern, Entwürfe erstellen. Kein Rechtsgutachten, keine HR/Steuer-Entscheidungen. Status: aktivierbar (🟡). | lean-review,audit-legal
