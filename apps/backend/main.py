@@ -621,6 +621,8 @@ async def documents_scan(request: Request, file: UploadFile = File(...)) -> dict
         "data_classes": [c.value for c in scan.classification.data_classes],
         "highest_risk_class": scan.classification.highest_risk_class.value,
         "needs_review": scan.classification.needs_review,
+        "injection_detected": scan.injection_detected,
+        "injection_pattern_count": scan.injection_pattern_count,
     }
 
 
