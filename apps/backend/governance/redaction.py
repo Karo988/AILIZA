@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from .data_governance import (
     ClassificationResult,
+    DataClass,
     _CARD_PATTERN,
     _EMAIL_PATTERN,
     _IBAN_PATTERN,
@@ -22,6 +23,10 @@ from .data_governance import (
     _PHONE_PATTERN,
     _SECRET_PATTERNS,
 )
+
+# SPECIAL_CATEGORY (DSGVO Art. 9): gesamten Text blockieren wenn keine Token-Redaktion greift.
+# CREDENTIALS werden token-basiert durch _SECRET_PATTERNS bereinigt — kein frühzeitiger Block nötig.
+_BLOCK_CLASSES = {DataClass.SPECIAL_CATEGORY}
 
 
 @dataclass
@@ -62,6 +67,19 @@ def redact(text: str, classification: ClassificationResult | None = None) -> Red
     replacements: dict[str, str] = {}
     secrets_blocked = 0
     pii_replaced = 0
+
+    # 0. Besondere Kategorien (DSGVO Art. 9) und CREDENTIALS: gesamten Text blockieren
+    if classification is not None:
+        blocking = _BLOCK_CLASSES.intersection(classification.data_classes)
+        if blocking:
+            blocked_classes = "+".join(sorted(c.value for c in blocking))
+            return RedactionResult(
+                redacted_text=f"[BLOCKED:{blocked_classes}]",
+                replacements={},
+                secrets_blocked=1,
+                pii_replaced=0,
+                redaction_applied=True,
+            )
 
     # 1. Secrets vollstaendig entfernen
     for _name, pattern in _SECRET_PATTERNS:
