@@ -87,6 +87,60 @@ _IBAN_PATTERN = re.compile(r"\bDE\d{20}\b")
 _CARD_PATTERN = re.compile(r"\b(?:\d[ \-]?){13,16}\b")
 _IP_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
+# Persönliche Bezeichner (DSGVO Art. 4 Nr. 1)
+_PERSONAL_NAME_PATTERN = re.compile(
+    r"\b(Vorname|Nachname|Name|Geburtsdatum|Geburtsort|Personalausweis|Reisepass"
+    r"|Kundennummer|Mitarbeiternummer|Sozialversicherungsnummer|Steuer-?ID"
+    r"|first\s+name|last\s+name|date\s+of\s+birth|passport|national\s+id"
+    r"|customer\s+(id|number)|employee\s+(id|number)|social\s+security)\b",
+    re.I,
+)
+
+# DSGVO Art. 9 — Besondere Kategorien (abschliessende Liste)
+_SPECIAL_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
+    # Gesundheit / medizinisch
+    ("health_diagnosis", re.compile(
+        r"\b(Diagnose|Krankheit|Symptom|Behandlung|Medikament|Patient|Arzt|Therapie"
+        r"|Krankenakte|Befund|HIV|AIDS|Krebs|Diabetes|Epilepsie|Depression|Schizophrenie"
+        r"|Metformin|Insulin|Chemotherapie|psychisch|psychiatrisch|Behinderung"
+        r"|diagnosis|disease|symptom|treatment|medication|patient|physician|therapy"
+        r"|medical\s+record|HIV|cancer|diabetes|epilepsy|depression|disability"
+        r"|prescription|hospitali[zs]ation)\b", re.I,
+    )),
+    # Biometrisch
+    ("biometric", re.compile(
+        r"\b(Fingerabdruck|Gesichtserkennung|Retina|Iris-?scan|DNA|Erbgut"
+        r"|fingerprint|face\s+recognition|retina|iris\s+scan|biometric)\b", re.I,
+    )),
+    # Politisch / Weltanschauung
+    ("political", re.compile(
+        r"\b(Parteimitgliedschaft|politische\s+(Meinung|Ansicht|Überzeugung)"
+        r"|Gewerkschaft|Weltanschauung|party\s+membership|political\s+(opinion|view)"
+        r"|trade\s+union|union\s+membership)\b", re.I,
+    )),
+    # Religion / Glaube
+    ("religious", re.compile(
+        r"\b(Religion|Religionszugehörigkeit|Konfession|Glaube|Glaubensbekenntnis"
+        r"|Kirchenmitglied|Muslim|Christ|Jude|Buddhist|Hindu|Atheist"
+        r"|religious\s+(belief|affiliation)|denomination|faith|church\s+member)\b", re.I,
+    )),
+    # Ethnische Herkunft
+    ("ethnic_origin", re.compile(
+        r"\b(ethnische\s+Herkunft|Rasse|Hautfarbe|Nationalität|Volkszugehörigkeit"
+        r"|ethnic\s+origin|racial\s+origin|nationality\s+data)\b", re.I,
+    )),
+    # Sexuelle Orientierung / Geschlecht
+    ("sexual_orientation", re.compile(
+        r"\b(sexuelle\s+Orientierung|Geschlechtsidentität|transgender|nicht-?binär"
+        r"|sexual\s+orientation|gender\s+identity|non-?binary)\b", re.I,
+    )),
+    # Strafrechtlich
+    ("criminal", re.compile(
+        r"\b(Vorstrafe|Strafakte|strafrechtliche\s+Verurteilung|Strafregister"
+        r"|criminal\s+record|conviction|criminal\s+history)\b", re.I,
+    )),
+]
+
 
 def classify(text: str) -> ClassificationResult:
     """Klassifiziert einen Text pattern-basiert. Fail-closed bei Fehler."""
@@ -110,6 +164,15 @@ def classify(text: str) -> ClassificationResult:
         if _IP_PATTERN.search(text):
             matched.append("ip_address")
             classes.add(DataClass.PERSONAL_DATA)
+        if _PERSONAL_NAME_PATTERN.search(text):
+            matched.append("personal_identifier")
+            classes.add(DataClass.PERSONAL_DATA)
+
+        for rule_name, pattern in _SPECIAL_CATEGORY_PATTERNS:
+            if pattern.search(text):
+                matched.append(rule_name)
+                classes.add(DataClass.SPECIAL_CATEGORY)
+
         if _IBAN_PATTERN.search(text):
             matched.append("iban")
             classes.add(DataClass.FINANCIAL)

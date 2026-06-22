@@ -186,9 +186,8 @@ class TestCredentialInInput:
 # Testfall 4: Besondere Kategorie (SPECIAL_CATEGORY) — Blockade vor LLM
 # ─────────────────────────────────────────────────────────────────────────────
 class TestSpecialCategoryData:
-    @pytest.mark.xfail(reason="Klassifizierer erkennt Gesundheitsdaten noch nicht als SPECIAL_CATEGORY — Verbesserung erforderlich (siehe offene Punkte)")
     def test_health_data_classified_as_special_category(self):
-        """Gesundheitsdaten werden als SPECIAL_CATEGORY erkannt."""
+        """Gesundheitsdaten werden als SPECIAL_CATEGORY erkannt (DSGVO Art. 9)."""
         from apps.backend.governance.data_governance import classify, DataClass
         result = classify("Ich habe Diabetes und nehme Metformin.")
         assert DataClass.SPECIAL_CATEGORY in result.data_classes
@@ -208,9 +207,8 @@ class TestSpecialCategoryData:
         result = check_capability("llm_call", data_classes=[DataClass.SPECIAL_CATEGORY])
         assert not result.allowed
 
-    @pytest.mark.xfail(reason="Klassifizierer erkennt medizinische Begriffe noch nicht als SPECIAL_CATEGORY — Verbesserung erforderlich")
     def test_special_category_redacted_or_blocked(self):
-        """SPECIAL_CATEGORY-Input wird redigiert oder blockiert."""
+        """SPECIAL_CATEGORY-Input wird redigiert oder blockiert (DSGVO Art. 9)."""
         from apps.backend.governance.redaction import redact
         from apps.backend.governance.data_governance import classify, DataClass
         text = "Patient hat HIV und wurde positiv getestet."
