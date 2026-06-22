@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import Column, DateTime, Float, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
@@ -43,10 +43,12 @@ approval_requests = Table(
     Column("input_params", JSON, nullable=False),
     Column("risk_level", String(32), nullable=False),
     Column("risk_reason", Text, nullable=False),
+    Column("required_approver_roles", JSON, nullable=True),
     Column("status", String(32), nullable=False, default="pending"),
     Column("resolved_at", DateTime(timezone=True), nullable=True),
     Column("note", Text, nullable=True),
     Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
 )
 
 agent_runs = Table(
@@ -341,18 +343,26 @@ def create_approval_request(
     risk_reason: str,
     run_id: str | None = None,
     tenant_id: str = DEFAULT_TENANT_ID,
+    required_approver_roles: list[str] | None = None,
 ) -> dict[str, Any]:
+    from .approval import APPROVAL_TIMEOUT_SECONDS, APPROVAL_ROLES  # type: ignore[attr-defined]
+    now = datetime.now(timezone.utc)
+    timeout_s = APPROVAL_TIMEOUT_SECONDS.get(risk_level, 1800)
+    expires = (now + timedelta(seconds=timeout_s)) if timeout_s > 0 else None
+    roles = required_approver_roles or APPROVAL_ROLES.get(risk_level, ["admin", "owner"])
     entry = {
-        "created_at": datetime.now(timezone.utc),
+        "created_at": now,
         "run_id": run_id,
         "tool": tool,
         "input_params": input_params,
         "risk_level": risk_level,
         "risk_reason": risk_reason,
+        "required_approver_roles": roles,
         "status": "pending",
         "resolved_at": None,
         "note": None,
         "tenant_id": tenant_id,
+        "expires_at": expires,
     }
 
     with engine.begin() as connection:
