@@ -14,6 +14,8 @@ Retentionsfristen (DSGVO-konform, konfigurierbar via Env):
   AILIZA_RETAIN_REFLECTION_DAYS    =  90  (Memory/Reflection-Facts — opt-in)
   AILIZA_RETAIN_TOTP_BACKUP_DAYS   = 365  (genutzte Backup-Codes — fuer Audit-Nachweis)
   AILIZA_RETAIN_MESSENGER_INACTIVE_DAYS = 365  (inaktive Telegram-Bindings)
+  AILIZA_RETAIN_APPROVAL_DAYS          =  90  (Approval-Records — inkl. Rollenentscheid)
+  AILIZA_RETAIN_AGENT_RUNS_DAYS        =  30  (Agent-Run-Metadaten)
 
 Kann aufgerufen werden als:
   - Hintergrund-Task beim Start (lifespan)
@@ -48,6 +50,8 @@ RETENTION = {
     "reflection_facts":      _retain_days("AILIZA_RETAIN_REFLECTION_DAYS", 90),
     "totp_backup_codes":     _retain_days("AILIZA_RETAIN_TOTP_BACKUP_DAYS", 365),
     "messenger_bindings":    _retain_days("AILIZA_RETAIN_MESSENGER_INACTIVE_DAYS", 365),
+    "approval_requests":     _retain_days("AILIZA_RETAIN_APPROVAL_DAYS", 90),
+    "agent_runs":            _retain_days("AILIZA_RETAIN_AGENT_RUNS_DAYS", 30),
 }
 
 
@@ -161,6 +165,36 @@ def run_cleanup() -> dict[str, Any]:
         except Exception as exc:
             logger.warning("Retention messenger_bindings fehlgeschlagen: %s", exc)
             results["messenger_bindings__inactive"] = -1
+
+        # Approval-Records (abgelaufene und aufgeloeste aelter als Frist)
+        try:
+            cutoff = (now - timedelta(days=RETENTION["approval_requests"])).isoformat()
+            r = conn.execute(
+                text(
+                    "DELETE FROM approval_requests "
+                    "WHERE created_at < :cutoff AND status IN ('approved','rejected','auto')"
+                ),
+                {"cutoff": cutoff},
+            )
+            results["approval_requests__resolved"] = r.rowcount
+        except Exception as exc:
+            logger.warning("Retention approval_requests fehlgeschlagen: %s", exc)
+            results["approval_requests__resolved"] = -1
+
+        # Agent-Run-Metadaten (abgeschlossene Runs aelter als Frist)
+        try:
+            cutoff = (now - timedelta(days=RETENTION["agent_runs"])).isoformat()
+            r = conn.execute(
+                text(
+                    "DELETE FROM agent_runs "
+                    "WHERE created_at < :cutoff AND status IN ('completed','failed','blocked')"
+                ),
+                {"cutoff": cutoff},
+            )
+            results["agent_runs__completed"] = r.rowcount
+        except Exception as exc:
+            logger.warning("Retention agent_runs fehlgeschlagen: %s", exc)
+            results["agent_runs__completed"] = -1
 
     total = sum(v for v in results.values() if v >= 0)
     logger.info("Retention-Cleanup abgeschlossen. Gesamt: %d Eintraege geloescht.", total)
