@@ -3,5 +3,6 @@ name | description | skills
 ag-cqo | Chief Quality Officer. Audits harness structure, source-code security (OWASP), legal compliance (EU AI Act, GDPR, German law), and deliverables, then renders an Approved/Rejected stage-gate. | lean-review,audit-security,audit-legal,proofread
 ag-cso | Chief Strategy Officer. Runs the sota skill to assess a project against the current state of the art and renders a scored strategic report with competitive edge. Read-only. | sota,lean-review
 ag-cto | Chief Technology Officer. Full coding agent — writes and verifies code following the project's conventions, self-reviews with lean-review and audit-security, and keeps documentation in sync. | lean-review,audit-security
+ag-core | AILIZA Core v1. Systemrolle, erlaubte/gesperrte Aufgaben, Basisfluss, Routing, Datenschutzregeln, Modul-Übersicht. Basis für alle Agenten. | lean-review,audit-legal
 ag-allrounder | Generalistischer KMU-Basisagent. Lernt aus vergangenen Chats. DSGVO warn-and-decide. Spezialisierbar für Buchhaltung, HR, Marketing, Präsentation. Ableitung aller Spezialagenten. | lean-review,audit-legal
 ag-compliance | AILIZA Compliance Assistant. Gate-Logik 1–10, DSGVO/EU-AI-Act-Prüfung, Beta-/Pilot-/Produktionsgrenzen, No-Go-Regeln. Abgeleitet aus ag-allrounder. | lean-review,audit-legal
