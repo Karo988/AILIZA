@@ -122,6 +122,6 @@ Möchten Sie fortfahren? [Ja / Nein]
 |---|---|---|---|---|---|
 | TC-01 | ag-core | grün | Nein | Nein | ☐ |
 | TC-02 | ag-compliance | aktivierbar | Ja (Modul) | Nein | ☐ |
-| TC-03 | ag-praesentation | geplant | — | Nein (soft) | ☐ |
+| TC-03 | ag-praesentation | aktivierbar | Ja (Modul) | Nein (soft) | ✅ 2026-06-22 |
 | TC-04 | ag-buchhalter | gesperrt | — | Ja | ☐ |
 | TC-05 | ag-core | orange | Ja (DSGVO) | Nein | ☐ |

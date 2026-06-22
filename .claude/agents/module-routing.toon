@@ -7,7 +7,7 @@ name | status | behavior | condition
 ag-core | active | route | default — immer aktiv
 ag-compliance | activatable | prompt_activation | Nutzerfreigabe → aktiv für Session
 ag-allrounder | activatable | prompt_activation | Nutzerfreigabe → aktiv für Session
-ag-praesentation | planned | return_planned | Sprint 7; echarts + python-pptx ausstehend
+ag-praesentation | activatable | prompt_activation | Tests bestanden 2026-06-22; echarts + python-pptx ausstehend (kein PPTX-Export); Routing-Auswahl oder ausdrückliche Nutzerabsicht nötig
 ag-buchhalter | blocked | return_blocked | GoBD-Vault + skr-lookup + Provider-Profil fehlen
 ag-hr | blocked | return_blocked | AVV ausstehend; DPIA/DSFA für HR-Daten fehlt
 
