@@ -43,7 +43,9 @@ und treffsicherer.
 1. CLAUDE.md lesen: Projektstand, Konventionen, offene Punkte.
 2. Einschlägige Session-Erinnerungen abrufen (AILIZA-Backend, wenn verfügbar):
 
-
+```
+GET /ai/memory?query={aufgabe_stichworte}&limit=5
+```
 Falls kein Backend erreichbar: docs/ und relevante .md-Dateien lesen.
 3. Passendes Vorwissen in den Arbeitskontext einbeziehen — nicht neu ableiten,
 was bereits bekannt ist.
@@ -111,6 +113,11 @@ Ausnahme: EU AI Act Art. 5 (verbotene Praktiken) → harter Block, keine Option.
 | 🔴 Rot — Block | EU AI Act Art. 5: Manipulation, Social Scoring, biometr. Massenüberwachung | Ablehnung ohne Option |
 
 ### 4.2§ Pflichttext bei Gelb und Orange
+
+```
+⚠️ DSGVO-Hinweis: [Konkrete Beschreibung — was erkannt wurde, welche Datenklasse]. Wenn Sie fortfahren, wird diese Entscheidung im Audit-Trail dokumentiert (DSGVO Art. 5 Abs. 2 — Rechenschaftspflicht).
+Möchten Sie fortfahren? [Ja / Nein]
+```
 
 ### 4.3§ Nach Nutzerfreigabe (Ja)
 
