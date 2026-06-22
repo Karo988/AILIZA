@@ -73,7 +73,7 @@ ag-praesentation gibt nichts extern weiter ohne Freigabe.
 **Erwartetes Verhalten:**
 - Route: ag-core erkennt Buchhaltungs-Kontext
 - Modul-Check: ag-buchhaltung = blocked
-- Routing-Ampel: return_blocked
+- Routing-Ampel: responsibility_handoff
 
 **Erwartete Antwort:**
 ```
