@@ -1,12 +1,17 @@
-# agents.index.toon — TOON registry; name | description | skills
-name | description | skills
-ag-cqo | Chief Quality Officer. Audits harness structure, source-code security (OWASP), legal compliance (EU AI Act, GDPR, German law), and deliverables, then renders an Approved/Rejected stage-gate. | lean-review,audit-security,audit-legal,proofread
-ag-cso | Chief Strategy Officer. Runs the sota skill to assess a project against the current state of the art and renders a scored strategic report with competitive edge. Read-only. | sota,lean-review
-ag-cto | Chief Technology Officer. Full coding agent — writes and verifies code following the project's conventions, self-reviews with lean-review and audit-security, and keeps documentation in sync. | lean-review,audit-security
-ag-core | AILIZA Core v1. Systemrolle, erlaubte/gesperrte Aufgaben, Basisfluss, Routing, Datenschutzregeln, Modul-Übersicht. Basis für alle Agenten. | lean-review,audit-legal
-ailiza-masterprompt | AILIZA Masterprompt v2.0-rc. Oberste Governance-Ebene: Vorrangregeln, Autonomieprinzip, Datenklassen, Modulstatus, Freigabeformat, AI-Act-Hochrisiko, Untrusted-Content, Audit. | lean-review,audit-legal
-ag-allrounder | Generalistischer KMU-Basisagent. Lernt aus vergangenen Chats. DSGVO warn-and-decide. Spezialisierbar für Buchhaltung, HR, Marketing, Präsentation. Ableitung aller Spezialagenten. | lean-review,audit-legal
-ag-compliance | AILIZA Compliance Assistant. Gate-Logik 1–10, DSGVO/EU-AI-Act-Prüfung, Beta-/Pilot-/Produktionsgrenzen, No-Go-Regeln. Abgeleitet aus ag-allrounder. | lean-review,audit-legal
-ag-praesentation | Präsentations-Modul. Gliederungen, Folienentwürfe, Storylines, Sprechertexte, Inhaltsverdichtung. Risikoarmes Modul. Status: aktivierbar (🟡). | lean-review
-ag-recherche | Recherche-Modul. Webrecherche, Quellenprüfung, Rechercheplan, Zusammenfassung öffentlicher Inhalte. Keine PII in Queries. Status: geplant (🔵). | lean-review
-ag-dokumente | Dokumenten-Modul. Strukturieren, zusammenfassen, verbessern, Entwürfe erstellen. Kein Rechtsgutachten, keine HR/Steuer-Entscheidungen. Status: aktivierbar (🟡). | lean-review,audit-legal
+# agents.index.toon — TOON registry; name | description | skills | status
+# ag-core zuerst — Standardagent und Governance-Schicht
+# Alle weiteren AILIZA-Einträge sind Zusatzmodule
+name | description | skills | status
+ag-core | AILIZA Core v1. Standardagent und Governance-Schicht über allen Zusatzmodulen. Erlaubte/gesperrte Aufgaben, Basisfluss, Routing, Datenschutzregeln, Modul-Übersicht. | lean-review,audit-legal | active
+ag-master | AILIZA Master-Governance. Oberste Governance-Ebene: Vorrangregeln, Autonomieprinzip, Statuslogik, blocked als Verantwortungs- und Übergabemodus, AI-Act- und DSGVO-Schranken. Nicht direkt als Arbeitsagent aufrufen. | lean-review,audit-legal | active
+ailiza-masterprompt | AILIZA Masterprompt v2.0-rc. Vollständige Governance-Referenz: Vorrangregeln, Autonomieprinzip, Datenklassen, Modulstatus, Freigabeformat, AI-Act-Hochrisiko, Untrusted-Content, Audit. Historisches Referenzdokument — ag-master ist aktueller Stand. | lean-review,audit-legal | active
+ag-allrounder | AILIZA-Zusatzmodul. Generalistischer KMU-Basisagent. Lernt aus vergangenen Chats. DSGVO warn-and-decide. Spezialisierbar für Buchhaltung, HR, Marketing, Präsentation. Ableitung aller Spezialagenten. | lean-review,audit-legal | activatable
+ag-compliance | AILIZA-Zusatzmodul. Compliance Assistant. Gate-Logik 1–10, DSGVO/EU-AI-Act-Prüfung, Beta-/Pilot-/Produktionsgrenzen, No-Go-Regeln. | lean-review,audit-legal | activatable
+ag-praesentation | AILIZA-Zusatzmodul. Präsentations-Modul. Gliederungen, Folienentwürfe, Storylines, Sprechertexte, Inhaltsverdichtung. Risikoarmes Modul. Tests bestanden 2026-06-22. | lean-review | activatable
+ag-dokumente | AILIZA-Zusatzmodul. Dokumenten-Modul. Strukturieren, zusammenfassen, verbessern, Entwürfe erstellen. Kein Rechtsgutachten, keine HR/Steuer-Entscheidungen. Tests bestanden 2026-06-22. | lean-review,audit-legal | activatable
+ag-recherche | AILIZA-Zusatzmodul. Recherche-Modul. Webrecherche, Quellenprüfung, Rechercheplan, Zusammenfassung öffentlicher Inhalte. Keine PII in Queries. Tests TR-01–TR-05 ausstehend. | lean-review | planned
+ag-buchhaltung | AILIZA-Zusatzmodul. Buchhaltungs-Modul. Gesperrt: GoBD-Vault + skr-lookup + Provider-Profil + AVV fehlen. Verantwortungs- und Übergabemodus aktiv. | lean-review,audit-legal | blocked
+ag-hr | AILIZA-Zusatzmodul. HR-Modul. Gesperrt: AVV ausstehend, DPIA/DSFA für HR-Daten fehlt. Verantwortungs- und Übergabemodus aktiv. | lean-review,audit-legal | blocked
+ag-cqo | Chief Quality Officer. Audits harness structure, source-code security (OWASP), legal compliance (EU AI Act, GDPR, German law), and deliverables, then renders an Approved/Rejected stage-gate. | lean-review,audit-security,audit-legal,proofread | active
+ag-cso | Chief Strategy Officer. Runs the sota skill to assess a project against the current state of the art and renders a scored strategic report with competitive edge. Read-only. | sota,lean-review | active
+ag-cto | Chief Technology Officer. Full coding agent — writes and verifies code following the project's conventions, self-reviews with lean-review and audit-security, and keeps documentation in sync. | lean-review,audit-security | active
