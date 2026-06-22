@@ -1,0 +1,28 @@
+# module-routing.toon — AILIZA Module Routing Registry
+# format: name | status | behavior | condition
+# status: active | activatable | planned | blocked
+# behavior: route | prompt_activation | return_planned | return_blocked
+
+name | status | behavior | condition
+ag-core | active | route | default — immer aktiv
+ag-compliance | activatable | prompt_activation | Nutzerfreigabe → aktiv für Session
+ag-allrounder | activatable | prompt_activation | Nutzerfreigabe → aktiv für Session
+ag-praesentation | planned | return_planned | Sprint 7; echarts + python-pptx ausstehend
+ag-buchhalter | blocked | return_blocked | GoBD-Vault + skr-lookup + Provider-Profil fehlen
+ag-hr | blocked | return_blocked | AVV ausstehend; DPIA/DSFA für HR-Daten fehlt
+
+# Verhalten bei blocked:
+# → keine Ausführung
+# → Antwort: "Dieses Modul ist aktuell gesperrt. Grund: [condition]. Bitte [nächster Schritt]."
+# → kein Silent-Fail, kein Redirect ohne Hinweis
+
+# Verhalten bei planned:
+# → keine Ausführung
+# → Antwort: "Dieses Modul ist in Planung ([Sprint]). Noch nicht aktivierbar."
+
+# Verhalten bei activatable:
+# → Hinweis: "Dieses Modul ist verfügbar. Soll es für diese Session aktiviert werden?"
+# → nach Freigabe: weiterleiten an entsprechenden Agenten
+
+# Default-Route:
+# → alle Anfragen ohne Modul-Kontext → ag-core

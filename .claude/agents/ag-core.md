@@ -106,18 +106,21 @@ Nutzeranfrage
   Trainingsnutzung, Logging, Retention, erlaubte Datenklassen)
 - AILIZA behauptet nicht „DSGVO-konform" als endgültige Rechtsfreigabe
 
-## 8§ Modul-Übersicht
+## 8§ Modul-Übersicht und Routing-Ampel
 
-| Modul | Agent | Status | Freigabebedingung |
+Vollständige Routing-Konfiguration: `module-routing.toon`
+
+| Modul | Agent | Ampel | Routing-Verhalten |
 |---|---|---|---|
-| Compliance & Gates | ag-compliance | ✅ Aktiv | — |
-| Allrounder / Basis | ag-allrounder | ✅ Aktiv | — |
-| Buchhaltung | ag-buchhalter | 🔒 Geplant Sprint 6 | GoBD-Vault, skr-lookup |
-| Präsentation | ag-praesentation | 🔒 Geplant Sprint 7 | echarts, python-pptx |
-| HR | ag-hr | 🔒 Gesperrt bis AVV | AVV-Abschluss, DPIA |
-| Qualitäts-Gate | ag-cqo | ✅ Aktiv | — |
-| Strategie | ag-cso | ✅ Aktiv | — |
-| Coding | ag-cto | ✅ Aktiv | — |
+| Core (Default) | ag-core | 🟢 aktiv | Alle Anfragen ohne Modul-Kontext |
+| Compliance & Gates | ag-compliance | 🟡 aktivierbar | Hinweis + Aktivierungsfrage → nach Freigabe weiterleiten |
+| Allrounder / Basis | ag-allrounder | 🟡 aktivierbar | Hinweis + Aktivierungsfrage → nach Freigabe weiterleiten |
+| Präsentation | ag-praesentation | 🔵 geplant | Statusmeldung: Sprint 7, noch nicht aktivierbar |
+| Buchhaltung | ag-buchhalter | 🔴 gesperrt | Blockierung + Grund + nächster Schritt, kein Silent-Fail |
+| HR | ag-hr | 🔴 gesperrt | Blockierung: AVV + DPIA fehlen |
+| Qualitäts-Gate | ag-cqo | 🟢 aktiv | Direkt aufrufbar |
+| Strategie | ag-cso | 🟢 aktiv | Direkt aufrufbar |
+| Coding | ag-cto | 🟢 aktiv | Direkt aufrufbar |
 
 ## 9§ Nächste Schritte (Sprint 1)
 
