@@ -360,3 +360,111 @@ class TestRealGovernanceFiles:
         m_path = tmp_path / INTEGRITY_MANIFEST_FILENAME
         generate_integrity_manifest(self.BACKEND, m_path)
         enforce_integrity(self.BACKEND, m_path)  # kein Raise
+
+    def test_document_handler_in_governance_scope(self):
+        """documents/document_handler.py muss im Integrity-Scope enthalten sein."""
+        assert "documents/document_handler.py" in GOVERNANCE_FILES_RELATIVE
+
+    def test_document_handler_file_exists(self):
+        p = self.BACKEND / "documents" / "document_handler.py"
+        assert p.exists(), "documents/document_handler.py fehlt im Projekt"
+
+
+# ── TestDocumentHandlerIntegrity ──────────────────────────────────────────────
+
+class TestDocumentHandlerIntegrity:
+    """
+    Gate 10 schützt Gate 6: Manipulation von document_handler.py führt zu
+    HASH_MISMATCH und blockiertem Start — Prompt-Injection-Schutz ist unveränderbar.
+    """
+
+    import shutil
+
+    BACKEND = Path(__file__).parent.parent / "apps" / "backend"
+    DOC_FILES = GOVERNANCE_FILES_RELATIVE  # alle 8 Dateien inkl. document_handler.py
+
+    @pytest.fixture
+    def full_governance_dir(self, tmp_path):
+        """Kopiert alle 8 Governance-Dateien inkl. document_handler.py."""
+        import shutil
+        for rel in self.DOC_FILES:
+            src = self.BACKEND / rel
+            dst = tmp_path / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        return tmp_path
+
+    @pytest.fixture
+    def full_valid_manifest(self, full_governance_dir):
+        m = full_governance_dir / INTEGRITY_MANIFEST_FILENAME
+        generate_integrity_manifest(full_governance_dir, m)
+        return m
+
+    def test_tampered_document_handler_causes_hash_mismatch(
+        self, full_governance_dir, full_valid_manifest
+    ):
+        """Manipulation der document_handler.py → HASH_MISMATCH → Start blockiert."""
+        (full_governance_dir / "documents" / "document_handler.py").write_text(
+            "# Gate 6 disabled\n_INJECTION_PATTERNS = []\ndef scan_document(f, c): return None\n",
+            encoding="utf-8",
+        )
+        result = verify_integrity(full_governance_dir, full_valid_manifest)
+        assert result.all_ok is False
+        mismatch = [r for r in result.file_results if r.status == IntegrityStatus.HASH_MISMATCH.value]
+        assert any(r.config_file == "documents/document_handler.py" for r in mismatch)
+
+    def test_missing_document_handler_causes_missing_file(
+        self, full_governance_dir, full_valid_manifest
+    ):
+        """Fehlende document_handler.py → MISSING_FILE → Start blockiert."""
+        (full_governance_dir / "documents" / "document_handler.py").unlink()
+        result = verify_integrity(full_governance_dir, full_valid_manifest)
+        assert result.all_ok is False
+        missing = [r for r in result.file_results if r.status == IntegrityStatus.MISSING_FILE.value]
+        assert any(r.config_file == "documents/document_handler.py" for r in missing)
+
+    def test_missing_document_handler_recommended_kill_switch(
+        self, full_governance_dir, full_valid_manifest
+    ):
+        """Fehlende document_handler.py → recommended_mode == kill_switch_active."""
+        (full_governance_dir / "documents" / "document_handler.py").unlink()
+        result = verify_integrity(full_governance_dir, full_valid_manifest)
+        assert result.recommended_mode == "kill_switch_active"
+
+    def test_tampered_document_handler_enforce_raises(
+        self, full_governance_dir, full_valid_manifest
+    ):
+        """enforce_integrity() wirft IntegrityViolationError bei manipulierter document_handler.py."""
+        (full_governance_dir / "documents" / "document_handler.py").write_text(
+            "# injection patterns removed\n_INJECTION_PATTERNS = []\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(IntegrityViolationError):
+            enforce_integrity(full_governance_dir, full_valid_manifest)
+
+    def test_audit_no_document_handler_content(
+        self, full_governance_dir, full_valid_manifest
+    ):
+        """Audit enthält keine Inhalte aus document_handler.py."""
+        (full_governance_dir / "documents" / "document_handler.py").write_text(
+            "SECRET='injected-payload'\n_INJECTION_PATTERNS = []\n",
+            encoding="utf-8",
+        )
+        result = verify_integrity(full_governance_dir, full_valid_manifest)
+        for fr in result.file_results:
+            audit_str = str(fr.to_audit_dict())
+            assert "SECRET" not in audit_str
+            assert "injected-payload" not in audit_str
+            assert "_INJECTION_PATTERNS" not in audit_str
+
+    def test_intact_document_handler_all_ok(
+        self, full_governance_dir, full_valid_manifest
+    ):
+        """Unveränderter Zustand → all_ok=True, document_handler.py allowed."""
+        result = verify_integrity(full_governance_dir, full_valid_manifest)
+        assert result.all_ok is True
+        doc_result = next(
+            r for r in result.file_results if r.config_file == "documents/document_handler.py"
+        )
+        assert doc_result.decision == "allowed"
+        assert doc_result.status == IntegrityStatus.OK.value
