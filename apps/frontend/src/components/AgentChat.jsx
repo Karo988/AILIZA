@@ -2,10 +2,11 @@ import { useState, useRef, useEffect } from "react"
 import { apiFetch } from "../api"
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8001"
+const DEBUG_ERRORS = import.meta.env.VITE_DEBUG_ERRORS === "true"
 
-// ── Technische Diagnose (Testumgebung) ─────────────────────────────────────────
+// ── Technische Diagnose – nur wenn VITE_DEBUG_ERRORS=true ─────────────────────
 function DiagBlock({ err }) {
-  if (!err) return null
+  if (!err || !DEBUG_ERRORS) return null
   return (
     <div className="diag-block">
       <p className="diag-title">Technischer Fehler (Testmodus)</p>
