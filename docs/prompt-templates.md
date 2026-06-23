@@ -24,7 +24,7 @@ Diesen Prompt nutzt ein Teammitglied, wenn der Rechner noch nicht eingerichtet i
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Ich bin Teammitglied und möchte mein lokales Setup selbst einrichten.
 
@@ -68,7 +68,7 @@ Diesen Prompt nutzt ein Teammitglied, wenn das Setup bereits fertig ist und an e
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Arbeitsmodus:
 Feature-Branch Workflow
@@ -106,7 +106,7 @@ Architekturprinzipien:
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Documentation Community
@@ -132,7 +132,7 @@ Wichtige Regeln:
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Frontend Dashboard
@@ -158,7 +158,7 @@ Wichtige Regeln:
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Business Governance
@@ -184,7 +184,7 @@ Wichtige Regeln:
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Governance QA
@@ -210,7 +210,7 @@ Wichtige Regeln:
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Runtime Core
@@ -237,7 +237,7 @@ Wichtige Regeln:
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Codex darf nur auf folgendem Branch arbeiten:
 feature/...

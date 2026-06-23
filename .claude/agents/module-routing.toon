@@ -1,0 +1,58 @@
+# module-routing.toon — AILIZA Module Routing Registry
+# format: name | status | behavior | condition
+# status: active | activatable | planned | blocked
+# behavior: route | prompt_activation | return_planned | responsibility_handoff
+# Alle Module außer ag-core sind AILIZA-Zusatzmodule.
+# ag-core ist Governance-Schicht und Standardroute.
+
+name | status | behavior | condition
+ag-core | active | route | default — immer aktiv; Governance-Schicht über allen Zusatzmodulen
+ag-compliance | activatable | prompt_activation | Nutzerfreigabe → aktiv für Session
+ag-allrounder | activatable | prompt_activation | Nutzerfreigabe → aktiv für Session
+ag-praesentation | activatable | prompt_activation | Tests bestanden 2026-06-22; echarts + python-pptx ausstehend (kein PPTX-Export); Routing-Auswahl oder ausdrückliche Nutzerabsicht nötig
+ag-dokumente | activatable | prompt_activation | Tests bestanden 2026-06-22; Vertragsprüfung ≠ Rechtsgutachten; Routing-Auswahl oder Nutzerabsicht nötig
+ag-recherche | planned | return_planned | Tests TR-01–TR-05 ausstehend; noch nicht aktivierbar
+ag-buchhaltung | blocked | responsibility_handoff | GoBD-Vault + skr-lookup + Provider-Profil fehlen; V-01–V-08 nicht erfüllt
+ag-hr | blocked | responsibility_handoff | AVV ausstehend; DPIA/DSFA für HR-Daten fehlt
+
+# Verhalten bei responsibility_handoff (blocked):
+# → keine autonome oder operative Ausführung
+# → AILIZA dokumentiert vollständig:
+#    1. Blockgrund
+#    2. Risiken bei Ausführung ohne Voraussetzungen
+#    3. Fehlende Voraussetzungen (konkret benannt)
+#    4. Verantwortliche menschliche Rolle
+#    5. Sichere Übergabe: was AILIZA jetzt stattdessen leisten kann
+# → Ausführung möglich nach expliziter Nutzerfreigabe:
+#    "Freigabe erteilt für [Aktion] — ich übernehme die Verantwortung."
+# → Freigabe wird intern dokumentiert (Datum, Aktion, Risiken bestätigt)
+# → kein Silent-Fail, kein Redirect ohne Risikohinweis
+# → kein harter Abbruch ohne Hilfe
+#
+# immutable_documentation_required: true
+# addendum_only_corrections: true
+# Pflichtfelder: documentation_id, timestamp, user_request_summary, selected_agent,
+#   module_status, data_class, risk_mode, decision, reason, required_human_role,
+#   approval_status, sources_or_basis, next_safe_step
+# Nachtrags-Pflichtfelder: addendum_id, timestamp, refers_to_documentation_id,
+#   reason_for_addendum, new_information, responsible_role
+
+# Globale Routing-Regel — unveränderbare Dokumentation erforderlich bei:
+# → responsibility_handoff (blocked)
+# → Freigabepflicht (ag-master §7)
+# → Hochrisiko-Kontext (ai-act-hochrisiko-prüfen)
+# → Sonderkorridor (sonderkorridor-prüfen, Art. 9 DSGVO)
+# → Incident oder sicherheitsrelevante Auffälligkeit
+
+# Verhalten bei return_planned:
+# → keine operative Ausführung
+# → Antwort: "Dieses Modul ist in Planung. Noch nicht aktivierbar."
+# → Erlaubt: Spezifikation, Testfälle, Vorbereitung
+
+# Verhalten bei prompt_activation (activatable):
+# → Hinweis: "Dieses Modul ist verfügbar. Soll es für diese Session aktiviert werden?"
+# → kein automatischer Start, kein Silent-Redirect
+# → nach Freigabe: weiterleiten an entsprechenden Agenten
+
+# Default-Route:
+# → alle Anfragen ohne Modul-Kontext → ag-core
