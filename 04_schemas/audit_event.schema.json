@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ailiza/audit_event",
+  "title": "AILIZA Audit Event",
+  "description": "Audit-Log-Eintrag (Stufe 1 + 2). Append-only, SHA-256 Hash-Chain.",
+  "type": "object",
+  "required": ["id", "timestamp", "action", "tenant_id", "previous_hash", "entry_hash"],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "description": "Auto-Increment Primary Key"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC-Zeitstempel des Ereignisses"
+    },
+    "action": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Ereignistyp, z.B. 'agent.run', 'policy.blocked', 'audit.chain.manipulation_detected'"
+    },
+    "tenant_id": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Mandanten-ID"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Zusätzliche Kontextinformationen. Verbotene Felder werden herausgefiltert.",
+      "not": {
+        "anyOf": [
+          {"required": ["task_content"]},
+          {"required": ["prompt"]},
+          {"required": ["input_summary"]},
+          {"required": ["credentials"]},
+          {"required": ["secret"]},
+          {"required": ["totp"]},
+          {"required": ["backup_code"]},
+          {"required": ["password"]},
+          {"required": ["token"]}
+        ]
+      }
+    },
+    "previous_hash": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 Hash des Vorgänger-Eintrags. Genesis: 64 Nullen."
+    },
+    "entry_hash": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256( id|timestamp|action|tenant_id|previous_hash )"
+    }
+  },
+  "additionalProperties": false
+}
