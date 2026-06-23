@@ -80,7 +80,11 @@ function App() {
             <div className="kpi-card"><p className="kpi-label">Audit Logs</p><p className="kpi-value">{auditLogs.length}</p></div>
             <div className="kpi-card"><p className="kpi-label">Nutzer</p><p className="kpi-value">{session.user_id}</p></div>
           </div>
-          <AgentChat />
+          <AgentChat onRunComplete={() =>
+            apiFetch("/audit-logs?limit=20")
+              .then((d) => { if (Array.isArray(d)) setAuditLogs(d) })
+              .catch(() => {})
+          } />
           <div className="card-grid">
             {dashboardData.map((card) => (
               <DashboardCard key={card.title} {...card} />
