@@ -620,3 +620,96 @@ nav {
 .chat-result-label { font-weight: 600; margin: 0 0 0.2rem; color: #cbd5e1; }
 .chat-result-text  { margin: 0; color: #94a3b8; line-height: 1.5; white-space: pre-wrap; }
 .chat-result-notice { margin: 0.4rem 0 0; font-size: 0.78rem; color: #64748b; }
+
+/* ── AgentChat Header + Deep Research ─────────────────────────────────────── */
+.agent-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+  gap: 1rem;
+}
+.agent-chat-header > div { flex: 1; }
+.agent-chat-title { font-size: 1.1rem; font-weight: 600; color: #e2e8f0; margin: 0 0 0.2rem; }
+.agent-chat-hint  { font-size: 0.82rem; color: #64748b; margin: 0; }
+
+.deep-research-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.83rem;
+  color: #94a3b8;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 8px;
+  transition: border-color 0.2s, color 0.2s;
+}
+.deep-research-toggle:hover { border-color: rgba(99,102,241,0.5); color: #c7d2fe; }
+.deep-research-toggle input { accent-color: #818cf8; }
+
+/* ── Upload-Bereich ────────────────────────────────────────────────────────── */
+.upload-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(99,102,241,0.12);
+}
+.upload-label { font-size: 0.88rem; font-weight: 600; color: #cbd5e1; margin: 0 0 0.2rem; }
+.upload-hint  { font-size: 0.78rem; color: #64748b; margin: 0 0 0.75rem; }
+.upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  border: 1px dashed rgba(99,102,241,0.4);
+  background: rgba(99,102,241,0.06);
+  color: #818cf8;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.upload-btn:hover { border-color: rgba(99,102,241,0.7); background: rgba(99,102,241,0.12); }
+.upload-btn--loading { opacity: 0.6; cursor: not-allowed; }
+
+/* ── Diagnose-Block (Testmodus) ────────────────────────────────────────────── */
+.diag-block {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: rgba(245,158,11,0.06);
+  border: 1px solid rgba(245,158,11,0.25);
+  border-radius: 10px;
+  font-size: 0.82rem;
+}
+.diag-title {
+  font-weight: 700;
+  color: #fbbf24;
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.diag-table { border-collapse: collapse; width: 100%; }
+.diag-table td {
+  padding: 0.2rem 0.5rem 0.2rem 0;
+  color: #94a3b8;
+  vertical-align: top;
+}
+.diag-table td:first-child {
+  font-weight: 600;
+  color: #fbbf24;
+  white-space: nowrap;
+  padding-right: 0.75rem;
+  min-width: 130px;
+}
+.diag-table code {
+  background: rgba(0,0,0,0.3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.79rem;
+  color: #e2e8f0;
+  word-break: break-all;
+}
