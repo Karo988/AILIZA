@@ -1,27 +1,34 @@
 # AILIZA — Backend Live-Testbericht
 
-**Stand:** 2026-06-23
+**Stand:** 2026-06-23 (aktualisiert: DB-Pfad stabilisiert)
 **Branch:** `claude/admiring-curie-9my9rf`
-**Commit:** `b64b358`
+**Commit:** `cd8629c` → aktuell `HEAD`
 **Umgebung:** Remote-Execution, synthetische Daten, kein echter Provider
 
 ---
 
-## Startbefehl
+## Startbefehl (stabil, CWD-unabhängig)
 
 ```bash
-# Aus Repo-Root:
-PYTHONPATH=/pfad/zu/AILIZA \
-AILIZA_SECRET_KEY="min-32-zeichen-echter-secret-key" \
+# Aus Repo-Root — AILIZA_DATABASE_URL immer als absoluten Pfad setzen:
+PYTHONPATH=/home/user/AILIZA \
+AILIZA_SECRET_KEY="dein-echter-secret-key-min-32-zeichen" \
+AILIZA_DATABASE_URL="sqlite:////home/user/AILIZA/data/ailiza.db" \
 uvicorn apps.backend.main:app --port 8001 --host 127.0.0.1
+```
 
-# Ersten Admin anlegen (einmalig, vor erstem Start):
-PYTHONPATH=/pfad/zu/AILIZA \
-AILIZA_SECRET_KEY="..." \
+```bash
+# Ersten Admin anlegen (einmalig, selbe Env-Variablen wie Server!):
+PYTHONPATH=/home/user/AILIZA \
+AILIZA_SECRET_KEY="dein-echter-secret-key-min-32-zeichen" \
+AILIZA_DATABASE_URL="sqlite:////home/user/AILIZA/data/ailiza.db" \
 AILIZA_ADMIN_USER="admin" \
 AILIZA_ADMIN_PASS="MinEinGrossEinKleinEinZahl1!" \
 python apps/backend/create_admin.py
 ```
+
+**Wichtig:** Server und `create_admin.py` müssen exakt dieselbe `AILIZA_DATABASE_URL`
+verwenden — sonst landen sie in unterschiedlichen DB-Dateien und Login schlägt fehl.
 
 **Wichtig:** `create_admin.py` schreibt in die DB des aktuellen Arbeitsverzeichnisses
 (`AILIZA_DATABASE_URL`, Default: `sqlite:///./audit_log.db`).
@@ -34,9 +41,18 @@ damit sie dieselbe DB-Datei nutzen.
 
 | Einstellung | Wert |
 |-------------|------|
-| Default | `sqlite:///./audit_log.db` (relativ zum CWD) |
-| Überschreiben | `AILIZA_DATABASE_URL=sqlite:////absoluter/pfad/ailiza.db` |
-| Empfehlung Beta | Absoluten Pfad setzen um DB-Verwechslungen zu vermeiden |
+| **Empfohlen** | `AILIZA_DATABASE_URL=sqlite:////home/user/AILIZA/data/ailiza.db` |
+| Dev-Fallback (ohne Env) | `<repo-root>/data/ailiza_dev.db` — mit Warnung, nie für Produktion |
+| Verzeichnis | `data/` wird automatisch angelegt falls nicht vorhanden |
+| Windows | `sqlite:///C:/AILIZA/data/ailiza.db` |
+
+**Warum absoluter Pfad?** SQLite mit relativem Pfad (`sqlite:///./pfad`) erzeugt
+die DB relativ zum aktuellen Arbeitsverzeichnis. Start aus `/home/user/AILIZA` und
+`/home/user/AILIZA/apps/backend` würden zwei verschiedene Dateien anlegen — Login
+schlägt dann fehl. Absoluter Pfad ist CWD-unabhängig.
+
+`.gitignore` ignoriert `data/*.db` — das `data/`-Verzeichnis selbst ist versioniert
+(mit `.gitkeep`).
 
 ---
 

@@ -1,15 +1,72 @@
 from __future__ import annotations
 
+import logging
 import os
+import warnings
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Column, DateTime, Float, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
+logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("AILIZA_DATABASE_URL", "sqlite:///./audit_log.db")
+_RAW_DB_URL = os.getenv("AILIZA_DATABASE_URL", "")
+
+def _resolve_database_url(raw: str) -> str:
+    """
+    Wandelt den konfigurierten DB-URL in einen stabilen absoluten Pfad um.
+
+    Regeln:
+    - Kein AILIZA_DATABASE_URL gesetzt → relativer Fallback mit Warnung (Dev-Modus)
+    - Relativer sqlite-Pfad → zu absolutem Pfad aufgelöst, Warnung ausgegeben
+    - Absoluter Pfad → unverändert übernommen
+    - Anderer DB-Typ (postgres etc.) → unverändert
+    - Verzeichnis wird ggf. angelegt (nur bei sqlite)
+    """
+    if not raw:
+        # Dev-Fallback: relativ zum Repo-Root (apps/backend/../..)
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        fallback = repo_root / "data" / "ailiza_dev.db"
+        warnings.warn(
+            f"AILIZA_DATABASE_URL nicht gesetzt. Dev-Fallback: {fallback}. "
+            "In Produktion AILIZA_DATABASE_URL mit absolutem Pfad setzen.",
+            stacklevel=2,
+        )
+        raw = f"sqlite:///{fallback}"
+
+    if not raw.startswith("sqlite"):
+        return raw  # Postgres/MySQL etc. unverändert
+
+    # sqlite:///./pfad  oder  sqlite:///relativer/pfad
+    prefix = "sqlite:///"
+    path_str = raw[len(prefix):]
+
+    if path_str.startswith(":"):
+        return raw  # sqlite:///:memory:
+
+    p = Path(path_str)
+    if not p.is_absolute():
+        # Relativen Pfad zu absolutem Pfad auflösen (Repo-Root als Basis)
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        p = (repo_root / p).resolve()
+        warnings.warn(
+            f"AILIZA_DATABASE_URL enthält relativen Pfad — aufgelöst zu: {p}. "
+            "Empfehlung: absoluten Pfad setzen (4 Slashes: sqlite:////absolut/pfad.db).",
+            stacklevel=2,
+        )
+    else:
+        p = p.resolve()
+
+    # Verzeichnis anlegen falls nicht vorhanden
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    return f"sqlite:///{p}"
+
+
+DATABASE_URL = _resolve_database_url(_RAW_DB_URL)
 DEFAULT_TENANT_ID = os.getenv("AILIZA_DEFAULT_TENANT_ID", "default")
 
 engine_options: dict[str, Any] = {}
