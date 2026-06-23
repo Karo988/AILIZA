@@ -311,7 +311,7 @@ Bei diesen Tests gilt zusätzlich:
 | BS-02 | Compliance | ag-compliance | 🟡 aktivierbar | Ja (Modul) | Nein | Nein | ✅ 2026-06-22 |
 | BS-03 | Präsentation | ag-praesentation | 🟡 aktivierbar | Ja (Modul) | Nein | Nein | ✅ 2026-06-22 |
 | BS-04 | Dokument | ag-dokumente | 🟡 aktivierbar | Ja (Modul) | Nein | Nein | ✅ 2026-06-22 |
-| BS-05 | Recherche | ag-recherche | 🔵 geplant | — | Nein | Nein | ✅ 2026-06-22 |
+| BS-05 | Recherche | ag-recherche | 🔵 geplant | — | Nein | Nein | ✅ 2026-06-23 |
 | BS-06 | Buchhaltung | ag-buchhaltung | 🔴 gesperrt | Ja (nach Risikohinweis) | Ja | **Ja** | ✅ 2026-06-22 |
 | BS-07 | Extern / DSGVO | ag-core | 🟠 orange | Ja (DSGVO) | Nein | **Ja** | ✅ 2026-06-22 |
 | BS-08 | Sensible Daten | ag-core | 🔴 Sonderkorridor | Ja (Art. 9) | Nein | **Ja** | ✅ 2026-06-22 |
@@ -325,6 +325,8 @@ Bei diesen Tests gilt zusätzlich:
 
 ## Hinweis
 
-Tests BS-01 bis BS-11 sind Smoke Tests — sie prüfen die Basisschicht, nicht die Modultiefe.
+Tests BS-01 bis BS-13 sind Smoke Tests — sie prüfen die Basisschicht, nicht die Modultiefe.
 Für Modultests: siehe `core-testcases.md` (TC-01–TC-05) und modulspezifische Testdateien.
 BS-11 prüft die unveränderbare Dokumentationspflicht (ag-master §10).
+BS-12 prüft das zweistufige Freigabeformat (Kurzfreigabe für risikoarme Aktionen).
+BS-13 prüft, dass ag-allrounder keine nicht vorhandene Lernfähigkeit verspricht.

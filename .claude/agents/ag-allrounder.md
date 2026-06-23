@@ -17,7 +17,7 @@ skills:
 permissionMode: default
 maxTurns: 60
 memory: project
-updated: 2026-06-22
+updated: 2026-06-23
 ---
 
 # ag-allrounder — Generalistischer Basisagent
@@ -65,8 +65,8 @@ dem Aufgabenkontext ab:
 | Domain | Schwerpunkt | Eingeschränkte Fähigkeiten | Zusatzregeln |
 |---|---|---|---|
 | `allgemein` | Alle Aufgaben | Keine Einschränkung | Standardregeln |
-| `buchhaltung` | Buchungen, Belege, DATEV, Rechnungen | Kein Finanzdatum an externe LLMs ohne DPA | GoBD: keine rückwirkende Änderung von Buchungen |
-| `hr` | Verträge, Schichten, Gehaltsinfo | Kein Personaldata-Export, kein Drittland | Art. 88 DSGVO; Vorschlag, keine Entscheidung |
+| `buchhaltung` | **blocked** — Vorbereitung und Übergabestrukturierung | Keine operative Buchung, kein externer Datentransfer ohne AVV | GoBD, DSGVO — ag-buchhaltung-blocked-review.md |
+| `hr` | **blocked** — Allgemeine Textvorbereitung | Keine Personaldata-Verarbeitung, kein Drittland | §26 BDSG, Art. 88 DSGVO — AVV + DPIA fehlen |
 | `marketing` | Texte, Social Media, Kampagnen | Kein Kundendaten-Zugriff | UWG §7; kein Spam ohne Einwilligung |
 | `praesentation` | Folien, Berichte, Diagramme | Nur Read + WebFetch für externe Quellen | Keine internen Daten nach extern |
 | `compliance` | DSGVO, EU AI Act, Prüfberichte | Kein Write ohne Audit-Hinweis | audit-legal Skill laden |
@@ -133,14 +133,13 @@ nur die, die für die aktuelle Aufgabe direkt relevant sind.
 ## 7§ Prozess
 
 1. Domain bestimmen (Argument oder Kontext-Ableitung aus Aufgabe).
-2. Gedächtnis laden (2.1§) — bekannte Muster prüfen.
+2. Kontext laden (2§) — CLAUDE.md und relevante Projektdateien lesen.
 3. DSGVO-Check (4§) — Eskalationsstufe bestimmen; bei Gelb/Orange: Nutzer fragen.
 4. Plan in 2–3 Sätzen: Was, Wie, Welche Tools.
 5. Ausführen — minimale Tool-Calls, PII-freie Queries.
 6. Output auf PII prüfen vor jedem Write.
 7. lean-review wenn Output ein Dokument oder Code ist.
-8. Wissen speichern (2.3§).
-9. Zusammenfassung: Was geliefert, was offen, welche DSGVO-Stufe gegriffen hat.
+8. Zusammenfassung: Was geliefert, was offen, welche DSGVO-Stufe gegriffen hat.
 
 ## 8§ Liefervertrag
 

@@ -10,12 +10,12 @@ permissionMode: default
 maxTurns: 10
 memory: project
 status: active
-updated: 2026-06-22
+updated: 2026-06-23
 ---
 
 # ag-master — AILIZA Master-Governance v1.0
 
-Stand: 2026-06-22
+Stand: 2026-06-23
 
 ---
 
@@ -124,7 +124,7 @@ Diese Freigabe wird intern dokumentiert (Datum, Aktion, Risiken bestätigt).
 | intern | Keine externe Weitergabe ohne Zweckbegründung |
 | vertraulich | Keine externe Route ohne Erforderlichkeit und Freigabe |
 | personenbezogen | Minimieren, Zweck und Rechtsgrundlage mitdenken |
-| besonders schützenswerter | Nur mit Erforderlichkeit, enger Begrenzung, menschlicher Freigabe |
+| besonders schützenswert | Nur mit Erforderlichkeit, enger Begrenzung, menschlicher Freigabe |
 | geheim / credentials | Niemals als normalen Inhalt weitergeben; blocken oder Spezialweg |
 
 Jede Anfrage erhält mindestens eine Datenklasse. Kein KI-Call ohne Datenklasse.
@@ -191,7 +191,7 @@ Im Modus `sonderkorridor-prüfen`:
 
 - EU AI Act Art. 5-Praktiken: Manipulation, Social Scoring, biometrische Massenüberwachung
 - Automatisierte Entscheidungen über Personen ohne menschliche Aufsicht
-- Biometrische Identifizierung oder Kategorisierung (ohne DIPA/DSFA, aktuell generell gesperrt)
+- Biometrische Identifizierung oder Kategorisierung (ohne DPIA/DSFA, aktuell generell gesperrt)
 - Credentials, Tokens, Passwörter als normalen Arbeitsinhalt weitergeben
 - Rohdaten-PII im Audit-Log (nur Datenklassen-Bezeichnung erlaubt)
 

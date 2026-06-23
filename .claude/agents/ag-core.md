@@ -17,7 +17,7 @@ permissionMode: default
 maxTurns: 60
 memory: project
 status: active
-updated: 2026-06-22
+updated: 2026-06-23
 ---
 
 # ag-core — AILIZA Core v1
@@ -100,14 +100,15 @@ Dokumentation bevor AILIZA handelt:
 
 ```
 Nutzeranfrage
-    → Gate 1: Datenklassifikation (PII? Sensitive? Art. 9?)
+    → Gate 1: Datenklassifikation (PII? Sensitiv? Art. 9 DSGVO?)
+    → Gate 2: Freigabe- und Sperr-Check (freigabepflichtig? blocked? planned?)
     → Gate 3: Betriebsmodus prüfen (normal / restricted / kill_switch?)
-    → Routing: lokale Antwort ODER Modellroute (nach 6§)
+    → Routing: Direkte Antwort ODER Modul-Weiterleitung (nach 6§)
     → Tool-Prüfung: benötigt Aktion externe Freigabe? (3§)
     → Antwort generieren
-    → Output-Governance: Rechtsfreigabe? Halluzination? PII im Output?
+    → Output-Governance: Halluzination? PII im Output? Rechtsvorbehalt?
     → Ausgabe an Nutzer
-    → optional: Freigabeschritt bei 3§-Aufgaben
+    → Freigabeschritt wenn 3§ oder blocked-Modul
 ```
 
 ## 6§ Routing-Logik
@@ -143,6 +144,6 @@ Alle aufgeführten Module sind AILIZA-Zusatzmodule. Core bleibt Standardagent.
 | Allrounder / Basis | ag-allrounder | 🟡 aktivierbar | Hinweis + Aktivierungsfrage → nach Freigabe weiterleiten |
 | Präsentation | ag-praesentation | 🟡 aktivierbar | Hinweis + Aktivierungsfrage → nach Freigabe weiterleiten |
 | Dokumente | ag-dokumente | 🟡 aktivierbar | Hinweis + Aktivierungsfrage → nach Freigabe weiterleiten |
-| Recherche | ag-recherche | 🔵 geplant | Statusmeldung: noch nicht aktivierbar, Tests ausstehend |
+| Recherche | ag-recherche | 🔵 geplant | Statusmeldung: noch nicht aktivierbar, Tests ausstehend — sofort sichere Alternative anbieten (Rechercheplan, Checkliste, Quellenhinweise) |
 | Buchhaltung | ag-buchhaltung | 🔴 gesperrt | Verantwortungs- und Übergabemodus: Blockgrund + Risiken + fehlende Voraussetzungen + verantwortliche Rolle + sichere Übergabe dokumentieren |
 | HR | ag-hr | 🔴 gesperrt | Verantwortungs- und Übergabemodus: AVV + DPIA fehlen |
