@@ -393,6 +393,63 @@ def list_audit_entries(limit: int = 100, tenant_id: str | None = None) -> list[d
     return [dict(row) for row in rows]
 
 
+def query_audit_events(
+    *,
+    action: str | None = None,
+    tenant_id: str | None = None,
+    timestamp_from: datetime | None = None,
+    timestamp_to: datetime | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Paginierte, gefilterte Audit-Abfrage für den Audit-Vault (read-only)."""
+    limit = min(max(1, limit), 1000)
+    offset = max(0, offset)
+
+    query = select(audit_logs).order_by(audit_logs.c.timestamp.desc())
+
+    if action:
+        query = query.where(audit_logs.c.action == action)
+    if tenant_id:
+        query = query.where(audit_logs.c.tenant_id == tenant_id)
+    if timestamp_from:
+        query = query.where(audit_logs.c.timestamp >= timestamp_from)
+    if timestamp_to:
+        query = query.where(audit_logs.c.timestamp <= timestamp_to)
+
+    query = query.offset(offset).limit(limit)
+
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+
+    return [dict(row) for row in rows]
+
+
+def count_audit_events(
+    *,
+    action: str | None = None,
+    tenant_id: str | None = None,
+    timestamp_from: datetime | None = None,
+    timestamp_to: datetime | None = None,
+) -> int:
+    """Zählt Audit-Einträge für Retention-Reports (kein DELETE)."""
+    from sqlalchemy import func
+
+    query = select(func.count()).select_from(audit_logs)
+
+    if action:
+        query = query.where(audit_logs.c.action == action)
+    if tenant_id:
+        query = query.where(audit_logs.c.tenant_id == tenant_id)
+    if timestamp_from:
+        query = query.where(audit_logs.c.timestamp >= timestamp_from)
+    if timestamp_to:
+        query = query.where(audit_logs.c.timestamp <= timestamp_to)
+
+    with engine.begin() as connection:
+        return connection.execute(query).scalar() or 0
+
+
 def create_approval_request(
     tool: str,
     input_params: dict[str, Any],

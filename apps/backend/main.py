@@ -944,6 +944,80 @@ def register(
 
 
 # ── Admin-Endpunkte (mindestens ADMIN-Rolle erforderlich) ────────────────────
+
+@app.get("/admin/audit/events")
+def admin_audit_events(
+    action: str | None = Query(default=None),
+    tenant_id: str | None = Query(default=None),
+    timestamp_from: datetime | None = Query(default=None),
+    timestamp_to: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """Paginierte Audit-Events — Admin-only, append-only, sanitized."""
+    try:
+        from .audit.vault import query_vault_events
+    except ImportError:
+        from audit.vault import query_vault_events  # type: ignore
+    events = query_vault_events(
+        action=action,
+        tenant_id=tenant_id,
+        timestamp_from=timestamp_from,
+        timestamp_to=timestamp_to,
+        limit=limit,
+        offset=offset,
+    )
+    return {"events": events, "count": len(events), "offset": offset, "limit": limit}
+
+
+@app.get("/admin/audit/export")
+def admin_audit_export(
+    action: str | None = Query(default=None),
+    tenant_id: str | None = Query(default=None),
+    timestamp_from: datetime | None = Query(default=None),
+    timestamp_to: datetime | None = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    fmt: str = Query(default="json", pattern="^(json|jsonl)$"),
+    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+) -> Any:
+    """Audit-Export als JSON oder JSONL — Admin-only, max. 1000 Einträge, keine Rohdaten."""
+    try:
+        from .audit.vault import export_audit_events
+    except ImportError:
+        from audit.vault import export_audit_events  # type: ignore
+    from fastapi.responses import Response
+    content = export_audit_events(
+        action=action,
+        tenant_id=tenant_id,
+        timestamp_from=timestamp_from,
+        timestamp_to=timestamp_to,
+        limit=limit,
+        offset=offset,
+        fmt=fmt,
+    )
+    media_type = "application/x-ndjson" if fmt == "jsonl" else "application/json"
+    return Response(content=content.encode(), media_type=media_type)
+
+
+@app.get("/admin/audit/retention-report")
+def admin_audit_retention_report(
+    retention_days: int = Query(default=90, ge=1),
+    tenant_id: str | None = Query(default=None),
+    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """
+    Retention-Report — zeigt wie viele Einträge älter als retention_days sind.
+    Kein automatisches Löschen. DSGVO-Dokumentation vor Löschung erforderlich.
+    """
+    try:
+        from .audit.vault import run_audit_retention_report
+    except ImportError:
+        from audit.vault import run_audit_retention_report  # type: ignore
+    return run_audit_retention_report(retention_days, tenant_id=tenant_id)
+
+
 @app.post("/admin/cleanup")
 def admin_cleanup(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> dict[str, Any]:
     """Retention-Cleanup manuell auslösen — löscht abgelaufene Einträge."""
