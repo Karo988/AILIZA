@@ -125,7 +125,7 @@ Jedes aktivierbare Modul hat eigene Testfälle in seiner Moduldatei:
 | `ag-core.md` | Standardagent, Basisfluss, Routing, Datenschutzregeln | ✅ aktiv |
 | `module-routing.toon` | Routing-Registry aller Module mit Status und Verhalten | ✅ aktuell |
 | `agents.index.toon` | TOON-Registry aller Agenten | ✅ aktuell |
-| `basis-smoke-tests.md` | 11 Basis-Smoke-Tests (inkl. BS-11 Immutable Doc) | BS-01–10 ✅, BS-11 ☐ |
+| `basis-smoke-tests.md` | 11 Basis-Smoke-Tests (inkl. BS-11 Immutable Doc) | BS-01–11 ✅ 2026-06-22 |
 | `core-testcases.md` | 5 Core-Routing-Tests, alle bestanden | ✅ 2026-06-22 |
 | `ag-compliance.md` | Compliance-Zusatzmodul | 🟡 aktivierbar |
 | `ag-allrounder.md` | Generalist-Zusatzmodul | 🟡 aktivierbar |
@@ -184,7 +184,7 @@ Diese Grenzen gelten immer — sie können nicht durch Nutzerfreigabe überwunde
 
 ## Nächste Schritte
 
-1. ☐ Basis-Smoke-Tests BS-11 durchführen (BS-01–10 bestanden 2026-06-22)
+1. ✅ Basis-Smoke-Tests BS-01–BS-11 alle bestanden (2026-06-22)
 2. ☐ ag-recherche Tests TR-01–TR-05 durchführen → bei Bestehen: activatable
 3. ☐ ag-buchhaltung: Voraussetzungen V-01–V-08 klären → erst dann entsperren
 4. ☐ ag-hr: AVV + DPIA klären → erst dann entsperren

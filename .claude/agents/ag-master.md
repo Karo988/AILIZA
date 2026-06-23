@@ -220,7 +220,7 @@ Der ursprüngliche Eintrag bleibt unverändert erhalten.
 ### Pflichtfelder je Dokumentation
 
 ```
-dokumentations_id:       (eindeutige ID, unveränderlich)
+documentation_id:        (eindeutige ID, unveränderlich)
 timestamp:               (Erstellungszeitpunkt, unveränderlich)
 user_request_summary:    (Kurzzusammenfassung der Anfrage — kein Roh-PII)
 selected_agent:          (welcher Agent / welche Route)
@@ -240,7 +240,7 @@ next_safe_step:          (empfohlener nächster sicherer Schritt)
 ```
 addendum_id:                    (eindeutige ID des Nachtrags)
 timestamp:                      (Erstellungszeitpunkt des Nachtrags)
-refers_to_dokumentations_id:    (Verweis auf den ursprünglichen Eintrag)
+refers_to_documentation_id:     (Verweis auf den ursprünglichen Eintrag)
 reason_for_addendum:            (warum wird ein Nachtrag erstellt)
 new_information:                (was ist neu oder korrigiert — kein Roh-PII)
 responsible_role:               (wer erstellt den Nachtrag)

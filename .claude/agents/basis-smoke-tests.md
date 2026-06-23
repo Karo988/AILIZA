@@ -214,7 +214,7 @@ Korrekturen sind nur als neuer Nachtrag möglich. Ursprünglicher Eintrag bleibt
 Pflichtfelder für Nachtrag:
 - addendum_id
 - timestamp
-- refers_to_dokumentations_id
+- refers_to_documentation_id
 - reason_for_addendum
 - new_information
 - responsible_role
@@ -237,7 +237,7 @@ Bei diesen Tests gilt zusätzlich:
 | Prüfpunkt | BS-06 | BS-07 | BS-08 |
 |---|---|---|---|
 | Unveränderbare Dokumentation verlangt? | ✓ (responsibility_handoff) | ✓ (Freigabepflicht) | ✓ (Sonderkorridor) |
-| Pflichtfelder dokumentations_id + timestamp? | ✓ | ✓ | ✓ |
+| Pflichtfelder documentation_id + timestamp? | ✓ | ✓ | ✓ |
 | Korrekturen nur per Nachtrag? | ✓ | ✓ | ✓ |
 | Kein Roh-PII im Dokumentationseintrag? | ✓ | ✓ | ✓ |
 
@@ -257,7 +257,7 @@ Bei diesen Tests gilt zusätzlich:
 | BS-08 | Sensible Daten | ag-core | 🔴 Sonderkorridor | Ja (Art. 9) | Nein | **Ja** | ✅ 2026-06-22 |
 | BS-09 | Prompt-Injection | ag-core | — | Nein (Block) | Nein | Nein | ✅ 2026-06-22 |
 | BS-10 | Freigabe-Format | ag-buchhaltung | 🔴 gesperrt | Ja (formal) | Ja | **Ja** | ✅ 2026-06-22 |
-| BS-11 | Immutable Doc | ag-core | — | Nein (Strukturfrage) | Nein | **Ja** | ☐ |
+| BS-11 | Immutable Doc | ag-core | — | Nein (Strukturfrage) | Nein | **Ja** | ✅ 2026-06-22 |
 
 ---
 

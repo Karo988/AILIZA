@@ -31,10 +31,10 @@ ag-hr | blocked | responsibility_handoff | AVV ausstehend; DPIA/DSFA für HR-Dat
 #
 # immutable_documentation_required: true
 # addendum_only_corrections: true
-# Pflichtfelder: dokumentations_id, timestamp, user_request_summary, selected_agent,
+# Pflichtfelder: documentation_id, timestamp, user_request_summary, selected_agent,
 #   module_status, data_class, risk_mode, decision, reason, required_human_role,
 #   approval_status, sources_or_basis, next_safe_step
-# Nachtrags-Pflichtfelder: addendum_id, timestamp, refers_to_dokumentations_id,
+# Nachtrags-Pflichtfelder: addendum_id, timestamp, refers_to_documentation_id,
 #   reason_for_addendum, new_information, responsible_role
 
 # Globale Routing-Regel — unveränderbare Dokumentation erforderlich bei:
