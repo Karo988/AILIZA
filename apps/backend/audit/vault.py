@@ -1,7 +1,8 @@
 """
-Audit-Vault Stufe 1
-===================
+Audit-Vault Stufe 1 + 2
+========================
 Read-only, append-only Audit-Export-Service.
+Stufe 2: Hash-Chain-Verifikation (SHA-256, append-only Integritätsprüfung).
 
 Regeln (DSGVO + EU AI Act):
 - Kein UPDATE, kein DELETE auf Audit-Einträge.
@@ -21,9 +22,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from apps.backend.database import query_audit_events, count_audit_events
+    from apps.backend.database import (
+        query_audit_events, count_audit_events,
+        audit_logs, engine, _compute_audit_hash,
+    )
 except ImportError:
-    from database import query_audit_events, count_audit_events  # type: ignore
+    from database import (  # type: ignore
+        query_audit_events, count_audit_events,
+        audit_logs, engine, _compute_audit_hash,
+    )
+
+from sqlalchemy import select as _select
 
 _METADATA_BLOCKED_KEYS: frozenset[str] = frozenset({
     "task_content", "prompt", "input_summary", "credentials",
@@ -101,6 +110,74 @@ def export_audit_events(
     if fmt == "jsonl":
         return "\n".join(json.dumps(e, ensure_ascii=False, default=str) for e in events)
     return json.dumps({"events": events, "count": len(events)}, ensure_ascii=False, default=str)
+
+
+def verify_audit_chain(
+    *,
+    tenant_id: str | None = None,
+    limit: int = 5000,
+) -> dict[str, Any]:
+    """
+    Prüft die SHA-256 Hash-Chain auf Manipulationen (Audit-Vault Stufe 2).
+
+    Liest bis zu `limit` Einträge chronologisch und berechnet jeden Hash neu.
+    Gibt bei Abweichung die erste fehlerhafte Eintrag-ID zurück.
+    Kein PII, keine Metadaten im Ergebnis.
+    """
+    limit = min(limit, 10_000)
+
+    with engine.connect() as conn:
+        query = (
+            _select(
+                audit_logs.c.id,
+                audit_logs.c.timestamp,
+                audit_logs.c.action,
+                audit_logs.c.tenant_id,
+                audit_logs.c.previous_hash,
+                audit_logs.c.entry_hash,
+            )
+            .order_by(audit_logs.c.id.asc())
+            .limit(limit)
+        )
+        if tenant_id is not None:
+            query = query.where(audit_logs.c.tenant_id == tenant_id)
+        rows = conn.execute(query).fetchall()
+
+    if not rows:
+        return {
+            "ok": True,
+            "checked": 0,
+            "first_invalid_id": None,
+            "note": "Keine Einträge gefunden.",
+        }
+
+    checked = 0
+    first_invalid: int | None = None
+    expected_previous = "0" * 64
+
+    for row in rows:
+        entry_id, ts, action, tid, previous_hash, stored_hash = (
+            row[0], row[1], row[2], row[3], row[4], row[5]
+        )
+        ts_str = ts.isoformat() if isinstance(ts, datetime) else str(ts)
+        computed = _compute_audit_hash(entry_id, ts_str, action, tid, previous_hash)
+
+        chain_ok = (previous_hash == expected_previous) and (stored_hash == computed)
+        if not chain_ok and first_invalid is None:
+            first_invalid = entry_id
+
+        expected_previous = stored_hash
+        checked += 1
+
+    return {
+        "ok": first_invalid is None,
+        "checked": checked,
+        "first_invalid_id": first_invalid,
+        "note": (
+            "Hash-Chain integer." if first_invalid is None
+            else f"Manipulation erkannt ab Eintrag ID {first_invalid}."
+        ),
+    }
 
 
 def run_audit_retention_report(

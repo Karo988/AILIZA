@@ -1,7 +1,11 @@
 """
 RBAC fuer AILIZA
 =================
-Rollen: user < manager < admin < dsb
+Rollen: user < audit_viewer < manager < admin < dsb
+
+audit_viewer: darf Audit-Vault lesen, aber keine Admin-Aktionen ausfuehren.
+              Gedacht fuer externe Prueferinnen und Datenschutzbeauftragte ohne
+              vollstaendige Admin-Rechte.
 
 Token-Extraktion: Bearer-Header ODER HttpOnly-Cookie "ailiza_session".
 Cookie-Flow ist bevorzugt (sicherer gegen XSS als localStorage).
@@ -27,13 +31,20 @@ _COOKIE_NAME = "ailiza_session"
 
 class Role(IntEnum):
     USER = 0
-    MANAGER = 1
-    ADMIN = 2
-    DSB = 3       # Datenschutzbeauftragter — Lese-/Kontrollrechte, keine Schreibrechte
+    AUDIT_VIEWER = 1  # Neu: nur Audit-Lesen, kein Admin-Zugriff
+    MANAGER = 2
+    ADMIN = 3
+    DSB = 4           # Datenschutzbeauftragter — Lese-/Kontrollrechte, keine Schreibrechte
 
     @classmethod
     def from_str(cls, name: str) -> "Role":
-        mapping = {"user": cls.USER, "manager": cls.MANAGER, "admin": cls.ADMIN, "dsb": cls.DSB}
+        mapping = {
+            "user": cls.USER,
+            "audit_viewer": cls.AUDIT_VIEWER,
+            "manager": cls.MANAGER,
+            "admin": cls.ADMIN,
+            "dsb": cls.DSB,
+        }
         return mapping.get(name.lower(), cls.USER)
 
 
