@@ -478,6 +478,12 @@ def run_agent(
     runtime = AgentRuntime()
     result = runtime.run(payload.task)
 
+    # Local-only / degraded mode: direkt zurückgeben, kein LLM-Call versuchen
+    if result.get("status") in ("local_only", "degraded"):
+        result["ai_response"] = result.get("message", "")
+        result["tenant_id"] = _tenant_id(token)
+        return result
+
     search_text = extract_agent_answer(result)
 
     tenant = _tenant_id(token)
