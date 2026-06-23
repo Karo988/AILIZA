@@ -88,6 +88,9 @@ audit_logs = Table(
     Column("action", String(255), nullable=False),
     Column("metadata", JSON, nullable=False, default=dict),
     Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    # Audit-Vault Stufe 2: Hash-Chain (append-only Integritätssicherung)
+    Column("previous_hash", String(64), nullable=False, default="0" * 64),
+    Column("entry_hash", String(64), nullable=False, default=""),
 )
 
 approval_requests = Table(
@@ -366,18 +369,55 @@ def list_performance_logs(tenant_id: str | None = None, limit: int = 100) -> lis
         return [dict(r) for r in connection.execute(query).mappings().all()]
 
 
+def _compute_audit_hash(entry_id: int, timestamp: str, action: str,
+                        tenant_id: str, previous_hash: str) -> str:
+    """SHA-256 Hash-Chain für Audit-Vault Stufe 2."""
+    import hashlib
+    raw = f"{entry_id}|{timestamp}|{action}|{tenant_id}|{previous_hash}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _get_latest_audit_hash(connection: Any) -> str:
+    """Liest den entry_hash des letzten Audit-Eintrags (für Hash-Chain)."""
+    row = connection.execute(
+        select(audit_logs.c.entry_hash)
+        .order_by(audit_logs.c.id.desc())
+        .limit(1)
+    ).fetchone()
+    if row is None or not row[0]:
+        return "0" * 64  # Genesis-Hash
+    return row[0]
+
+
 def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
                       tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
-    entry = {
-        "timestamp": datetime.now(timezone.utc),
+    ts = datetime.now(timezone.utc)
+    entry: dict[str, Any] = {
+        "timestamp": ts,
         "action": action,
         "metadata": metadata or {},
         "tenant_id": tenant_id,
     }
 
     with engine.begin() as connection:
-        result = connection.execute(insert(audit_logs).values(**entry))
-        entry["id"] = result.inserted_primary_key[0]
+        previous_hash = _get_latest_audit_hash(connection)
+        entry["previous_hash"] = previous_hash
+        # Temporärer Hash ohne ID — wird nach Insert mit echter ID berechnet
+        result = connection.execute(
+            insert(audit_logs).values(**entry, entry_hash="pending")
+        )
+        entry_id = result.inserted_primary_key[0]
+        entry["id"] = entry_id
+        # Hash mit echter ID berechnen und zurückschreiben
+        ts_str = ts.isoformat()
+        entry_hash = _compute_audit_hash(entry_id, ts_str, action, tenant_id, previous_hash)
+        entry["entry_hash"] = entry_hash
+        from sqlalchemy import update as _update
+        connection.execute(
+            _update(audit_logs)
+            .where(audit_logs.c.id == entry_id)
+            .values(entry_hash=entry_hash)
+        )
 
     return entry
 

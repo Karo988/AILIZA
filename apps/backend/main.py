@@ -95,6 +95,24 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Alle Governance-abhängigen Endpoints werden durch enforce_kill_switch() geblockt.
     # ── Ende Gate 10 ─────────────────────────────────────────────────────────
 
+    # ── Secret-Key-Prüfung: Hard-Fail wenn zu schwach ───────────────────────
+    _secret_key = os.getenv("AILIZA_SECRET_KEY", "")
+    if len(_secret_key) < 32:
+        import logging as _log_sk
+        _log_sk.getLogger(__name__).critical(
+            "STARTUP ABORTED: AILIZA_SECRET_KEY ist nicht gesetzt oder zu kurz "
+            "(< 32 Zeichen). JWT-Authentifizierung ist ohne sicheres Secret nicht "
+            "betreibbar. Bitte AILIZA_SECRET_KEY in .env setzen und AILIZA neu starten."
+        )
+        # Kein raise — Dienst startet, aber alle Auth-abhängigen Calls schlagen fehl.
+        # Externe Calls bleiben durch Kill-Switch blockiert.
+        os.environ["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+        write_audit_entry(
+            action="startup.secret_key_missing",
+            metadata={"component": "jwt_handler", "key_length": len(_secret_key)},
+        )
+    # ── Ende Secret-Key-Prüfung ──────────────────────────────────────────────
+
     init_db()
 
     # Audit-Light: Gate-10-Ergebnis protokollieren (keine Inhalte, keine Hashes)
@@ -959,9 +977,9 @@ def admin_audit_events(
     timestamp_to: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
-    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+    _admin: TokenData = Depends(require_role(Role.AUDIT_VIEWER)),
 ) -> dict[str, Any]:
-    """Paginierte Audit-Events — Admin-only, append-only, sanitized."""
+    """Paginierte Audit-Events — ab audit_viewer, append-only, sanitized."""
     try:
         from .audit.vault import query_vault_events
     except ImportError:
@@ -986,9 +1004,9 @@ def admin_audit_export(
     limit: int = Query(default=1000, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     fmt: str = Query(default="json", pattern="^(json|jsonl)$"),
-    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+    _admin: TokenData = Depends(require_role(Role.AUDIT_VIEWER)),
 ) -> Any:
-    """Audit-Export als JSON oder JSONL — Admin-only, max. 1000 Einträge, keine Rohdaten."""
+    """Audit-Export als JSON oder JSONL — ab audit_viewer, max. 1000 Einträge, keine Rohdaten."""
     try:
         from .audit.vault import export_audit_events
     except ImportError:
@@ -1011,7 +1029,7 @@ def admin_audit_export(
 def admin_audit_retention_report(
     retention_days: int = Query(default=90, ge=1),
     tenant_id: str | None = Query(default=None),
-    _admin: TokenData = Depends(require_role(Role.ADMIN)),
+    _admin: TokenData = Depends(require_role(Role.AUDIT_VIEWER)),
 ) -> dict[str, Any]:
     """
     Retention-Report — zeigt wie viele Einträge älter als retention_days sind.
@@ -1022,6 +1040,29 @@ def admin_audit_retention_report(
     except ImportError:
         from audit.vault import run_audit_retention_report  # type: ignore
     return run_audit_retention_report(retention_days, tenant_id=tenant_id)
+
+
+@app.get("/admin/audit/verify")
+def admin_audit_verify(
+    tenant_id: str | None = Query(default=None),
+    limit: int = Query(default=5000, ge=1, le=10000),
+    _user: TokenData = Depends(require_role(Role.ADMIN)),
+):
+    """
+    Audit-Vault Stufe 2: Prüft SHA-256 Hash-Chain auf Manipulationen.
+    Admin-only. Gibt keine Audit-Inhalte zurück, nur Prüfergebnis.
+    """
+    try:
+        from .audit.vault import verify_audit_chain
+    except ImportError:
+        from audit.vault import verify_audit_chain  # type: ignore
+    result = verify_audit_chain(tenant_id=tenant_id, limit=limit)
+    if not result["ok"]:
+        write_audit_entry(
+            "audit.chain.manipulation_detected",
+            metadata={"first_invalid_id": result.get("first_invalid_id")},
+        )
+    return result
 
 
 @app.post("/admin/cleanup")
