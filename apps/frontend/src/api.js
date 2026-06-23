@@ -36,14 +36,17 @@ export async function apiFetch(path, options = {}) {
   }
 
   if (response.status === 403) {
-    // Keine Berechtigung — kein Redirect, Fehler wird nach oben gegeben
     const error = await response.json().catch(() => ({}))
-    throw new Error(error.detail || "Keine Berechtigung für diese Aktion.")
+    const err = new Error(error.detail || "Keine Berechtigung für diese Aktion.")
+    err.httpStatus = 403
+    throw err
   }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Unbekannter Fehler" }))
-    throw new Error(error.message || error.detail || `HTTP ${response.status}`)
+    const error = await response.json().catch(() => ({}))
+    const err = new Error(error.message || error.detail || `HTTP ${response.status}`)
+    err.httpStatus = response.status
+    throw err
   }
 
   const ct = response.headers.get("content-type") || ""
