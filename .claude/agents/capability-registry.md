@@ -39,6 +39,18 @@ Stand: 2026-06-23
 | Risiken und Annahmen benennen | 🟢 | Kein bindendes Risikogutachten | Nein | ag-master §2 |
 | Entwurf mit Annahmen-Footer | 🟢 | Annahmen explizit kennzeichnen | Nein | ag-core §6 |
 
+## 1b. Nutzeranpassung und Memory (ag-core, ag-master §13)
+
+| Fähigkeit | Status | Grenzen | Freigabe | Referenz |
+|---|---|---|---|---|
+| Kurzzeit-Anpassung (Sprache, Ton, Format, Länge) | 🟢 | Nur Sitzungskontext, kein dauerhaftes Speichern | Nein | ag-master §13.1 |
+| Nutzerbefehle: „Was weißt du über mich?" | 🟢 | — | Nein | ag-master §13.4 |
+| Nutzerbefehle: „Vergiss…" / „Memory deaktivieren" | 🟢 | Nur normale Memory-Präferenzen; Audit-Vault unveränderlich | Nein | ag-master §13.4 |
+| Nutzerbefehle: „Speichere das nicht." | 🟢 | — | Nein | ag-master §13.4 |
+| Nutzerbefehle: „Merke dir das." / „Nur für diese Sitzung" | 🟢 | Fragt nach Zweck vor dauerhafter Speicherung | Nein (Kurz) | ag-master §13.4 |
+| Dauerhafte Speicherung nicht-sensitiver Präferenzen | ⚠️ | Nur Datenklasse öffentlich/intern; Zustimmung + Dokumentation | Ja (Kurzfreigabe) | ag-master §13.2–13.3 |
+| Sessionübergreifendes Lernen | 🔵 | Backend nicht implementiert | — | ag-master §13, ag-allrounder §2 |
+
 ## 2. Freigabepflichtige Aktionen (ag-core)
 
 | Fähigkeit | Status | Freigabeformat | Referenz |

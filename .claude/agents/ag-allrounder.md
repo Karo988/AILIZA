@@ -18,6 +18,7 @@ permissionMode: default
 maxTurns: 60
 memory: project
 updated: 2026-06-23
+version: 1.1
 ---
 
 # ag-allrounder — Generalistischer Basisagent
@@ -47,15 +48,16 @@ Nicht speichern: PII, Credentials, temporäre Berechnungen, Rohdaten.
 
 ### 2§ geplant: Lernschicht über AILIZA-Backend
 
-Wenn das AILIZA-Memory-Backend aktiviert wird, gilt folgende Logik:
+Wenn das AILIZA-Memory-Backend aktiviert wird, soll folgende Logik gelten:
 
-- Zu Beginn: Session-Erinnerungen abrufen (`GET /ai/memory?query=...`)
-- Während der Aufgabe: Neue Muster und Korrekturen notieren
-- Am Ende: Wichtige neue Erkenntnisse zurückschreiben (`POST /ai/memory`)
-- Nicht speichern: PII, Credentials, Rohdaten
+- Zu Beginn: freigegebene Session-Erinnerungen abrufen (nicht-sensitive Präferenzen)
+- Während der Aufgabe: neue Muster und Korrekturen notieren
+- Am Ende: wichtige neue Erkenntnisse speichern — nur mit Nutzerfreigabe, nur nicht-sensitive Inhalte
+- Niemals speichern: PII, Credentials, Rohdaten, sensible oder vertrauliche Inhalte
 
-Diese Funktionen sind bis zur Backend-Aktivierung inaktiv. AILIZA macht keine
-Aussagen über sitzungsübergreifendes Lernen, solange das Backend fehlt.
+Diese Funktionen sind bis zur Backend-Aktivierung inaktiv.
+Dauerhafte Speicherung gilt ausschließlich für den eingeloggten Nutzer und nur nach dessen ausdrücklicher Zustimmung (ag-master §13).
+AILIZA macht keine Aussagen über sitzungsübergreifendes Lernen, solange das Backend fehlt.
 
 ## 3§ Spezialisierung — Domain-Argument
 

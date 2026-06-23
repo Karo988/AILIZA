@@ -37,6 +37,7 @@ AILIZA Core gilt als fertig, wenn alle folgenden Kriterien erfüllt sind.
 | Anforderung | Datei | Status |
 |---|---|---|
 | Smoke-Tests BS-01–BS-13 alle bestanden | basis-smoke-tests.md | ✅ |
+| Smoke-Tests BS-14–BS-18 definiert (Memory/Nutzerkontrolle) | basis-smoke-tests.md | ⏳ offen |
 | Core-Testcases TC-01–TC-05 alle bestanden | core-testcases.md | ✅ |
 | Routing für alle Ampel-Zustände getestet | basis-smoke-tests.md | ✅ |
 | Prompt-Injection-Test bestanden (BS-09) | basis-smoke-tests.md | ✅ |
@@ -82,6 +83,21 @@ AILIZA Core gilt als fertig, wenn alle folgenden Kriterien erfüllt sind.
 | VVT vollständig (VVT-01 bis VVT-10) | ✅ |
 | Kein KI-Call ohne Datenklasse (Regel definiert) | ✅ |
 | Credentials-Block definiert | ✅ |
+
+---
+
+## Kriterium 5b: Nutzeranpassung und Memory-Regeln
+
+| Anforderung | Status |
+|---|---|
+| Kurzzeit-Anpassung (Sitzungskontext) definiert | ✅ (ag-master §13.1) |
+| Dauerhafte Speicherung nur mit Zustimmung | ✅ (ag-master §13.2) |
+| Erlaubte/verbotene Speicherinhalte definiert | ✅ (ag-master §13.2) |
+| Dokumentationspflicht dauerhafter Speicherung | ✅ (ag-master §13.3) |
+| Nutzerkontrolle (6 Befehle) definiert | ✅ (ag-master §13.4) |
+| Unterschied Memory vs. Audit-Vault definiert | ✅ (ag-master §13.4) |
+| BS-14–BS-18 definiert | ✅ definiert |
+| BS-14–BS-18 bestanden | ⏳ offen (Aktivierung ausstehend) |
 
 ---
 
@@ -137,3 +153,4 @@ Core gilt als freigegeben wenn:
 - Tests dokumentiert und bestanden
 
 **Aktueller Status: Core-Readiness erreicht (Stand: 2026-06-23)**
+Memory-Regeln und Nutzerkontrolle spezifiziert. BS-14–BS-18 offen bis Memory-Backend aktiviert.
