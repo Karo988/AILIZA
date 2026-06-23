@@ -12,6 +12,14 @@ ag-dokumente | AILIZA-Zusatzmodul. Dokumenten-Modul. Strukturieren, zusammenfass
 ag-recherche | AILIZA-Zusatzmodul. Recherche-Modul. Webrecherche, Quellenprüfung, Rechercheplan, Zusammenfassung öffentlicher Inhalte. Keine PII in Queries. Tests TR-01–TR-05 ausstehend. | lean-review | planned
 ag-buchhaltung | AILIZA-Zusatzmodul. Buchhaltungs-Modul. Gesperrt: GoBD-Vault + skr-lookup + Provider-Profil + AVV fehlen. Verantwortungs- und Übergabemodus aktiv. | lean-review,audit-legal | blocked
 ag-hr | AILIZA-Zusatzmodul. HR-Modul. Gesperrt: AVV ausstehend, DPIA/DSFA für HR-Daten fehlt. Verantwortungs- und Übergabemodus aktiv. | lean-review,audit-legal | blocked
+ag-identity | AILIZA Core-Spezifikation. Mission, Vision, Autonomieprinzip, Verantwortungsprinzip, Governance-Grundsätze. Referenzdokument. | — | active
+capability-registry | AILIZA Capability-Register. Alle Core-Fähigkeiten mit Status, Grenzen, Freigabebedarf. Vollständige Übersicht aktiv/aktivierbar/geplant/gesperrt. | — | active
+data-classification | AILIZA Datenklassifizierung. 6 Klassen mit Beschreibung, Beispielen, Speicher-/Freigabe-/Auditregeln. Verbindlich für alle Agenten. | — | active
+module-lifecycle | AILIZA Modul-Lifecycle. planned/activatable/active/blocked mit Bedeutung, Voraussetzungen, Übergangsbedingungen, Tests. | — | active
+routing-spec | AILIZA Routing-Spezifikation. Drei-Gate-Fluss, Direktantwort, Modulvorschlag, responsibility_handoff, Kurzfreigabe, Vollfreigabe, Fallbacks. | — | active
+core-readiness | AILIZA Core-Readiness. Definition "Core ist fertig" — 7 Kriterien. Aktueller Status: Core-Readiness erreicht 2026-06-23. | — | active
+audit-vault-minimal-spec | AILIZA Audit-Vault Mindestspezifikation. JSONL-Schema, ID-Format, Append-only, Nachtragsprinzip, Minimalanforderungen Stufe 1. | — | active
+core-gap-analysis | AILIZA Core Gap-Analyse. Vollständig/fehlend/doppelt/offene Risiken. Reifegrad: 78/100. Stand: 2026-06-23. | — | active
 ag-cqo | Chief Quality Officer. Audits harness structure, source-code security (OWASP), legal compliance (EU AI Act, GDPR, German law), and deliverables, then renders an Approved/Rejected stage-gate. | lean-review,audit-security,audit-legal,proofread | active
 ag-cso | Chief Strategy Officer. Runs the sota skill to assess a project against the current state of the art and renders a scored strategic report with competitive edge. Read-only. | sota,lean-review | active
 ag-cto | Chief Technology Officer. Full coding agent — writes and verifies code following the project's conventions, self-reviews with lean-review and audit-security, and keeps documentation in sync. | lean-review,audit-security | active
