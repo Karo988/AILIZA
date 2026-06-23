@@ -2,14 +2,12 @@ import { useState, useEffect } from "react"
 import "./App.css"
 import DashboardCard from "./components/DashboardCard"
 import LoginPage from "./components/LoginPage"
+import AgentChat from "./components/AgentChat"
 import { getSession, logout, apiFetch } from "./api"
 
 function App() {
   const [session, setSession] = useState(null)          // null = nicht geprüft, false = nicht eingeloggt
   const [activePage, setActivePage] = useState("Dashboard")
-  const [taskInput, setTaskInput] = useState("")
-  const [agentResult, setAgentResult] = useState(null)
-  const [agentLoading, setAgentLoading] = useState(false)
   const [auditLogs, setAuditLogs] = useState([])
 
   // Session prüfen beim Start
@@ -57,24 +55,6 @@ function App() {
     ["Monitoring-Agent", "Online", "Health Checks, Warnungen, Systemüberwachung"],
   ]
 
-  async function startAgent() {
-    if (!taskInput.trim()) return
-    setAgentLoading(true)
-    setAgentResult(null)
-    try {
-      const data = await apiFetch("/agent/run", { body: { task: taskInput } })
-      setAgentResult({
-        title: "Agentenlauf abgeschlossen",
-        status: data?.status || "completed",
-        message: data?.message || data?.ai_response || "Keine Antwort erhalten.",
-      })
-    } catch (err) {
-      setAgentResult({ title: "Fehler", status: "error", message: err.message })
-    } finally {
-      setAgentLoading(false)
-    }
-  }
-
   function PageHeader({ label, title, text }) {
     return (
       <div className="page-header">
@@ -100,25 +80,7 @@ function App() {
             <div className="kpi-card"><p className="kpi-label">Audit Logs</p><p className="kpi-value">{auditLogs.length}</p></div>
             <div className="kpi-card"><p className="kpi-label">Nutzer</p><p className="kpi-value">{session.user_id}</p></div>
           </div>
-          <div className="demo-runner">
-            <h2>Agentenlauf starten</h2>
-            <p>Stelle eine Frage oder gib eine Aufgabe ein.</p>
-            <textarea
-              value={taskInput}
-              onChange={(e) => setTaskInput(e.target.value)}
-              placeholder="Beispiel: Was ist der Unterschied zwischen GmbH und UG?"
-            />
-            <button onClick={startAgent} disabled={agentLoading}>
-              {agentLoading ? "Läuft …" : "Agent starten"}
-            </button>
-            {agentResult && (
-              <div className="result-box">
-                <h3>{agentResult.title}</h3>
-                <p><strong>Status:</strong> {agentResult.status}</p>
-                <p>{agentResult.message}</p>
-              </div>
-            )}
-          </div>
+          <AgentChat />
           <div className="card-grid">
             {dashboardData.map((card) => (
               <DashboardCard key={card.title} {...card} />
