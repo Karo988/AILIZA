@@ -1,16 +1,42 @@
-# AILIZA — EU-konformer AI Agent
+# AILIZA — AI Governance System
 
-> Ein autonomer AI Agent, designed für die Europäische Union.
-> Inspiriert von Hermes, neu gebaut mit DSGVO & EU AI Act Compliance von Grund auf.
+AILIZA ist ein Kontrollrahmen für den sicheren Einsatz externer KI-Anbieter (GPT, Claude, etc.) in regulierten Umgebungen. Kein eigenes Modell — Governance, Audit und Kontrolle.
+
+**Stand:** 24.06.2026 | **Basis v1.0 Spec-ready** | Tech-ready: ausstehend
+
+## Aktueller Teststatus
+
+```
+87/87 Tests grün
+```
+
+## Arbeitsregel
+
+Vor jedem wichtigen technischen Schritt:
+1. Erklären was gemacht wird und warum
+2. Dateien nennen
+3. Risiken nennen
+4. Auf explizite Freigabe warten
+
+## Dokumentation
+
+| Ordner | Inhalt |
+|--------|--------|
+| `docs/00_masterplan/` | Baseline, Prinzipien, Gap-Liste |
+| `docs/01_addendum/` | Korrekturen und Nachträge |
+| `docs/02_workphases/` | Aktiver Arbeitsstand |
+| `docs/03_specs/` | Technische Spezifikationen |
+| `docs/04_schemas/` | JSON-Schemas |
+| `docs/05_prompts/` | Prompt-Vorlagen für Folge-Sessions |
+| `docs/06_release/` | Beta-Checkliste |
+
+## Offene Komponenten
+
+- Memory-Backend SQLite-Persistenz
+- Kill-Switch-Persistenz
+- BS-14–18 auf persistentem Backend schließen
 
 ---
-
-## Zusammengeführter Stand
-
-AILIZA enthält jetzt den bisherigen AILIZA-Projektstand und den aktuellen
-KI-Liza-Stand in einem Ordner. Der Merge wurde nicht-destruktiv durchgeführt:
-bestehende Dateien aus `C:\Ailiza` wurden nicht überschrieben, neue KI-Liza-
-Module wurden ergänzt.
 
 ---
 
