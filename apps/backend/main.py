@@ -20,11 +20,13 @@ try:
     from .database import get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
+    from .routers.memory import router as memory_router
 except ImportError:
     from agent_runtime import AgentRuntime
     from database import get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
+    from routers.memory import router as memory_router
 
 
 @asynccontextmanager
@@ -43,6 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(approvals_router)
+app.include_router(memory_router)
 
 
 class AuditLogCreate(BaseModel):
