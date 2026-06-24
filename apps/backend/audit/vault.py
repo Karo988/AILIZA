@@ -148,6 +148,11 @@ class AuditVault:
 
         previous_hash = _GENESIS_HASH
         for row in rows:
+            # Prüfung 1: gespeichertes previous_hash stimmt mit laufender Kette überein
+            if row["previous_hash"] != previous_hash:
+                return False, row["sequence"]
+
+            # Prüfung 2: entry_hash ist korrekt aus den vier Feldern berechnet
             expected = _compute_hash(
                 previous_hash,
                 row["event_type"],
@@ -156,6 +161,7 @@ class AuditVault:
             )
             if expected != row["entry_hash"]:
                 return False, row["sequence"]
+
             previous_hash = row["entry_hash"]
 
         return True, None
