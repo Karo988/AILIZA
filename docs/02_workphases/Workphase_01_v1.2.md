@@ -11,7 +11,7 @@
 | SqliteMemoryStore — persistentes Backend | 19 ✅ |
 | BS-14–18 auf SQLite-Backend geschlossen | ✅ |
 | Audit Vault (Hash-Kette, write-once, verify_chain, export) | 22 ✅ |
-| Kill Switch (4 Ebenen, 2 Modi, Change-Log) | 15 ✅ |
+| Kill Switch (4 Ebenen, YAML-Config, load_from_config) | 16 ✅ |
 | Kill Switch in gateway.py eingebunden | — |
 | verify_chain()-Bugfix | — |
 | retention_until-Validierung in Store verschoben (Bugfix) | — |
@@ -23,8 +23,7 @@
 
 | Aufgabe | Blocker |
 |---------|---------|
-| Kill-Switch Persistenz | — |
-| Readiness-Gate Tech-ready setzen | Kill-Switch-Persistenz (Entscheidung nötig) |
+| Readiness-Gate Tech-ready formal setzen | alle Punkte geschlossen ✅ |
 
 ## Readiness
 

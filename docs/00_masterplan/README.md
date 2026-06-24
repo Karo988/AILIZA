@@ -29,7 +29,7 @@ AILIZA ist ein AI-Governance-System zur kontrollierten Nutzung externer KI-Anbie
 |---|-------|--------|
 | G-01 | Memory-Backend persistentes DB-Backend | 🟡 offen |
 | G-02 | Audit Vault Exportformat standardisiert | 🟡 offen |
-| G-03 | Kill-Switch Persistenz (überlebt Neustart) | 🟡 offen |
+| G-03 | Kill-Switch Persistenz | ✅ accepted for v1.0 — YAML-Config beim Start |
 | G-04 | BS-14–18 auf DB-Backend heben | 🟡 offen |
 | G-05 | Dokumentationsstruktur als Single Source of Truth | ✅ geschlossen |
 | G-06 | DataClass-Feld in MemoryEntry | ✅ geschlossen |

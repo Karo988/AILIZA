@@ -1,0 +1,25 @@
+# AILIZA Kill-Switch Initialzustand
+# Wird beim Start geladen — Änderungen zur Laufzeit gehen ins Audit-Vault
+
+global:
+  enabled: true          # false = gesamtes System gestoppt
+
+providers:
+  claude:
+    enabled: true
+  openai:
+    enabled: true
+
+modules:
+  memory:
+    enabled: true
+  audit:
+    enabled: true
+  consent:
+    enabled: true
+
+capabilities:
+  data_export:
+    enabled: true
+  external_calls:
+    enabled: true
