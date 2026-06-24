@@ -17,13 +17,13 @@ except ImportError:
     from policy import check_tool_call
     from tools import execute_tool
 
-# Singleton — einmal geladen beim Start
-_kill_switch = KillSwitch()
+# Singleton — einmal geladen beim Start (wird von routers/kill_switch.py geteilt)
+kill_switch = KillSwitch()
 
 
 def enforce_policy(tool_name: str, parameters: dict[str, Any], module: str = None) -> None:
     # Kill-Switch-Prüfung vor Policy — höhere Priorität (EU AI Act Art. 14)
-    if not _kill_switch.is_allowed(module=module, capability=tool_name):
+    if not kill_switch.is_allowed(module=module, capability=tool_name):
         write_audit_entry(
             action="kill_switch.blocked",
             metadata={"tool": tool_name, "module": module},

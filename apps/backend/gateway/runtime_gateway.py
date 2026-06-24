@@ -6,11 +6,19 @@ from fastapi import HTTPException
 
 from ..approval import ApprovalStatus, assess_risk
 from ..database import create_approval_request, get_approval_request, write_audit_entry
+from ..kill_switch_state import instance as kill_switch
 from ..policy import check_tool_call
 from ..tools import execute_tool
 
 
-def enforce_policy(tool_name: str, parameters: dict[str, Any]) -> None:
+def enforce_policy(tool_name: str, parameters: dict[str, Any], module: str | None = None) -> None:
+    if not kill_switch.is_allowed(module=module, capability=tool_name):
+        write_audit_entry(
+            action="kill_switch.blocked",
+            metadata={"tool": tool_name, "module": module},
+        )
+        raise HTTPException(status_code=503, detail="Kill-Switch aktiv")
+
     decision = check_tool_call(tool_name, parameters)
     write_audit_entry(
         action="policy.decision",
