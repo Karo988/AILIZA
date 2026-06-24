@@ -1,4 +1,4 @@
-from .models import MemoryEntry, MemoryPurpose, VisibilityLevel
+from .models import DataClass, MemoryEntry, MemoryPurpose, VisibilityLevel
 from .store import MemoryStore
 
-__all__ = ["MemoryEntry", "MemoryPurpose", "VisibilityLevel", "MemoryStore"]
+__all__ = ["DataClass", "MemoryEntry", "MemoryPurpose", "VisibilityLevel", "MemoryStore"]

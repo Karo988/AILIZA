@@ -11,7 +11,7 @@ BS-18: Keine Vollspeicherung sensibler Inhalte als Default
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from ..models import MemoryEntry, MemoryPurpose, VisibilityLevel
+from ..models import DataClass, MemoryEntry, MemoryPurpose, VisibilityLevel
 from ..store import MemoryStore
 
 
@@ -182,3 +182,45 @@ class TestBS18SensitiveDefault:
         """Nicht-sensitive Einträge sind explizit möglich (Opt-out)."""
         e = _entry(sensitive=False)
         assert e.sensitive is False
+
+
+# ── DataClass: Sicherheitsklassifizierung ─────────────────────────────────────
+
+class TestDataClass:
+    def test_default_ist_confidential(self):
+        """Sicherer Default — kein versehentliches PUBLIC."""
+        e = _entry()
+        assert e.data_class == DataClass.CONFIDENTIAL
+
+    def test_alle_data_classes_setzbar(self):
+        for dc in DataClass:
+            e = _entry(data_class=dc)
+            assert e.data_class == dc
+
+    def test_nur_public_erlaubt_klartext(self):
+        assert DataClass.PUBLIC.allows_plaintext_storage() is True
+        assert DataClass.INTERNAL.allows_plaintext_storage() is False
+        assert DataClass.CONFIDENTIAL.allows_plaintext_storage() is False
+        assert DataClass.RESTRICTED.allows_plaintext_storage() is False
+
+    def test_confidential_und_restricted_erfordern_hash(self):
+        assert DataClass.CONFIDENTIAL.requires_hash_only() is True
+        assert DataClass.RESTRICTED.requires_hash_only() is True
+        assert DataClass.PUBLIC.requires_hash_only() is False
+        assert DataClass.INTERNAL.requires_hash_only() is False
+
+    def test_restricted_eintrag_hat_sensitive_true(self):
+        """RESTRICTED impliziert immer sensitive=True — kein Widerspruch möglich."""
+        e = _entry(data_class=DataClass.RESTRICTED)
+        assert e.sensitive is True
+
+    def test_store_filtert_nach_data_class(self):
+        store = MemoryStore()
+        store.add(_entry(data_class=DataClass.PUBLIC))
+        store.add(_entry(data_class=DataClass.RESTRICTED))
+
+        alle = store.list_active(role="user")
+        assert len(alle) == 2
+        klassen = {e.data_class for e in alle}
+        assert DataClass.PUBLIC in klassen
+        assert DataClass.RESTRICTED in klassen

@@ -9,6 +9,12 @@ BS-15: Sichtbarkeit/Rolle (visibility + role_required)
 BS-16: Aufbewahrungsfrist (retention_until, is_expired)
 BS-17: Lösch-/Deaktivierungslogik (deactivate, Soft-delete via deactivated_at)
 BS-18: Keine Vollspeicherung sensibler Inhalte als Default (sensitive=True, content_hash statt Klartext)
+
+DataClass klassifiziert die Sensitivität des Inhalts unabhängig von Sichtbarkeit/Rolle:
+  PUBLIC       → öffentlich, keine Einschränkung
+  INTERNAL     → intern, nur für Systemmitglieder
+  CONFIDENTIAL → vertraulich, erfordert explizite Freigabe
+  RESTRICTED   → höchste Stufe, nur mit besonderer Genehmigung
 """
 
 from __future__ import annotations
@@ -34,6 +40,28 @@ class VisibilityLevel(str, Enum):
     SYSTEM = "SYSTEM"       # Nur System-intern, niemals nach außen
 
 
+class DataClass(str, Enum):
+    """
+    Sicherheitsklassifizierung des Inhalts (unabhängig von Sichtbarkeit/Rolle).
+    Bestimmt wie streng der Inhalt behandelt werden muss.
+
+    Prioritätsreihenfolge: RESTRICTED > CONFIDENTIAL > INTERNAL > PUBLIC
+    Default: CONFIDENTIAL — sicherer Default, explizites Downgrade nötig.
+    """
+    PUBLIC = "PUBLIC"               # Keine Einschränkung
+    INTERNAL = "INTERNAL"           # Nur intern, nicht nach außen
+    CONFIDENTIAL = "CONFIDENTIAL"   # Vertraulich, explizite Freigabe nötig
+    RESTRICTED = "RESTRICTED"       # Höchste Stufe, besondere Genehmigung
+
+    def allows_plaintext_storage(self) -> bool:
+        """Nur PUBLIC-Einträge dürfen im Klartext gespeichert werden."""
+        return self == DataClass.PUBLIC
+
+    def requires_hash_only(self) -> bool:
+        """CONFIDENTIAL und RESTRICTED dürfen nie als Klartext gespeichert werden."""
+        return self in (DataClass.CONFIDENTIAL, DataClass.RESTRICTED)
+
+
 @dataclass
 class MemoryEntry:
     """
@@ -47,15 +75,16 @@ class MemoryEntry:
     """
 
     purpose: MemoryPurpose
-    content_hash: str           # SHA-256 des Inhalts — niemals Klartext sensitiv
+    content_hash: str                           # SHA-256 des Inhalts — niemals Klartext sensitiv
     visibility: VisibilityLevel
-    role_required: str          # z.B. "user", "operator", "admin"
-    retention_until: datetime   # Pflicht — kein ewiges Speichern
+    role_required: str                          # z.B. "user", "operator", "admin"
+    retention_until: datetime                   # Pflicht — kein ewiges Speichern
+    data_class: DataClass = DataClass.CONFIDENTIAL  # Default: vertraulich — Opt-out, nicht Opt-in
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     deactivated_at: Optional[datetime] = None
-    sensitive: bool = True      # Default: sensitiv (BS-18)
+    sensitive: bool = True                      # Default: sensitiv (BS-18)
 
     def __post_init__(self) -> None:
         if self.retention_until.tzinfo is None:
