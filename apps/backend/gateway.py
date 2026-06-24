@@ -7,26 +7,28 @@ from fastapi import HTTPException
 try:
     from .approval import ApprovalStatus, assess_risk
     from .database import create_approval_request, get_approval_request, write_audit_entry
-    from .kill_switch import get_kill_switch
+    from .kill_switch import KillSwitch
     from .policy import check_tool_call
     from .tools import execute_tool
 except ImportError:
     from approval import ApprovalStatus, assess_risk
     from database import create_approval_request, get_approval_request, write_audit_entry
-    from kill_switch import get_kill_switch
+    from kill_switch import KillSwitch
     from policy import check_tool_call
     from tools import execute_tool
+
+# Singleton — einmal geladen beim Start
+_kill_switch = KillSwitch()
 
 
 def enforce_policy(tool_name: str, parameters: dict[str, Any], module: str = None) -> None:
     # Kill-Switch-Prüfung vor Policy — höhere Priorität (EU AI Act Art. 14)
-    ks = get_kill_switch().check(module=module, capability=tool_name)
-    if not ks.allowed:
+    if not _kill_switch.is_allowed(module=module, capability=tool_name):
         write_audit_entry(
             action="kill_switch.blocked",
-            metadata={"tool": tool_name, "level": ks.level.name if ks.level else None, "reason": ks.reason},
+            metadata={"tool": tool_name, "module": module},
         )
-        raise HTTPException(status_code=503, detail=f"Kill-Switch aktiv: {ks.reason}")
+        raise HTTPException(status_code=503, detail="Kill-Switch aktiv")
 
     decision = check_tool_call(tool_name, parameters)
     write_audit_entry(
