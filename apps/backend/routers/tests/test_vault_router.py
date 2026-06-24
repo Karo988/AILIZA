@@ -2,11 +2,21 @@
 Vault Router Tests — /audit/vault/export, /stats, /verify
 """
 import pytest
+import apps.backend.auth as auth_module
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
 from apps.backend.routers.vault import router, get_vault
 from apps.backend.audit.vault import AuditVault
+
+ADMIN_KEY = "test-admin-key"
+AUTH = {"x-api-key": ADMIN_KEY}
+
+
+@pytest.fixture(autouse=True)
+def patch_keys(monkeypatch):
+    monkeypatch.setattr(auth_module, "_OPERATOR_KEY", "test-operator-key")
+    monkeypatch.setattr(auth_module, "_ADMIN_KEY", ADMIN_KEY)
 
 
 @pytest.fixture
@@ -29,14 +39,14 @@ def client(vault):
 
 class TestVaultExport:
     def test_export_leer(self, client):
-        r = client.get("/audit/vault/export")
+        r = client.get("/audit/vault/export", headers=AUTH)
         assert r.status_code == 200
         assert r.json() == []
 
     def test_export_gibt_eintraege_zurueck(self, client, vault):
         vault.record("policy.decision", "system")
         vault.record("approval.granted", "operator")
-        r = client.get("/audit/vault/export")
+        r = client.get("/audit/vault/export", headers=AUTH)
         assert r.status_code == 200
         data = r.json()
         assert len(data) == 2
@@ -45,20 +55,20 @@ class TestVaultExport:
 
     def test_export_felder_vollstaendig(self, client, vault):
         vault.record("test.event", "actor-1")
-        r = client.get("/audit/vault/export")
+        r = client.get("/audit/vault/export", headers=AUTH)
         entry = r.json()[0]
         assert set(entry.keys()) == {"sequence", "event_type", "timestamp_iso", "actor_id", "previous_hash", "entry_hash"}
 
     def test_export_limit(self, client, vault):
         for i in range(5):
             vault.record(f"event.{i}", "system")
-        r = client.get("/audit/vault/export?limit=3")
+        r = client.get("/audit/vault/export?limit=3", headers=AUTH)
         assert len(r.json()) == 3
 
 
 class TestVaultStats:
     def test_stats_leer(self, client):
-        r = client.get("/audit/vault/stats")
+        r = client.get("/audit/vault/stats", headers=AUTH)
         assert r.status_code == 200
         data = r.json()
         assert data["total_entries"] == 0
@@ -68,7 +78,7 @@ class TestVaultStats:
     def test_stats_zaehlt_eintraege(self, client, vault):
         vault.record("ev1", "a")
         vault.record("ev2", "b")
-        r = client.get("/audit/vault/stats")
+        r = client.get("/audit/vault/stats", headers=AUTH)
         assert r.json()["total_entries"] == 2
 
 
@@ -76,14 +86,14 @@ class TestVaultVerify:
     def test_verify_intakte_kette(self, client, vault):
         vault.record("ev1", "a")
         vault.record("ev2", "b")
-        r = client.get("/audit/vault/verify")
+        r = client.get("/audit/vault/verify", headers=AUTH)
         assert r.status_code == 200
         data = r.json()
         assert data["intact"] is True
         assert data["first_defect_at_sequence"] is None
 
     def test_verify_leere_kette(self, client):
-        r = client.get("/audit/vault/verify")
+        r = client.get("/audit/vault/verify", headers=AUTH)
         assert r.json()["intact"] is True
 
     def test_verify_erkennt_manipulation(self, client, vault):
@@ -92,7 +102,7 @@ class TestVaultVerify:
         # Direkte DB-Manipulation
         vault._conn.execute("UPDATE vault SET entry_hash = 'deadbeef' WHERE sequence = 1")
         vault._conn.commit()
-        r = client.get("/audit/vault/verify")
+        r = client.get("/audit/vault/verify", headers=AUTH)
         data = r.json()
         assert data["intact"] is False
         assert data["first_defect_at_sequence"] == 1
@@ -102,7 +112,7 @@ class TestVaultVerify:
         vault.record("ev2", "b")
         vault._conn.execute("UPDATE vault SET previous_hash = 'manipuliert' WHERE sequence = 2")
         vault._conn.commit()
-        r = client.get("/audit/vault/verify")
+        r = client.get("/audit/vault/verify", headers=AUTH)
         data = r.json()
         assert data["intact"] is False
         assert data["first_defect_at_sequence"] == 2

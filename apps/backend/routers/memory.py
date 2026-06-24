@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
+
+from ..auth import require_admin
 
 from ..memory import MemoryEntry, MemoryPurpose, VisibilityLevel
 from ..memory.sqlite_store import SqliteMemoryStore
@@ -110,6 +112,6 @@ def deactivate_entry(entry_id: str) -> DeactivateResponse:
 
 
 @router.post("/purge", status_code=200, response_model=PurgeResponse)
-def purge_expired() -> PurgeResponse:
+def purge_expired(_role=Depends(require_admin)) -> PurgeResponse:
     count = get_store().purge_expired()
     return PurgeResponse(purged=count)

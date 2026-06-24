@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ..auth import require_admin, require_operator
 from ..kill_switch_state import instance as kill_switch
 
 router = APIRouter(prefix="/admin/kill-switch", tags=["kill-switch"])
@@ -32,7 +33,7 @@ class OperationResponse(BaseModel):
 
 
 @router.get("/status", response_model=KillSwitchStatus)
-def get_status() -> KillSwitchStatus:
+def get_status(_role=Depends(require_operator)) -> KillSwitchStatus:
     return KillSwitchStatus(
         global_enabled=kill_switch._global,
         providers=dict(kill_switch._providers),
@@ -42,7 +43,7 @@ def get_status() -> KillSwitchStatus:
 
 
 @router.post("/halt", response_model=OperationResponse)
-def halt(payload: HaltRequest) -> OperationResponse:
+def halt(payload: HaltRequest, _role=Depends(require_admin)) -> OperationResponse:
     if payload.level == "global":
         kill_switch.halt_global()
     elif payload.level == "provider":
@@ -58,7 +59,7 @@ def halt(payload: HaltRequest) -> OperationResponse:
 
 
 @router.post("/resume", response_model=OperationResponse)
-def resume(payload: ResumeRequest) -> OperationResponse:
+def resume(payload: ResumeRequest, _role=Depends(require_admin)) -> OperationResponse:
     if payload.level == "global":
         kill_switch.resume_global()
     elif payload.level == "provider":
