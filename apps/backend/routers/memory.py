@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
@@ -39,22 +39,43 @@ class MemoryEntryCreate(BaseModel):
         return v
 
 
-def serialize_entry(entry: MemoryEntry) -> dict[str, Any]:
-    return {
-        "id": entry.id,
-        "purpose": entry.purpose.value,
-        "content_hash": entry.content_hash,
-        "visibility": entry.visibility.value,
-        "role_required": entry.role_required,
-        "retention_until": entry.retention_until.isoformat(),
-        "created_at": entry.created_at.isoformat(),
-        "deactivated_at": entry.deactivated_at.isoformat() if entry.deactivated_at else None,
-        "sensitive": entry.sensitive,
-    }
+class MemoryEntryResponse(BaseModel):
+    id: str
+    purpose: MemoryPurpose
+    content_hash: str
+    visibility: VisibilityLevel
+    role_required: str
+    retention_until: datetime
+    created_at: datetime
+    deactivated_at: Optional[datetime]
+    sensitive: bool
 
 
-@router.post("", status_code=201)
-def create_entry(payload: MemoryEntryCreate) -> dict[str, Any]:
+class DeactivateResponse(BaseModel):
+    id: str
+    status: str
+
+
+class PurgeResponse(BaseModel):
+    purged: int
+
+
+def _to_response(entry: MemoryEntry) -> MemoryEntryResponse:
+    return MemoryEntryResponse(
+        id=entry.id,
+        purpose=entry.purpose,
+        content_hash=entry.content_hash,
+        visibility=entry.visibility,
+        role_required=entry.role_required,
+        retention_until=entry.retention_until,
+        created_at=entry.created_at,
+        deactivated_at=entry.deactivated_at,
+        sensitive=entry.sensitive,
+    )
+
+
+@router.post("", status_code=201, response_model=MemoryEntryResponse)
+def create_entry(payload: MemoryEntryCreate) -> MemoryEntryResponse:
     entry = MemoryEntry(
         purpose=payload.purpose,
         content_hash=payload.content_hash,
@@ -64,31 +85,31 @@ def create_entry(payload: MemoryEntryCreate) -> dict[str, Any]:
         sensitive=payload.sensitive,
     )
     get_store().add(entry)
-    return serialize_entry(entry)
+    return _to_response(entry)
 
 
-@router.get("")
-def list_entries() -> list[dict[str, Any]]:
-    return [serialize_entry(e) for e in get_store().list_active()]
+@router.get("", response_model=list[MemoryEntryResponse])
+def list_entries() -> list[MemoryEntryResponse]:
+    return [_to_response(e) for e in get_store().list_active()]
 
 
-@router.get("/{entry_id}")
-def get_entry(entry_id: str) -> dict[str, Any]:
+@router.get("/{entry_id}", response_model=MemoryEntryResponse)
+def get_entry(entry_id: str) -> MemoryEntryResponse:
     entry = get_store().get(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Memory entry not found")
-    return serialize_entry(entry)
+    return _to_response(entry)
 
 
-@router.delete("/{entry_id}", status_code=200)
-def deactivate_entry(entry_id: str) -> dict[str, Any]:
+@router.delete("/{entry_id}", status_code=200, response_model=DeactivateResponse)
+def deactivate_entry(entry_id: str) -> DeactivateResponse:
     ok = get_store().deactivate(entry_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Memory entry not found or already deactivated")
-    return {"id": entry_id, "status": "deactivated"}
+    return DeactivateResponse(id=entry_id, status="deactivated")
 
 
-@router.post("/purge", status_code=200)
-def purge_expired() -> dict[str, Any]:
+@router.post("/purge", status_code=200, response_model=PurgeResponse)
+def purge_expired() -> PurgeResponse:
     count = get_store().purge_expired()
-    return {"purged": count}
+    return PurgeResponse(purged=count)
