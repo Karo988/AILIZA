@@ -89,8 +89,6 @@ class MemoryEntry:
     def __post_init__(self) -> None:
         if self.retention_until.tzinfo is None:
             raise ValueError("retention_until muss timezone-aware sein (UTC)")
-        if self.created_at > self.retention_until:
-            raise ValueError("retention_until muss in der Zukunft liegen")
 
     # ── Zustands-Abfragen ─────────────────────────────────────────────────
 

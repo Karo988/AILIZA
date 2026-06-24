@@ -38,8 +38,10 @@ class MemoryStore:
     def add(self, entry: MemoryEntry) -> MemoryEntry:
         """
         Fügt einen neuen Eintrag hinzu.
-        Wirft ValueError wenn id bereits existiert.
+        Wirft ValueError wenn id bereits existiert oder retention_until in der Vergangenheit liegt.
         """
+        if entry.created_at > entry.retention_until:
+            raise ValueError("retention_until muss in der Zukunft liegen")
         with self._lock:
             if entry.id in self._entries:
                 raise ValueError(f"MemoryEntry {entry.id} existiert bereits")

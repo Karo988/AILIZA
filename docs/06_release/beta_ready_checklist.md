@@ -8,7 +8,7 @@
 |-----------|--------|-------|
 | Memory Backend — Modelle + Enums | ✅ | `models.py`, 26 Tests |
 | Memory Backend — Store-Schnittstelle | ✅ | `store.py`, In-Memory |
-| Memory Backend — SQLite-Persistenz | ❌ | offen |
+| Memory Backend — SQLite-Persistenz | ✅ | `sqlite_store.py`, 19 Tests |
 | Audit Vault — Hash-Kette | ✅ | `vault.py`, 22 Tests |
 | Audit Vault — verify_chain() | ✅ | Bugfix eingebaut |
 | Audit Vault — Export | ✅ | `export()` vorhanden |
@@ -16,9 +16,9 @@
 | Kill Switch — Persistenz | ❌ | überlebt keinen Neustart |
 | Policy Engine | ✅ | `policy.py`, Tests vorhanden |
 | Approval Flow | ✅ | `routers/approvals.py` |
-| BS-14–18 auf persistentem Backend | ❌ | wartet auf SQLite-Memory |
+| BS-14–18 auf persistentem Backend | ✅ | SQLite-Backend + Tests |
 | Dokumentationsstruktur | ✅ | `docs/00–06` |
-| Alle Tests grün | ✅ | 87/87 |
+| Alle Tests grün | ✅ | 106/106 |
 
 ## Beta-Freigabe möglich wenn
 

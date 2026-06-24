@@ -104,8 +104,10 @@ class TestBS16Aufbewahrungsfrist:
             )
 
     def test_retention_in_vergangenheit_wird_abgelehnt(self):
+        """Zukunftsprüfung liegt im Store, nicht im Modell."""
+        store = MemoryStore()
         with pytest.raises(ValueError):
-            _entry(retention_until=_past())
+            store.add(_entry(retention_until=_past()))
 
     def test_abgelaufener_eintrag_ist_nicht_abrufbar(self):
         store = MemoryStore()
