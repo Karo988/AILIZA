@@ -22,6 +22,7 @@ try:
     from .routers.approvals import router as approvals_router
     from .routers.memory import router as memory_router
     from .routers.kill_switch import router as kill_switch_router
+    from .routers.vault import router as vault_router
 except ImportError:
     from agent_runtime import AgentRuntime
     from database import get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry
@@ -29,6 +30,7 @@ except ImportError:
     from routers.approvals import router as approvals_router
     from routers.memory import router as memory_router
     from routers.kill_switch import router as kill_switch_router
+    from routers.vault import router as vault_router
 
 
 @asynccontextmanager
@@ -49,6 +51,7 @@ app.add_middleware(
 app.include_router(approvals_router)
 app.include_router(memory_router)
 app.include_router(kill_switch_router)
+app.include_router(vault_router)
 
 
 class AuditLogCreate(BaseModel):
