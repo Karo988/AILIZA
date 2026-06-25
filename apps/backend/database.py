@@ -917,3 +917,12 @@ def consume_backup_code(user_id: str, plain_code: str) -> bool:
                 )
                 return True
     return False
+def init_db() -> None:
+    metadata_obj.create_all(bind=engine)
+
+
+try:
+    init_db()
+except Exception:
+    logger.exception("Database initialization failed")
+    raise
