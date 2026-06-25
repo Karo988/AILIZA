@@ -123,17 +123,20 @@ class AgentRuntime:
             }
 
         if classification.requires_approval:
-            try:
-                from .database import create_approval_request  # noqa: PLC0415
-            except ImportError:
-                from database import create_approval_request  # noqa: PLC0415
-            approval = create_approval_request(
-                tool="agent_input",
-                input_params={"task": task[:500], "risk_categories": classification.detected_categories},
-                risk_level=classification.risk_level.value,
-                risk_reason=classification.reason,
-            )
-            approval_id = approval["id"]
+            if self.persist_runs:
+                try:
+                    from .database import create_approval_request  # noqa: PLC0415
+                except ImportError:
+                    from database import create_approval_request  # noqa: PLC0415
+                approval = create_approval_request(
+                    tool="agent_input",
+                    input_params={"task": task[:500], "risk_categories": classification.detected_categories},
+                    risk_level=classification.risk_level.value,
+                    risk_reason=classification.reason,
+                )
+                approval_id = approval["id"]
+            else:
+                approval_id = None
             self.link_approval_record(approval_id, run_id)
             self.update_run_record(
                 run_id,
