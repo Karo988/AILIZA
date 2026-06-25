@@ -14,10 +14,15 @@ node_modules/
 dist/
 build/
 
-# Umgebung
+# Umgebung — alle .env-Varianten blockieren
 .env
-apps/backend/.env
+.env.*
+*.env
 *.env.local
+apps/backend/.env
+apps/backend/.env.*
+apps/**/.env
+apps/**/.env.*
 
 # Datenbanken (lokale Entwicklung)
 # Alle .db/.sqlite-Dateien ignorieren (auch in Unterverzeichnissen)
