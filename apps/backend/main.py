@@ -25,6 +25,7 @@ try:
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
+        create_approval_request,
     )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
@@ -41,6 +42,9 @@ try:
     )
     from .auth.models import UserCreate, UserInDB
     from .auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
+    from .governance.data_governance import classify, DataClass, DataTarget
+    from .governance.redaction import redact
+    from .governance.data_matrix import check_data_target, PolicyDecision
 except ImportError:
     from agent_runtime import AgentRuntime
     from database import (
@@ -51,6 +55,7 @@ except ImportError:
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
+        create_approval_request,
     )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
@@ -61,6 +66,9 @@ except ImportError:
     from auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
     from auth.models import UserCreate, UserInDB
     from auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
+    from governance.data_governance import classify, DataClass, DataTarget
+    from governance.redaction import redact
+    from governance.data_matrix import check_data_target, PolicyDecision
 
 
 @asynccontextmanager
@@ -350,8 +358,10 @@ def _tenant_id(token: TokenData | None) -> str:
 @app.post("/audit-logs", status_code=201)
 def create_audit_log(
     payload: AuditLogCreate,
-    token: TokenData | None = Depends(get_current_user),
+    token: TokenData = Depends(require_role(Role.ADMIN)),
 ) -> dict[str, Any]:
+    # Audit-Einträge dürfen nur intern (via write_audit_entry) oder durch Admins erstellt werden.
+    # Kein anonymer / nicht-autorisierter Zugriff — verhindert Audit-Manipulation.
     return write_audit_entry(action=payload.action, metadata=payload.metadata,
                              tenant_id=_tenant_id(token))
 
@@ -359,8 +369,9 @@ def create_audit_log(
 @app.get("/audit-logs")
 def get_audit_logs(
     limit: int = 100,
-    token: TokenData | None = Depends(get_current_user),
+    token: TokenData = Depends(require_role(Role.AUDIT_VIEWER)),
 ) -> list[dict[str, Any]]:
+    # Audit-Logs enthalten Aktivitätsdaten — nur für AUDIT_VIEWER+ sichtbar.
     return list_audit_entries(limit=limit, tenant_id=_tenant_id(token))
 
 
@@ -500,7 +511,116 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
 _orchestrator = ProviderOrchestrator()
 
 
-def _summarize_with_llm(task: str, search_text: str) -> tuple[str | None, str | None]:
+def _governance_pre_check(
+    task: str,
+    tenant_id: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    Führt classify → data_matrix → redact vor jedem externen LLM/Tool-Call durch.
+
+    Rückgabe:
+      {"decision": "allow",    "task": <ggf. redacted>}
+      {"decision": "allow_with_notice", "task": <redacted>, "notice": "..."}
+      {"decision": "approval_required", "approval_id": ..., "message": "..."}
+      {"decision": "block",    "message": "..."}
+    """
+    try:
+        classification = classify(task)
+    except Exception:
+        # Fail-closed: bei Klassifizierungsfehler blocken
+        write_audit_entry(
+            action="governance.classify_error",
+            tenant_id=tenant_id,
+            metadata={"task_length": len(task)},
+        )
+        return {"decision": "block", "message": "Anfrage konnte nicht sicher klassifiziert werden."}
+
+    data_classes = list(classification.classes)
+
+    # Provider-Profil aktiv? Aktuell: alle Provider haben admin_disabled=True → False
+    try:
+        from .providers.provider_profiles import check_provider_policy  # type: ignore
+    except ImportError:
+        from providers.provider_profiles import check_provider_policy  # type: ignore
+    _provider_ok, _ = check_provider_policy("groq", data_classes)
+    provider_profile_active = _provider_ok
+
+    decision = check_data_target(
+        data_classes=data_classes,
+        target=DataTarget.EXTERNAL_LLM,
+        redaction_applied=False,
+        approval_given=False,
+        provider_profile_active=provider_profile_active,
+    )
+
+    if decision == PolicyDecision.BLOCK:
+        write_audit_entry(
+            action="governance.task_blocked",
+            tenant_id=tenant_id,
+            metadata={"data_classes": [c.value for c in data_classes]},
+        )
+        return {
+            "decision": "block",
+            "message": (
+                "Diese Anfrage enthält Daten, die nicht extern verarbeitet werden dürfen "
+                f"({', '.join(c.value for c in data_classes)}). "
+                "Bitte entferne sensible Informationen und versuche es erneut."
+            ),
+        }
+
+    if decision == PolicyDecision.APPROVAL_REQUIRED:
+        approval = create_approval_request(
+            tool="llm_call",
+            input_params={"task_length": len(task), "data_classes": [c.value for c in data_classes]},
+            risk_level="high",
+            risk_reason=f"Sensible Daten erkannt: {', '.join(c.value for c in data_classes)}",
+            run_id=run_id,
+            tenant_id=tenant_id,
+        )
+        write_audit_entry(
+            action="governance.approval_required",
+            tenant_id=tenant_id,
+            metadata={"approval_id": approval.get("id"), "data_classes": [c.value for c in data_classes]},
+        )
+        return {
+            "decision": "approval_required",
+            "approval_id": approval.get("id"),
+            "message": (
+                "Diese Anfrage enthält sensible Daten und benötigt eine Freigabe durch einen Administrator. "
+                f"Erkannte Datenklassen: {', '.join(c.value for c in data_classes)}. "
+                "Ein Administrator wurde benachrichtigt."
+            ),
+            "data_classes": [c.value for c in data_classes],
+        }
+
+    if decision == PolicyDecision.REDACT_REQUIRED:
+        redacted = redact(task, classification)
+        redacted_task = redacted.redacted_text
+        write_audit_entry(
+            action="governance.task_redacted",
+            tenant_id=tenant_id,
+            metadata={"data_classes": [c.value for c in data_classes], "redaction_applied": True},
+        )
+        return {
+            "decision": "allow_with_notice",
+            "task": redacted_task,
+            "notice": (
+                f"Personenbezogene Daten erkannt ({', '.join(c.value for c in data_classes)}) "
+                "und pseudonymisiert (DSGVO Art. 25)."
+            ),
+            "pii_detected": {
+                "has_pii": True,
+                "requires_consent": True,
+                "items": [{"type": m, "requires_consent": True} for m in classification.matched_patterns],
+            },
+        }
+
+    # ALLOW / ALLOW_WITH_NOTICE
+    return {"decision": "allow", "task": task}
+
+
+def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tuple[str | None, str | None]:
     """
     Fasst ein Suchergebnis ueber den Provider-Orchestrator zusammen.
     Kein direkter Provider-Call hier. Kill-Switch/Governance liegen im Orchestrator.
@@ -519,7 +639,7 @@ def _summarize_with_llm(task: str, search_text: str) -> tuple[str | None, str | 
         {"role": "user", "content": user_msg},
     ]
     try:
-        answer = _orchestrator.generate(messages, context=None)
+        answer = _orchestrator.generate(messages, context=context)
         return answer, None
     except AILIZAError as exc:
         return None, exc.code
@@ -532,6 +652,9 @@ def run_agent(
     payload: AgentRunRequest,
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
+    tenant = _tenant_id(token)
+
+    # ── Fast-Path: einfache Fragen ohne externen Call ────────────────────────
     simple_answer = answer_simple_question(payload.task)
     if simple_answer is not None:
         return {
@@ -542,20 +665,52 @@ def run_agent(
             "results": [],
         }
 
+    # ── Governance Pre-Check: classify → data_matrix → redact/block/approval ─
+    # Läuft VOR jedem Tool-Call und LLM-Call. Guest-Nutzung erlaubt, aber
+    # sensible Daten werden redacted oder stoppen den Flow (Approval-Gate).
+    pre_check = _governance_pre_check(payload.task, tenant_id=tenant)
+
+    if pre_check["decision"] == "block":
+        return {
+            "status": "blocked",
+            "message": pre_check["message"],
+            "ai_response": pre_check["message"],
+            "steps": [],
+            "results": [],
+        }
+
+    if pre_check["decision"] == "approval_required":
+        # Flow pausiert — kein LLM-Call, kein Tool-Call.
+        # Freigabe muss durch eingeloggten Admin/Operator erfolgen.
+        return {
+            "status": "pending_approval",
+            "approval_id": pre_check.get("approval_id"),
+            "message": pre_check["message"],
+            "ai_response": pre_check["message"],
+            "data_classes": pre_check.get("data_classes", []),
+            "steps": [],
+            "results": [],
+        }
+
+    # Bei Redaction: pseudonymisierte Aufgabe verwenden
+    effective_task = pre_check.get("task", payload.task)
+    pii_detected = pre_check.get("pii_detected")
+
     runtime = AgentRuntime()
-    result = runtime.run(payload.task)
+    result = runtime.run(effective_task)
 
     # Local-only / degraded mode: direkt zurückgeben, kein LLM-Call versuchen
     if result.get("status") in ("local_only", "degraded"):
         result["ai_response"] = result.get("message", "")
-        result["tenant_id"] = _tenant_id(token)
+        result["tenant_id"] = tenant
+        if pii_detected:
+            result["pii_detected"] = pii_detected
         return result
 
     search_text = extract_agent_answer(result)
 
-    tenant = _tenant_id(token)
     if search_text:
-        answer, error_code = _summarize_with_llm(payload.task, search_text)
+        answer, error_code = _summarize_with_llm(effective_task, search_text)
         if answer is not None:
             result["message"] = answer
         else:
@@ -567,6 +722,10 @@ def run_agent(
 
     result["ai_response"] = result.get("message", "")
     result["tenant_id"] = tenant
+    if pii_detected:
+        result["pii_detected"] = pii_detected
+    if pre_check["decision"] == "allow_with_notice":
+        result["governance_notice"] = pre_check.get("notice", "")
     return result
 @app.get("/agent/runs")
 def get_agent_runs(

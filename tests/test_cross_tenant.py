@@ -108,7 +108,7 @@ def test_audit_log_api_tenant_isolation(client):
     write_audit_entry("tenant_a.action", tenant_id="tenant_a")
     write_audit_entry("tenant_b.action", tenant_id="tenant_b")
 
-    token_a = _token("user_a", "tenant_a")
+    token_a = _token("user_a", "tenant_a", role="audit_viewer")
     resp = client.get("/audit-logs", headers={"Authorization": f"Bearer {token_a}"})
     assert resp.status_code == 200
     actions = [e["action"] for e in resp.json()]
