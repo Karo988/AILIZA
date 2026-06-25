@@ -41,9 +41,29 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+
+import os
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import RedirectResponse
+
+_FORCE_HTTPS = os.getenv("AILIZA_FORCE_HTTPS", "").lower() in ("1", "true", "yes")
+_CORS_ORIGINS_RAW = os.getenv("AILIZA_CORS_ORIGINS", "")
+_CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
+
+class HttpsRedirectMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if _FORCE_HTTPS and request.url.scheme == "http":
+            https_url = request.url.replace(scheme="https")
+            return RedirectResponse(url=str(https_url), status_code=301)
+        return await call_next(request)
+
+if _FORCE_HTTPS:
+    app.add_middleware(HttpsRedirectMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

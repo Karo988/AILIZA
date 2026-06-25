@@ -2,13 +2,14 @@ import pytest
 from fastapi import HTTPException
 
 from apps.backend import gateway
+from apps.backend.gateway import runtime_gateway
 
 
 def test_guarded_tool_call_executes_low_risk_tool(monkeypatch) -> None:
     events = []
 
-    monkeypatch.setattr(gateway, "write_audit_entry", lambda action, metadata=None: events.append(action) or {})
-    monkeypatch.setattr(gateway, "execute_tool", lambda tool, parameters: {"results": []})
+    monkeypatch.setattr(runtime_gateway, "write_audit_entry", lambda action, metadata=None: events.append(action) or {})
+    monkeypatch.setattr(runtime_gateway, "execute_tool", lambda tool, parameters: {"results": []})
 
     response = gateway.guarded_tool_call("search", {"query": "FastAPI audit logging"})
 
@@ -27,9 +28,9 @@ def test_guarded_tool_call_returns_pending_before_execution(monkeypatch) -> None
         called = True
         return {}
 
-    monkeypatch.setattr(gateway, "write_audit_entry", lambda action, metadata=None: {})
-    monkeypatch.setattr(gateway, "create_approval_request", lambda **kwargs: {"id": 42, **kwargs})
-    monkeypatch.setattr(gateway, "execute_tool", execute_tool)
+    monkeypatch.setattr(runtime_gateway, "write_audit_entry", lambda action, metadata=None: {})
+    monkeypatch.setattr(runtime_gateway, "create_approval_request", lambda **kwargs: {"id": 42, **kwargs})
+    monkeypatch.setattr(runtime_gateway, "execute_tool", execute_tool)
 
     response = gateway.guarded_tool_call("fetch", {"url": "https://unknown-example.test"})
 
@@ -46,8 +47,8 @@ def test_guarded_tool_call_blocks_policy_violation_before_execution(monkeypatch)
         called = True
         return {}
 
-    monkeypatch.setattr(gateway, "write_audit_entry", lambda action, metadata=None: {})
-    monkeypatch.setattr(gateway, "execute_tool", execute_tool)
+    monkeypatch.setattr(runtime_gateway, "write_audit_entry", lambda action, metadata=None: {})
+    monkeypatch.setattr(runtime_gateway, "execute_tool", execute_tool)
 
     with pytest.raises(HTTPException) as exc:
         gateway.guarded_tool_call("fetch", {"url": "http://127.0.0.1/admin"})
@@ -58,7 +59,7 @@ def test_guarded_tool_call_blocks_policy_violation_before_execution(monkeypatch)
 
 def test_execute_approved_tool_waits_for_pending_approval(monkeypatch) -> None:
     monkeypatch.setattr(
-        gateway,
+        runtime_gateway,
         "get_approval_request",
         lambda approval_id: {
             "id": approval_id,
@@ -78,7 +79,7 @@ def test_execute_approved_tool_waits_for_pending_approval(monkeypatch) -> None:
 
 def test_execute_approved_tool_runs_approved_request(monkeypatch) -> None:
     monkeypatch.setattr(
-        gateway,
+        runtime_gateway,
         "get_approval_request",
         lambda approval_id: {
             "id": approval_id,
@@ -89,8 +90,8 @@ def test_execute_approved_tool_runs_approved_request(monkeypatch) -> None:
             "risk_level": "medium",
         },
     )
-    monkeypatch.setattr(gateway, "write_audit_entry", lambda action, metadata=None: {})
-    monkeypatch.setattr(gateway, "execute_tool", lambda tool, parameters: {"title": "Codex", "text": ""})
+    monkeypatch.setattr(runtime_gateway, "write_audit_entry", lambda action, metadata=None: {})
+    monkeypatch.setattr(runtime_gateway, "execute_tool", lambda tool, parameters: {"title": "Codex", "text": ""})
 
     response = gateway.execute_approved_tool(5)
 
@@ -101,7 +102,7 @@ def test_execute_approved_tool_runs_approved_request(monkeypatch) -> None:
 
 def test_execute_approved_tool_rejects_unknown_status(monkeypatch) -> None:
     monkeypatch.setattr(
-        gateway,
+        runtime_gateway,
         "get_approval_request",
         lambda approval_id: {
             "id": approval_id,

@@ -747,3 +747,15 @@ nav {
   color: #6b7280;
   margin: 1rem 0 0.25rem;
 }
+
+.staging-responsible {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  margin-bottom: 0.75rem;
+}

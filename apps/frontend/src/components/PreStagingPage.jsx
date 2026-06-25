@@ -4,6 +4,7 @@ const STEPS = [
   {
     id: "groq_key",
     title: "Alter API-Schlüssel gelöscht",
+    responsible: "Betreiber / Admin",
     question: "Hast du den alten Groq-Schlüssel in der Groq Console gelöscht?",
     explanation:
       "Ein alter Schlüssel, der versehentlich sichtbar war, muss ungültig gemacht werden. Sonst könnte ihn jemand unberechtigt nutzen.",
@@ -17,6 +18,7 @@ const STEPS = [
   {
     id: "groq_key_new",
     title: "Neuer API-Schlüssel eingetragen",
+    responsible: "Betreiber / Admin",
     question: "Hast du den neuen Groq-Schlüssel in Render eingetragen?",
     explanation:
       "Der neue Schlüssel darf nur als geheime Umgebungsvariable in Render stehen — nie im Code.",
@@ -30,6 +32,7 @@ const STEPS = [
   {
     id: "https",
     title: "Sichere Verbindung aktiviert",
+    responsible: "Betreiber / Admin",
     question: "Hast du in Render die sichere HTTPS-Verbindung als Pflicht gesetzt?",
     explanation:
       "Damit wird sichergestellt, dass niemand die Verbindung zwischen Browser und App abhören kann.",
@@ -42,6 +45,7 @@ const STEPS = [
   {
     id: "cors",
     title: "Erlaubte Adresse eingetragen",
+    responsible: "Betreiber / Admin",
     question: "Hast du die Adresse deines Frontends in Render eingetragen?",
     explanation:
       "Nur deine echte App-Adresse darf mit dem Backend kommunizieren — fremde Seiten werden blockiert.",
@@ -54,6 +58,7 @@ const STEPS = [
   {
     id: "keys",
     title: "Zugriffsschlüssel gesetzt",
+    responsible: "Admin / Datenschutzverantwortliche",
     question: "Hast du die Zugriffsschlüssel für Operatoren und Admins in Render eingetragen?",
     explanation:
       "Operatoren dürfen Freigaben sehen. Admins dürfen Freigaben erteilen oder ablehnen. Beide brauchen einen eigenen sicheren Schlüssel.",
@@ -67,6 +72,7 @@ const STEPS = [
   {
     id: "smoke",
     title: "Smoke Tests bestanden",
+    responsible: "Betreiber / Datenschutzverantwortliche",
     question: "Hast du die App nach dem Deploy kurz getestet?",
     explanation:
       "Ein kurzer Schnelltest stellt sicher, dass alles wie erwartet funktioniert.",
@@ -149,6 +155,7 @@ export default function PreStagingPage() {
 
               {(active || done) && (
                 <>
+                  <p className="staging-responsible">Zuständig: {step.responsible}</p>
                   <p className="staging-label">Warum ist das wichtig?</p>
                   <p className="staging-explanation">{step.explanation}</p>
 
