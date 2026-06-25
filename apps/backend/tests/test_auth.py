@@ -72,9 +72,9 @@ class TestOperatorRole:
         r = client.get("/admin/kill-switch/status", headers={"x-api-key": OPERATOR_KEY})
         assert r.status_code == 200
 
-    def test_operator_darf_vault_export(self, client):
+    def test_operator_darf_vault_export_nicht(self, client):
         r = client.get("/audit/vault/export", headers={"x-api-key": OPERATOR_KEY})
-        assert r.status_code == 200
+        assert r.status_code == 403
 
     def test_operator_darf_nicht_halt(self, client):
         r = client.post("/admin/kill-switch/halt", json={"level": "global"}, headers={"x-api-key": OPERATOR_KEY})
@@ -102,4 +102,8 @@ class TestAdminRole:
 
     def test_admin_darf_vault_verify(self, client):
         r = client.get("/audit/vault/verify", headers={"x-api-key": ADMIN_KEY})
+        assert r.status_code == 200
+
+    def test_admin_darf_vault_export(self, client):
+        r = client.get("/audit/vault/export", headers={"x-api-key": ADMIN_KEY})
         assert r.status_code == 200

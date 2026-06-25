@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from ..audit.vault import AuditVault
-from ..auth import require_operator
+from ..auth import require_admin, require_operator
 
 router = APIRouter(prefix="/audit/vault", tags=["vault"])
 
@@ -41,7 +41,7 @@ class VaultVerifyResponse(BaseModel):
 
 
 @router.get("/export", response_model=list[VaultEntryResponse])
-def export_vault(limit: int = Query(default=1000, ge=1, le=10000), _role=Depends(require_operator)) -> list[VaultEntryResponse]:
+def export_vault(limit: int = Query(default=1000, ge=1, le=10000), _role=Depends(require_admin)) -> list[VaultEntryResponse]:
     entries = get_vault().get_entries(limit=limit)
     return [VaultEntryResponse(**e.to_dict()) for e in entries]
 
