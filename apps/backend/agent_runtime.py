@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import time
 from collections.abc import Iterator
@@ -35,6 +36,63 @@ AuditWriter = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 
 URL_PATTERN = re.compile(r"https?://[^\s<>\")]+")
 _UNSET = object()
+
+_MISSING_PROVIDER_DETAILS: frozenset[str] = frozenset({
+    "TAVILY_API_KEY is not configured",
+    "tavily-python is not installed",
+    "OPENAI_API_KEY is not configured",
+    "GROQ_API_KEY is not configured",
+    "ANTHROPIC_API_KEY is not configured",
+    "External LLM calls are disabled",
+})
+
+_RESEARCH_KEYWORDS: frozenset[str] = frozenset({
+    "recherch", "such", "aktuell", "neuest", "news", "preis", "wetter",
+    "kurse", "börse", "ergebnis", "statistik", "studie", "bericht",
+    "was ist", "wer ist", "wie viel", "wie hoch", "wann", "wo ist",
+})
+
+
+def _is_missing_provider_error(exc: HTTPException) -> bool:
+    return isinstance(exc.detail, str) and any(
+        marker in exc.detail for marker in _MISSING_PROVIDER_DETAILS
+    )
+
+
+def _is_research_task(task: str) -> bool:
+    lower = task.lower()
+    return any(kw in lower for kw in _RESEARCH_KEYWORDS)
+
+
+def _build_local_response(run_id: str, task: str) -> dict[str, Any]:
+    """Erzeugt eine nutzerfreundliche Antwort wenn kein externer Provider verfügbar ist."""
+    if _is_research_task(task):
+        message = (
+            "Für diese Rechercheanfrage benötige ich eine Internetverbindung, "
+            "die aktuell nicht konfiguriert ist.\n\n"
+            "Sobald ein Websuche-Dienst (z.B. Tavily) eingerichtet ist, "
+            "kann ich diese Frage beantworten.\n\n"
+            f'Rechercheplan fuer: "{task}"\n'
+            "1. Aktuelle Quellen zum Thema suchen\n"
+            "2. Ergebnisse zusammenfassen und auf Relevanz prüfen\n"
+            "3. Antwort strukturiert aufbereiten\n\n"
+            "Bitte wende dich an deinen Administrator, um die Websuche zu aktivieren."
+        )
+    else:
+        message = (
+            "AILIZA läuft im lokalen Modus — externe Dienste sind aktuell nicht konfiguriert. "
+            "Einfache Fragen, Dokumentenanalyse und Compliance-Prüfungen stehen weiterhin zur Verfügung."
+        )
+    return {
+        "run_id": run_id,
+        "status": "local_only",
+        "mode": "degraded",
+        "message": message,
+        "ai_response": message,
+        "steps": [],
+        "results": [],
+        "notice": "Externe Dienste nicht verfügbar. Kein Datenverlust — AILIZA arbeitet lokal weiter.",
+    }
 
 
 @dataclass(frozen=True)
@@ -91,7 +149,7 @@ class AgentRuntime:
         self.create_run_record(run_id, task)
         self.audit_writer(
             "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan)},
+            {"run_id": run_id, "planned_steps": len(plan)},
         )
 
         steps: list[dict[str, Any]] = []
@@ -103,13 +161,26 @@ class AgentRuntime:
                     "run_id": run_id,
                     "step": index,
                     "tool": call.tool,
-                    "parameters": call.parameters,
+                    "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                 },
             )
 
             try:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
+                if _is_missing_provider_error(exc):
+                    local_result = _build_local_response(run_id, task)
+                    self.update_run_record(run_id, status="local_only", result=local_result)
+                    self.audit_writer(
+                        "agent.degraded_missing_provider",
+                        {
+                            "run_id": run_id,
+                            "tool": call.tool,
+                            "mode": "local_only",
+                            "reason": "provider_not_configured",
+                        },
+                    )
+                    return local_result
                 status = "blocked" if exc.status_code == 403 else "failed"
                 self.update_run_record(
                     run_id,
@@ -140,7 +211,7 @@ class AgentRuntime:
                         "run_id": run_id,
                         "approval_id": approval_id,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                     },
                 )
                 return {
@@ -254,7 +325,7 @@ class AgentRuntime:
         self.create_run_record(run_id, task, streaming=True)
         self.audit_writer(
             "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan), "streaming": True},
+            {"run_id": run_id, "planned_steps": len(plan), "streaming": True},
         )
         yield stream_event(
             "run_started",
@@ -270,7 +341,7 @@ class AgentRuntime:
                     "run_id": run_id,
                     "step": index,
                     "tool": call.tool,
-                    "parameters": call.parameters,
+                    "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                     "streaming": True,
                 },
             )
@@ -296,6 +367,21 @@ class AgentRuntime:
             try:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
+                if _is_missing_provider_error(exc):
+                    local_result = _build_local_response(run_id, task)
+                    self.update_run_record(run_id, status="local_only", result=local_result)
+                    self.audit_writer(
+                        "agent.degraded_missing_provider",
+                        {
+                            "run_id": run_id,
+                            "tool": call.tool,
+                            "mode": "local_only",
+                            "reason": "provider_not_configured",
+                            "streaming": True,
+                        },
+                    )
+                    yield stream_event("local_only", local_result)
+                    return
                 status = "blocked" if exc.status_code == 403 else "failed"
                 event_name = "blocked" if exc.status_code == 403 else "error"
                 self.update_run_record(
@@ -309,9 +395,8 @@ class AgentRuntime:
                         "run_id": run_id,
                         "step": index,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                         "status_code": exc.status_code,
-                        "detail": exc.detail,
                     },
                 )
                 yield stream_event(
@@ -372,7 +457,7 @@ class AgentRuntime:
                         "run_id": run_id,
                         "approval_id": approval_id,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                         "streaming": True,
                     },
                 )

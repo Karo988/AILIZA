@@ -10,20 +10,30 @@ from ..policy import check_tool_call
 from ..tools import execute_tool
 
 
+def _safe_param_summary(parameters: dict[str, Any]) -> dict[str, Any]:
+    """Logt nur Parametertypen und -Längen, nie Inhalte (kein PII/Secret-Leak in Audit)."""
+    return {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in parameters.items()}
+
+
+def _safe_risk_summary(risk: Any) -> dict[str, Any]:
+    """Logt Risk-Result ohne input_summary (enthält Prompt-Fragmente)."""
+    d = risk.to_dict()
+    d.pop("input_summary", None)
+    return d
+
+
 def enforce_policy(tool_name: str, parameters: dict[str, Any]) -> None:
     decision = check_tool_call(tool_name, parameters)
     write_audit_entry(
         action="policy.decision",
         metadata={
             "tool": tool_name,
-            "parameters": parameters,
+            "parameters": _safe_param_summary(parameters),
             "decision": {
                 "allowed": decision.allowed,
                 "decision": decision.decision.value,
                 "reason": decision.reason,
                 "tool": decision.tool,
-                "input_summary": decision.input_summary,
-                "metadata": decision.metadata,
             },
         },
     )
@@ -39,8 +49,8 @@ def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> di
             action="approval.auto",
             metadata={
                 "tool": tool_name,
-                "parameters": parameters,
-                "risk": risk.to_dict(),
+                "parameters": _safe_param_summary(parameters),
+                "risk": _safe_risk_summary(risk),
                 "approval_status": ApprovalStatus.AUTO.value,
             },
         )
@@ -57,8 +67,8 @@ def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> di
         metadata={
             "approval_id": approval["id"],
             "tool": tool_name,
-            "parameters": parameters,
-            "risk": risk.to_dict(),
+            "parameters": _safe_param_summary(parameters),
+            "risk": _safe_risk_summary(risk),
             "approval_status": ApprovalStatus.PENDING.value,
         },
     )
@@ -82,7 +92,7 @@ def guarded_tool_call(tool_name: str, parameters: dict[str, Any]) -> dict[str, A
     result = execute_tool(tool_name, parameters)
     write_audit_entry(
         action="tools.executed",
-        metadata={"tool": tool_name, "parameters": parameters},
+        metadata={"tool": tool_name, "parameters": _safe_param_summary(parameters)},
     )
 
     return {
@@ -121,7 +131,7 @@ def execute_approved_tool(approval_id: int) -> dict[str, Any]:
     result = execute_tool(tool_name, parameters)
     write_audit_entry(
         action="approval.executed",
-        metadata={"approval_id": approval_id, "tool": tool_name, "parameters": parameters},
+        metadata={"approval_id": approval_id, "tool": tool_name, "parameters": _safe_param_summary(parameters)},
     )
 
     return {

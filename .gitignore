@@ -20,9 +20,14 @@ apps/backend/.env
 *.env.local
 
 # Datenbanken (lokale Entwicklung)
+# Alle .db/.sqlite-Dateien ignorieren (auch in Unterverzeichnissen)
 *.db
 *.sqlite
-data/
+*.sqlite3
+# Nur Datenbankdateien im data/-Verzeichnis ignorieren, nicht das Verzeichnis selbst
+data/*.db
+data/*.sqlite
+data/*.sqlite3
 
 # Logs
 *.log
@@ -51,4 +56,8 @@ secrets/
 
 # Lokale Merge-Sicherungen
 .merge-backups/
-.env 
+.env
+
+# Claude Code interne Daten
+.claude/worktrees/
+
