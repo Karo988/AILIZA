@@ -2,13 +2,14 @@ import { useState } from "react"
 import "./App.css"
 import DashboardCard from "./components/DashboardCard"
 import ApprovalsPage from "./components/ApprovalsPage"
+import PreStagingPage from "./components/PreStagingPage"
 
 function App() {
   const [activePage, setActivePage] = useState("Dashboard")
   const [taskInput, setTaskInput] = useState("")
 const [agentResult, setAgentResult] = useState(null)
 
-  const pages = ["Dashboard", "Freigaben", "Governance", "Audit", "Agenten", "Einstellungen"]
+  const pages = ["Dashboard", "Freigaben", "Staging", "Governance", "Audit", "Agenten", "Einstellungen"]
 
   const dashboardData = [
     { title: "Frontend", value: "Online", detail: "Vite UI aktiv", color: "blue" },
@@ -57,6 +58,10 @@ const [agentResult, setAgentResult] = useState(null)
   function renderPage() {
     if (activePage === "Freigaben") {
       return <ApprovalsPage />
+    }
+
+    if (activePage === "Staging") {
+      return <PreStagingPage />
     }
 
     if (activePage === "Dashboard") {
