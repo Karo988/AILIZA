@@ -450,3 +450,164 @@ nav {
   margin-top: 0;
   color: white;
 }
+/* ── Freigaben / Approvals ───────────────────────────────────────────────── */
+
+.login-card {
+  background: #1e1e2e;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 1.5rem;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.login-card input[type="password"] {
+  background: #2a2a3d;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #e0e0f0;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  width: 100%;
+}
+
+.approval-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.btn-logout {
+  background: #2a2a3d;
+  color: #aaa;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.approval-empty {
+  color: #888;
+  padding: 2rem;
+  text-align: center;
+  background: #1e1e2e;
+  border-radius: 10px;
+  border: 1px dashed #333;
+}
+
+.approvals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.approval-card {
+  background: #1e1e2e;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.approval-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.approval-id {
+  font-weight: 700;
+  color: #888;
+  font-size: 0.85rem;
+}
+
+.approval-time {
+  color: #666;
+  font-size: 0.82rem;
+  margin-left: auto;
+}
+
+.approval-reason,
+.approval-task,
+.approval-categories {
+  font-size: 0.9rem;
+  color: #ccc;
+  margin: 0;
+}
+
+.approval-task {
+  color: #e0e0f0;
+}
+
+.approval-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.approval-actions textarea {
+  background: #2a2a3d;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #e0e0f0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.88rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.approval-buttons {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn-approve {
+  background: #1a6b3a;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1.25rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-approve:hover { background: #228a4a; }
+.btn-approve:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-reject {
+  background: #6b1a1a;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1.25rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-reject:hover { background: #8a2222; }
+.btn-reject:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.approval-error {
+  color: #f87171;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.risk-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.risk-low    { background: #1a3d2a; color: #4ade80; }
+.risk-medium { background: #3d2e1a; color: #fbbf24; }
+.risk-high   { background: #3d1a1a; color: #f87171; }
