@@ -72,6 +72,18 @@ detect-secrets scan > .secrets.baseline  # einmalig
 
 ---
 
+## Preventive Controls (umgesetzt)
+
+| Kontrolle | Status | Detail |
+|---|---|---|
+| GitHub Secret Scanning | ✅ aktiv | Blockt Push bei erkannten Secrets automatisch |
+| `detect-secrets` Pre-Commit-Hook | ✅ aktiv | `.secrets.baseline` + Hook in `.git/hooks/pre-commit` |
+| `.env*` in `.gitignore` geblockt | ✅ aktiv | Alle Varianten: `.env`, `.env.*`, `*.env`, `apps/**/.env.*` |
+| Keine Secrets in Dateinamen | ✅ Regel | API-Keys nur in Dateiinhalt einer ignorierten `.env`-Datei |
+| Rotation bei Exposure verpflichtend | ✅ Regel | Jeder kompromittierte Key wird sofort widerrufen, nie nur entfernt |
+
+---
+
 ## Verantwortlich
 Admin / Repository-Owner: karo988  
 Bereinigt durch: AILIZA-Entwicklungs-Session (2026-06-25)
