@@ -8,7 +8,7 @@ const STEPS = [
     effort: "ca. 2 Minuten",
     risk: "Hoch",
     question: "Bist du bereit für Schritt 1 — den alten Groq-Key zu löschen?",
-    warning: "Solange der alte Key aktiv ist, gilt er als kompromittiert.",
+    warning: "Solange der alte Key aktiv ist, kann er missbraucht werden. Lösche ihn zuerst, bevor du einen neuen Key setzt.",
     explanation:
       "Ein alter Schlüssel, der versehentlich sichtbar war, muss ungültig gemacht werden. Sonst könnte ihn jemand unberechtigt nutzen.",
     help: [
@@ -177,7 +177,7 @@ export default function PreStagingPage() {
                     <span className="staging-responsible">Zuständig: {step.responsible}</span>
                     <span className="staging-effort">⏱ {step.effort}</span>
                     <span className={`staging-risk ${step.risk === "Hoch" ? "risk-high-badge" : "risk-medium-badge"}`}>
-                      Risiko: {step.risk}
+                      Risiko, wenn offen: {step.risk}
                     </span>
                   </div>
 
@@ -187,7 +187,7 @@ export default function PreStagingPage() {
                   <p className="staging-label">Ist das erledigt?</p>
                   <p className="staging-question">{step.question}</p>
                   {step.warning && !done && (
-                    <p className="staging-warning">⚠ {step.warning}</p>
+                    <p className="staging-warning"><strong>Sicherheitswarnung:</strong> {step.warning}</p>
                   )}
 
                   {!done && (
