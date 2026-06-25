@@ -30,11 +30,11 @@ Eine Datei, deren Name einem Groq-API-Key entsprach (Prefix `gsk_`, vollständig
 
 ## Noch ausstehend (Benutzeraktion erforderlich)
 
-- [ ] **Groq-Key widerrufen** in [console.groq.com](https://console.groq.com) → Key löschen
+- [ ] **Groq-Key widerrufen** in [console.groq.com](https://console.groq.com) → Key löschen — `Groq-Key widerrufen: erledigt am ___________`
 - [ ] **Neuen Groq-Key erzeugen** (nur als ENV Variable, nie ins Repo)
 - [ ] **Render-Deployment**: Neuen Key als `GROQ_API_KEY` in Render-Umgebungsvariablen setzen
 - [ ] **Lokale Klone** neu klonen oder `git fetch --all && git reset --hard origin/main`
-- [ ] **GitHub Secret Scanning Alerts** prüfen und als resolved markieren (nach Key-Rotation)
+- [ ] **GitHub Secret Scanning Alerts** prüfen und als resolved markieren (nach Key-Rotation) — `GitHub Secret Scanning Alert: resolved nach Rotation ___________`
 
 ---
 
