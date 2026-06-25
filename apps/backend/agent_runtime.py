@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 try:
+    from .classifier import InputRiskLevel, classify
     from .database import (
         create_agent_run,
         get_approval_request,
@@ -18,7 +19,9 @@ try:
         write_audit_entry,
     )
     from .gateway import execute_approved_tool, guarded_tool_call
+    from .redactor import redact
 except ImportError:
+    from classifier import InputRiskLevel, classify
     from database import (
         create_agent_run,
         get_approval_request,
@@ -27,6 +30,7 @@ except ImportError:
         write_audit_entry,
     )
     from gateway import execute_approved_tool, guarded_tool_call
+    from redactor import redact
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], dict[str, Any]]
@@ -85,10 +89,97 @@ class AgentRuntime:
         if self.persist_runs and approval_id is not None:
             link_approval_to_run(approval_id, run_id)
 
+    def _precheck(self, task: str, run_id: str) -> dict[str, Any] | None:
+        """
+        classify → redact → decide.
+        Gibt None zurück wenn der Flow normal weiterlaufen soll.
+        Gibt ein Ergebnis-Dict zurück wenn der Flow gestoppt wird (blocked / approval_required).
+        Gibt redacted task als Seiteneffekt über self._redacted_task zurück.
+        """
+        classification = classify(task)
+        self.audit_writer(
+            "agent.input.classified",
+            {
+                "run_id": run_id,
+                "risk_level": classification.risk_level.value,
+                "pii_detected": classification.pii_detected,
+                "requires_approval": classification.requires_approval,
+                "blocked": classification.blocked,
+                "categories": classification.detected_categories,
+            },
+        )
+
+        if classification.blocked:
+            self.update_run_record(
+                run_id,
+                status="blocked",
+                result={"reason": classification.reason, "user_message": classification.user_message},
+            )
+            return {
+                "run_id": run_id,
+                "status": "blocked",
+                "message": classification.user_message,
+                "reason": classification.reason,
+            }
+
+        if classification.requires_approval:
+            try:
+                from .database import create_approval_request  # noqa: PLC0415
+            except ImportError:
+                from database import create_approval_request  # noqa: PLC0415
+            approval = create_approval_request(
+                tool="agent_input",
+                input_params={"task": task[:500], "risk_categories": classification.detected_categories},
+                risk_level=classification.risk_level.value,
+                risk_reason=classification.reason,
+            )
+            approval_id = approval["id"]
+            self.link_approval_record(approval_id, run_id)
+            self.update_run_record(
+                run_id,
+                status="pending_approval",
+                pending_approval_id=approval_id,
+                result={"message": classification.user_message, "approval_id": approval_id},
+            )
+            self.audit_writer(
+                "agent.input.approval_required",
+                {"run_id": run_id, "approval_id": approval_id, "reason": classification.reason},
+            )
+            return {
+                "run_id": run_id,
+                "status": "pending_approval",
+                "message": classification.user_message,
+                "approval_id": approval_id,
+                "risk_level": classification.risk_level.value,
+                "next_action": "approve_or_reject",
+            }
+
+        if classification.pii_detected:
+            redaction = redact(task)
+            self._redacted_task = redaction.redacted_text
+            self.audit_writer(
+                "agent.input.redacted",
+                {
+                    "run_id": run_id,
+                    "redacted_count": redaction.redacted_count,
+                    "categories": redaction.redacted_categories,
+                },
+            )
+        else:
+            self._redacted_task = task
+
+        return None
+
     def run(self, task: str) -> dict[str, Any]:
         run_id = str(uuid4())
-        plan = plan_tool_calls(task)
+        self._redacted_task: str = task
         self.create_run_record(run_id, task)
+
+        early_result = self._precheck(task, run_id)
+        if early_result is not None:
+            return early_result
+
+        plan = plan_tool_calls(self._redacted_task)
         self.audit_writer(
             "agent.run.started",
             {"run_id": run_id, "task": task, "planned_steps": len(plan)},
@@ -250,8 +341,18 @@ class AgentRuntime:
         approval_timeout: float = 300.0,
     ) -> Iterator[dict[str, Any]]:
         run_id = str(uuid4())
-        plan = plan_tool_calls(task)
+        self._redacted_task: str = task
         self.create_run_record(run_id, task, streaming=True)
+
+        early_result = self._precheck(task, run_id)
+        if early_result is not None:
+            yield stream_event(
+                "approval_required" if early_result["status"] == "pending_approval" else "blocked",
+                early_result,
+            )
+            return
+
+        plan = plan_tool_calls(self._redacted_task)
         self.audit_writer(
             "agent.run.started",
             {"run_id": run_id, "task": task, "planned_steps": len(plan), "streaming": True},
