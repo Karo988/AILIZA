@@ -17,7 +17,7 @@ ARG MODE
 RUN pip install --no-cache-dir -r requirements-${MODE}.txt \
     && if [ "$MODE" = "full" ]; then python -m spacy download de_core_news_sm; fi
 
-COPY apps/backend/ ./
+COPY apps/ ./apps/
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
