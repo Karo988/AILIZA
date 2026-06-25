@@ -113,6 +113,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
     # ── Ende Secret-Key-Prüfung ──────────────────────────────────────────────
 
+    # ── CORS-Produktionswarnung ──────────────────────────────────────────────
+    _is_debug = os.getenv("AILIZA_DEBUG", "false").lower() in ("1", "true", "yes")
+    _cors_raw = os.getenv("AILIZA_CORS_ORIGINS", "*")
+    if _cors_raw.strip() == "*" and not _is_debug:
+        import logging as _log_cors
+        _log_cors.getLogger(__name__).warning(
+            "SECURITY: AILIZA_CORS_ORIGINS ist '*' (Wildcard). "
+            "In Produktion MUSS eine konkrete Origin gesetzt werden, z. B. "
+            "AILIZA_CORS_ORIGINS=https://ailiza.onrender.com. "
+            "Setze AILIZA_DEBUG=true um diese Warnung in der Entwicklung zu unterdrücken."
+        )
+        write_audit_entry(
+            action="startup.cors_wildcard_warning",
+            metadata={"cors_origins": "*", "debug_mode": _is_debug},
+        )
+    # ── Ende CORS-Produktionswarnung ─────────────────────────────────────────
+
     init_db()
 
     # Audit-Light: Gate-10-Ergebnis protokollieren (keine Inhalte, keine Hashes)
@@ -163,6 +180,38 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+# HSTS + HTTP→HTTPS-Redirect (C1): nur aktiv wenn AILIZA_FORCE_HTTPS=true.
+# Render terminiert TLS selbst — intern läuft HTTP, daher standardmäßig off.
+# In Produktion: AILIZA_FORCE_HTTPS=true setzen (nach TLS-Setup verifizieren).
+_force_https = os.getenv("AILIZA_FORCE_HTTPS", "false").lower() in ("1", "true", "yes")
+
+if _force_https:
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as _StarletteRequest
+from starlette.responses import Response as _StarletteResponse
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Setzt HSTS + grundlegende Sicherheitsheader auf jede Antwort."""
+
+    async def dispatch(self, request: _StarletteRequest, call_next):
+        response: _StarletteResponse = await call_next(request)
+        if _force_https:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
 app.include_router(approvals_router)
 
 

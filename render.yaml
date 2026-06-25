@@ -7,6 +7,20 @@ services:
     envVars:
       - key: AILIZA_EXTERNAL_LLM_ENABLED
         value: "false"
+      - key: AILIZA_DEBUG
+        value: "false"
+      # C2: CORS auf Frontend-Origin einschränken (Wildcard verboten in Production).
+      # Wert anpassen auf die tatsächliche Render-Frontend-URL, z. B.:
+      # https://ailiza-frontend.onrender.com
+      # Mehrere Origins kommasepariert: https://ailiza.example.com,https://www.ailiza.example.com
+      - key: AILIZA_CORS_ORIGINS
+        sync: false
+      # C1: AILIZA_FORCE_HTTPS=true aktiviert HTTP→HTTPS-Redirect + HSTS-Header.
+      # Nur setzen, nachdem TLS auf Render verifiziert wurde (Render terminiert TLS selbst).
+      - key: AILIZA_FORCE_HTTPS
+        value: "false"
+      - key: AILIZA_SECRET_KEY
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
