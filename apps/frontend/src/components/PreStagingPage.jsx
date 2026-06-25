@@ -149,8 +149,11 @@ export default function PreStagingPage() {
 
               {(active || done) && (
                 <>
-                  <p className="staging-question">{step.question}</p>
+                  <p className="staging-label">Warum ist das wichtig?</p>
                   <p className="staging-explanation">{step.explanation}</p>
+
+                  <p className="staging-label">Ist das erledigt?</p>
+                  <p className="staging-question">{step.question}</p>
 
                   {!done && (
                     <div className="staging-actions">
@@ -158,17 +161,20 @@ export default function PreStagingPage() {
                         Ja, erledigt
                       </button>
                       <button className="btn-help" onClick={() => toggleHelp(step.id)}>
-                        {showHelp[step.id] ? "Anleitung ausblenden" : "Zeig mir was zu tun ist"}
+                        {showHelp[step.id] ? "Anleitung ausblenden" : "Was muss ich tun?"}
                       </button>
                     </div>
                   )}
 
                   {showHelp[step.id] && !done && (
-                    <ol className="staging-help">
-                      {step.help.map((line, i) => (
-                        <li key={i}>{line}</li>
-                      ))}
-                    </ol>
+                    <>
+                      <p className="staging-label">So geht es:</p>
+                      <ol className="staging-help">
+                        {step.help.map((line, i) => (
+                          <li key={i}>{line}</li>
+                        ))}
+                      </ol>
+                    </>
                   )}
                 </>
               )}
