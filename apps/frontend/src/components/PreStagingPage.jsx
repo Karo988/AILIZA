@@ -11,6 +11,10 @@ const STEPS = [
     warning: "Solange der alte Key aktiv ist, kann er missbraucht werden. Lösche ihn zuerst, bevor du einen neuen Key setzt.",
     explanation:
       "Ein alter Schlüssel, der versehentlich sichtbar war, muss ungültig gemacht werden. Sonst könnte ihn jemand unberechtigt nutzen.",
+    confirmLabel: "Ich habe den alten Key gelöscht",
+    helpLabel: "Zeig mir, wo ich das finde",
+    nextHint: "Möchtest du jetzt den neuen Groq-Key in Render setzen?",
+    nextHintWhy: "Der alte Schlüssel ist ungültig. Jetzt braucht AILIZA einen neuen sicheren Schlüssel, der nur in Render gespeichert wird.",
     help: [
       "Öffne groq.com und melde dich an.",
       'Gehe zu "API Keys".',
@@ -28,6 +32,10 @@ const STEPS = [
     warning: "Ohne gültigen Key funktioniert die KI-Anbindung nicht.",
     explanation:
       "Der neue Schlüssel darf nur als geheime Umgebungsvariable in Render stehen — nie im Code.",
+    confirmLabel: "Ja, neuer Key ist eingetragen",
+    helpLabel: "Zeig mir, wie das geht",
+    nextHint: "Möchtest du jetzt die sichere HTTPS-Verbindung aktivieren?",
+    nextHintWhy: "Damit niemand die Verbindung zwischen Browser und App abhören kann.",
     help: [
       'Öffne dein Render-Dashboard und wähle dein Backend-Service.',
       'Gehe zu "Environment" → "Environment Variables".',
@@ -45,6 +53,10 @@ const STEPS = [
     warning: "Ohne HTTPS können Daten zwischen Browser und App abgehört werden.",
     explanation:
       "Damit wird sichergestellt, dass niemand die Verbindung zwischen Browser und App abhören kann.",
+    confirmLabel: "Ja, HTTPS ist aktiviert",
+    helpLabel: "Zeig mir, wie das geht",
+    nextHint: "Möchtest du jetzt die erlaubte Frontend-Adresse eintragen?",
+    nextHintWhy: "Ohne diese Einschränkung kann jede fremde Seite mit dem Backend sprechen.",
     help: [
       'Öffne dein Render-Backend-Service und gehe zu "Environment Variables".',
       "Trage ein: Name = AILIZA_FORCE_HTTPS, Wert = true",
@@ -61,6 +73,10 @@ const STEPS = [
     warning: "Ohne diese Einschränkung kann jede fremde Seite mit deinem Backend sprechen.",
     explanation:
       "Nur deine echte App-Adresse darf mit dem Backend kommunizieren — fremde Seiten werden blockiert.",
+    confirmLabel: "Ja, Adresse ist eingetragen",
+    helpLabel: "Zeig mir, wie das geht",
+    nextHint: "Möchtest du jetzt die Zugriffsschlüssel für Operatoren und Admins setzen?",
+    nextHintWhy: "Ohne Zugriffsschlüssel hat jeder Zugriff auf die Freigaben-Seite.",
     help: [
       'Gehe in Render zu "Environment Variables" deines Backends.',
       "Trage ein: Name = AILIZA_CORS_ORIGINS, Wert = https://deine-app.onrender.com",
@@ -77,6 +93,10 @@ const STEPS = [
     warning: "Ohne diese Schlüssel hat jeder Zugriff auf die Freigaben-Seite.",
     explanation:
       "Operatoren dürfen Freigaben sehen. Admins dürfen Freigaben erteilen oder ablehnen. Beide brauchen einen eigenen sicheren Schlüssel.",
+    confirmLabel: "Ja, Schlüssel sind gesetzt",
+    helpLabel: "Zeig mir, wie das geht",
+    nextHint: "Möchtest du jetzt die App kurz testen, bevor sie live geht?",
+    nextHintWhy: "Ein kurzer Test stellt sicher, dass Freigaben und Datenschutz wirklich greifen.",
     help: [
       'Gehe in Render zu "Environment Variables" deines Backends.',
       "Trage ein: Name = AILIZA_OPERATOR_KEY, Wert = ein langes zufälliges Passwort",
@@ -94,6 +114,10 @@ const STEPS = [
     warning: "Ohne Test weißt du nicht, ob Freigaben und Datenschutz wirklich greifen.",
     explanation:
       "Ein kurzer Schnelltest stellt sicher, dass alles wie erwartet funktioniert.",
+    confirmLabel: "Ja, Tests bestanden",
+    helpLabel: "Was soll ich testen?",
+    nextHint: null,
+    nextHintWhy: null,
     help: [
       "Öffne die App im Browser und stelle eine normale Frage → Antwort kommt direkt.",
       "Stelle eine Frage mit einer E-Mail-Adresse → Die App antwortet, aber die E-Mail taucht nicht in Logs auf.",
@@ -159,6 +183,8 @@ export default function PreStagingPage() {
         {STEPS.map((step, index) => {
           const done = !!completed[step.id]
           const active = index === currentStep && !done
+          const justDone = done && index === currentStep - 1
+          const nextStep = STEPS[index + 1]
           return (
             <div
               key={step.id}
@@ -193,10 +219,10 @@ export default function PreStagingPage() {
                   {!done && (
                     <div className="staging-actions">
                       <button className="btn-approve" onClick={() => markDone(step.id)}>
-                        Ja, erledigt
+                        {step.confirmLabel}
                       </button>
                       <button className="btn-help" onClick={() => toggleHelp(step.id)}>
-                        {showHelp[step.id] ? "Anleitung ausblenden" : "Was muss ich tun?"}
+                        {showHelp[step.id] ? "Anleitung ausblenden" : step.helpLabel}
                       </button>
                     </div>
                   )}
@@ -210,6 +236,13 @@ export default function PreStagingPage() {
                         ))}
                       </ol>
                     </>
+                  )}
+
+                  {done && step.nextHint && nextStep && (
+                    <div className="staging-next-hint">
+                      <p className="staging-next-question">{step.nextHint}</p>
+                      <p className="staging-next-why"><strong>Warum jetzt?</strong> {step.nextHintWhy}</p>
+                    </div>
                   )}
                 </>
               )}
