@@ -5,7 +5,10 @@ const STEPS = [
     id: "groq_key",
     title: "Alter API-Schlüssel gelöscht",
     responsible: "Betreiber / Admin",
-    question: "Hast du den alten Groq-Schlüssel in der Groq Console gelöscht?",
+    effort: "ca. 2 Minuten",
+    risk: "Hoch",
+    question: "Bist du bereit für Schritt 1 — den alten Groq-Key zu löschen?",
+    warning: "Solange der alte Key aktiv ist, gilt er als kompromittiert.",
     explanation:
       "Ein alter Schlüssel, der versehentlich sichtbar war, muss ungültig gemacht werden. Sonst könnte ihn jemand unberechtigt nutzen.",
     help: [
@@ -19,7 +22,10 @@ const STEPS = [
     id: "groq_key_new",
     title: "Neuer API-Schlüssel eingetragen",
     responsible: "Betreiber / Admin",
+    effort: "ca. 3 Minuten",
+    risk: "Hoch",
     question: "Hast du den neuen Groq-Schlüssel in Render eingetragen?",
+    warning: "Ohne gültigen Key funktioniert die KI-Anbindung nicht.",
     explanation:
       "Der neue Schlüssel darf nur als geheime Umgebungsvariable in Render stehen — nie im Code.",
     help: [
@@ -33,7 +39,10 @@ const STEPS = [
     id: "https",
     title: "Sichere Verbindung aktiviert",
     responsible: "Betreiber / Admin",
+    effort: "ca. 2 Minuten",
+    risk: "Mittel",
     question: "Hast du in Render die sichere HTTPS-Verbindung als Pflicht gesetzt?",
+    warning: "Ohne HTTPS können Daten zwischen Browser und App abgehört werden.",
     explanation:
       "Damit wird sichergestellt, dass niemand die Verbindung zwischen Browser und App abhören kann.",
     help: [
@@ -46,7 +55,10 @@ const STEPS = [
     id: "cors",
     title: "Erlaubte Adresse eingetragen",
     responsible: "Betreiber / Admin",
+    effort: "ca. 2 Minuten",
+    risk: "Mittel",
     question: "Hast du die Adresse deines Frontends in Render eingetragen?",
+    warning: "Ohne diese Einschränkung kann jede fremde Seite mit deinem Backend sprechen.",
     explanation:
       "Nur deine echte App-Adresse darf mit dem Backend kommunizieren — fremde Seiten werden blockiert.",
     help: [
@@ -59,7 +71,10 @@ const STEPS = [
     id: "keys",
     title: "Zugriffsschlüssel gesetzt",
     responsible: "Admin / Datenschutzverantwortliche",
+    effort: "ca. 5 Minuten",
+    risk: "Hoch",
     question: "Hast du die Zugriffsschlüssel für Operatoren und Admins in Render eingetragen?",
+    warning: "Ohne diese Schlüssel hat jeder Zugriff auf die Freigaben-Seite.",
     explanation:
       "Operatoren dürfen Freigaben sehen. Admins dürfen Freigaben erteilen oder ablehnen. Beide brauchen einen eigenen sicheren Schlüssel.",
     help: [
@@ -73,7 +88,10 @@ const STEPS = [
     id: "smoke",
     title: "Smoke Tests bestanden",
     responsible: "Betreiber / Datenschutzverantwortliche",
+    effort: "ca. 10 Minuten",
+    risk: "Mittel",
     question: "Hast du die App nach dem Deploy kurz getestet?",
+    warning: "Ohne Test weißt du nicht, ob Freigaben und Datenschutz wirklich greifen.",
     explanation:
       "Ein kurzer Schnelltest stellt sicher, dass alles wie erwartet funktioniert.",
     help: [
@@ -155,12 +173,22 @@ export default function PreStagingPage() {
 
               {(active || done) && (
                 <>
-                  <p className="staging-responsible">Zuständig: {step.responsible}</p>
+                  <div className="staging-meta">
+                    <span className="staging-responsible">Zuständig: {step.responsible}</span>
+                    <span className="staging-effort">⏱ {step.effort}</span>
+                    <span className={`staging-risk ${step.risk === "Hoch" ? "risk-high-badge" : "risk-medium-badge"}`}>
+                      Risiko: {step.risk}
+                    </span>
+                  </div>
+
                   <p className="staging-label">Warum ist das wichtig?</p>
                   <p className="staging-explanation">{step.explanation}</p>
 
                   <p className="staging-label">Ist das erledigt?</p>
                   <p className="staging-question">{step.question}</p>
+                  {step.warning && !done && (
+                    <p className="staging-warning">⚠ {step.warning}</p>
+                  )}
 
                   {!done && (
                     <div className="staging-actions">
