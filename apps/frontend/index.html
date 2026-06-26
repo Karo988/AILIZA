@@ -250,15 +250,17 @@ body{
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
             <button class="tool-btn" id="tool-auto" onclick="toggleTool('auto')">⚡ Autonom</button>
-            <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
-            <div class="tool-sep"></div>
-            <select class="tool-select" id="provider-sel" onchange="updateModels()">
-              <option value="groq">Groq (kostenlos)</option>
-              <option value="anthropic">Anthropic Claude</option>
-              <option value="openai">OpenAI</option>
-              <option value="mistral">Mistral</option>
-            </select>
-            <select class="tool-select" id="model-sel"></select>
+            <div class="dev-controls" style="display:none">
+              <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
+              <div class="tool-sep"></div>
+              <select class="tool-select" id="provider-sel" onchange="updateModels()">
+                <option value="groq">Groq (kostenlos)</option>
+                <option value="anthropic">Anthropic Claude</option>
+                <option value="openai">OpenAI</option>
+                <option value="mistral">Mistral</option>
+              </select>
+              <select class="tool-select" id="model-sel"></select>
+            </div>
           </div>
           <div class="key-pop" id="key-pop">
             <label>API-Key für <span id="key-pop-provider">Groq</span>:</label>
@@ -425,17 +427,9 @@ async function sendMessage(){
   chatHistory.push({role:"user",content:text,time:new Date().toISOString()});
   document.getElementById("chat-inner").innerHTML+=renderMsg({role:"user",content:text});
   renderPrivacyMemory();scrollToBottom();
-  const provider=document.getElementById("provider-sel").value;
-  const model=document.getElementById("model-sel").value;
-  const apiKey=localStorage.getItem("ailiza_key_"+provider)||"";
   showTyping();
   try{
-    if(apiKey){
-      const r=await fetch(`${API}/llm/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:text,provider,model,api_key:apiKey,context})});
-      hideTyping();
-      if(r.ok){const d=await r.json();const reply=d.text||d.response||d.message||"(keine Antwort)";addAiMessage(reply);context.push({role:"user",content:text},{role:"assistant",content:reply});if(context.length>20)context=context.slice(-20);}else{await runAgent(text);}
-    }else if(tools.search){await runAgent(text);}
-    else{hideTyping();addAiMessage("Bitte gib einen API-Key ein (🔑 unten) oder aktiviere die Web-Suche.","Kein API-Key");}
+    await runAgent(text);
   }catch(e){hideTyping();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
