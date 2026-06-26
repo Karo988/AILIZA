@@ -234,6 +234,124 @@ class TestProviderFailover:
         assert "Betreff" in result
         assert "Kein KI-Anbieter" not in result
 
+    def test_all_providers_failed_error_code(self, monkeypatch):
+        """Wenn alle Provider fehlschlagen, muss 'all_providers_failed' kommen, nicht 'no_api_key'."""
+        import pytest
+        from apps.backend.providers.orchestrator import ProviderOrchestrator
+        from apps.backend.errors import AILIZAError
+
+        class FailProvider:
+            provider_id = "openai"
+            model = "gpt-4o-mini"
+            def count_tokens(self, text): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                raise AILIZAError.from_code("invalid_api_key")
+
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+
+        orch = ProviderOrchestrator(providers={"openai": FailProvider()})
+        with pytest.raises(AILIZAError) as exc_info:
+            orch.generate([{"role": "user", "content": "test"}])
+        assert exc_info.value.code == "all_providers_failed"
+
+
+class TestOpenAIProviderErrorMapping:
+    """Tests für präzise OpenAI-Fehlercodes in openai_provider.py."""
+
+    def _make_provider(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-key-for-test")
+        from apps.backend.providers.openai_provider import OpenAIProvider
+        return OpenAIProvider(model="gpt-4o-mini")
+
+    def test_authentication_error_maps_to_invalid_api_key(self, monkeypatch):
+        from apps.backend.errors import AILIZAError
+        import pytest
+        provider = self._make_provider(monkeypatch)
+
+        class FakeAuthError(Exception):
+            __name__ = "AuthenticationError"
+            status_code = 401
+
+        FakeAuthError.__name__ = "AuthenticationError"
+
+        original_build = provider._build_client
+        def fake_build():
+            raise FakeAuthError("Invalid API key")
+        monkeypatch.setattr(provider, "_build_client", fake_build)
+
+        with pytest.raises(AILIZAError) as exc_info:
+            provider.generate([{"role": "user", "content": "test"}])
+        assert exc_info.value.code == "invalid_api_key"
+
+    def test_rate_limit_error_maps_to_rate_limited(self, monkeypatch):
+        from apps.backend.errors import AILIZAError
+        import pytest
+        provider = self._make_provider(monkeypatch)
+
+        class FakeRateLimit(Exception):
+            status_code = 429
+        FakeRateLimit.__name__ = "RateLimitError"
+
+        monkeypatch.setattr(provider, "_build_client", lambda: (_ for _ in ()).throw(FakeRateLimit()))
+
+        with pytest.raises(AILIZAError) as exc_info:
+            provider.generate([{"role": "user", "content": "test"}])
+        assert exc_info.value.code == "rate_limited"
+
+    def test_openai_call_log_printed(self, monkeypatch, capsys):
+        """AILIZA OPENAI CALL muss vor dem API-Call geloggt werden."""
+        from apps.backend.errors import AILIZAError
+        provider = self._make_provider(monkeypatch)
+
+        class FakeClient:
+            class chat:
+                class completions:
+                    @staticmethod
+                    def create(**kwargs):
+                        class Msg:
+                            content = "Antwort"
+                        class Choice:
+                            message = Msg()
+                        class Resp:
+                            choices = [Choice()]
+                        return Resp()
+
+        monkeypatch.setattr(provider, "_build_client", lambda: FakeClient())
+
+        provider.generate([{"role": "user", "content": "test"}])
+        captured = capsys.readouterr()
+        assert "AILIZA OPENAI CALL" in captured.out
+        assert "AILIZA OPENAI RESULT" in captured.out
+        assert "key_present=True" in captured.out
+
+    def test_no_api_key_if_env_missing(self, monkeypatch):
+        import pytest
+        from apps.backend.errors import AILIZAError
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        from apps.backend.providers.openai_provider import OpenAIProvider
+        provider = OpenAIProvider()
+        with pytest.raises(AILIZAError) as exc_info:
+            provider.generate([{"role": "user", "content": "test"}])
+        assert exc_info.value.code == "no_api_key"
+
+    def test_key_never_logged(self, monkeypatch, capsys):
+        """API-Key darf niemals in Logs erscheinen."""
+        provider = self._make_provider(monkeypatch)
+
+        class FakeBadClient:
+            def __init__(self): raise Exception("boom")
+
+        monkeypatch.setattr(provider, "_build_client", lambda: (_ for _ in ()).throw(Exception("boom")))
+        try:
+            provider.generate([{"role": "user", "content": "test"}])
+        except Exception:
+            pass
+        captured = capsys.readouterr()
+        assert "fake-key-for-test" not in captured.out
+        assert "fake-key-for-test" not in captured.err
+
 
 # ── 3. AgentRuntime-Governance ─────────────────────────────────────────────────
 

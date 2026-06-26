@@ -163,7 +163,7 @@ class ProviderOrchestrator:
                 latency_ms = int((time.time() - start) * 1000)
                 self._log_metrics(context, provider, latency_ms, tokens_in, tokens_out, error_type)
 
-        raise last_exc or AILIZAError.from_code("provider_not_configured")
+        raise AILIZAError.from_code("all_providers_failed")
 
     def stream(self, messages: list[dict[str, Any]], context: Any = None, provider_id: str | None = None) -> Iterator[str]:
         enforce_kill_switch()
