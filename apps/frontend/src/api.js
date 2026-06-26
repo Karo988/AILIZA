@@ -7,7 +7,7 @@
  * - Keine Secrets oder Tokens in Logs.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8001"
+const API_BASE = window?.AILIZA_API || import.meta.env.VITE_API_URL || "https://ailiza.onrender.com"
 
 /**
  * Zentraler Fetch-Wrapper. Cookies werden automatisch vom Browser mitgesendet (credentials: "include").
