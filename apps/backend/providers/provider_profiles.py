@@ -70,16 +70,20 @@ _PROFILES: dict[str, ProviderProfile] = {
         name="Groq Cloud",
         region="US",
         transfer_basis=TransferBasis.SCC,
-        avv_signed=False,               # ⚠ Prüfen — DPA noch nicht abgeschlossen
-        allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        avv_signed=False,               # ⚠ DPA noch zu unterzeichnen
+        allowed_data_classes=[
+            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            # Nach Redaction erlaubt — data_matrix prüft redaction_applied=True
+            DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
+        ],
         allowed_use_cases=["kmu_assistant", "summarization", "classification"],
-        logs_prompts=False,             # Laut Groq Privacy Policy: keine Prompt-Logs
-        used_for_training=False,        # API-Nutzer: kein Training laut Policy
+        logs_prompts=False,
+        used_for_training=False,
         active=True,
-        profile_version="1.1.0",
-        failover_priority=1,            # Erste Wahl (schnell, günstig)
-        notes="US-Provider, SCC als Transferbasis. AVV/DPA noch zu unterzeichnen. "
-              "Nur PUBLIC/INTERNAL bis AVV vorliegt.",
+        profile_version="1.2.0",
+        failover_priority=1,
+        notes="US-Provider, SCC. Nach Redaction erlaubt für PERSONAL_DATA/HR/LEGAL/FINANCIAL. "
+              "AVV/DPA noch zu unterzeichnen. data_matrix kontrolliert redaction_applied-Gate.",
         tags=["llm", "groq", "us", "scc"],
     ),
     "anthropic": ProviderProfile(
@@ -87,16 +91,19 @@ _PROFILES: dict[str, ProviderProfile] = {
         name="Anthropic",
         region="US",
         transfer_basis=TransferBasis.SCC,
-        avv_signed=False,               # ⚠ Prüfen — Commercial API Terms prüfen
-        allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        avv_signed=False,               # ⚠ Commercial API Terms prüfen
+        allowed_data_classes=[
+            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
+        ],
         allowed_use_cases=["kmu_assistant", "summarization", "code_assist", "classification"],
-        logs_prompts=False,             # Anthropic Commercial: keine Datennutzung fuer Training
+        logs_prompts=False,
         used_for_training=False,
         active=True,
-        profile_version="1.1.0",
-        failover_priority=2,            # Zweite Wahl
-        notes="US-Provider, SCC als Transferbasis. AVV/DPA noch zu unterzeichnen. "
-              "Nur PUBLIC/INTERNAL bis AVV vorliegt.",
+        profile_version="1.2.0",
+        failover_priority=2,
+        notes="US-Provider, SCC. Nach Redaction erlaubt für PERSONAL_DATA/HR/LEGAL/FINANCIAL. "
+              "AVV/DPA noch zu unterzeichnen.",
         tags=["llm", "anthropic", "us", "scc"],
     ),
     "openrouter": ProviderProfile(

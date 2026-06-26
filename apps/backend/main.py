@@ -555,6 +555,7 @@ def _governance_pre_check(
     )
 
     if decision == PolicyDecision.BLOCK:
+        # Nur bei CREDENTIALS oder SPECIAL_CATEGORY → echter Block (EU AI Act Art. 5 / DSGVO Art. 9)
         write_audit_entry(
             action="governance.task_blocked",
             tenant_id=tenant_id,
@@ -563,56 +564,57 @@ def _governance_pre_check(
         return {
             "decision": "block",
             "message": (
-                "Diese Anfrage enthält Daten, die nicht extern verarbeitet werden dürfen "
-                f"({', '.join(c.value for c in data_classes)}). "
-                "Bitte entferne sensible Informationen und versuche es erneut."
+                "Diese Anfrage enthält Daten, die nach EU AI Act Art. 5 / DSGVO Art. 9 "
+                f"nicht extern verarbeitet werden dürfen ({', '.join(c.value for c in data_classes)})."
             ),
         }
 
-    if decision == PolicyDecision.APPROVAL_REQUIRED:
-        approval = create_approval_request(
-            tool="llm_call",
-            input_params={"task_length": len(task), "data_classes": [c.value for c in data_classes]},
-            risk_level="high",
-            risk_reason=f"Sensible Daten erkannt: {', '.join(c.value for c in data_classes)}",
-            run_id=run_id,
-            tenant_id=tenant_id,
-        )
-        write_audit_entry(
-            action="governance.approval_required",
-            tenant_id=tenant_id,
-            metadata={"approval_id": approval.get("id"), "data_classes": [c.value for c in data_classes]},
-        )
-        return {
-            "decision": "approval_required",
-            "approval_id": approval.get("id"),
-            "message": (
-                "Diese Anfrage enthält sensible Daten und benötigt eine Freigabe durch einen Administrator. "
-                f"Erkannte Datenklassen: {', '.join(c.value for c in data_classes)}. "
-                "Ein Administrator wurde benachrichtigt."
-            ),
-            "data_classes": [c.value for c in data_classes],
-        }
-
-    if decision == PolicyDecision.REDACT_REQUIRED:
+    if decision in (PolicyDecision.APPROVAL_REQUIRED, PolicyDecision.REDACT_REQUIRED):
+        # Governance-Regel: Redacten → als Entwurf weiterlaufen (nicht stoppen).
+        # APPROVAL_REQUIRED und REDACT_REQUIRED werden gleich behandelt:
+        # lokale Pseudonymisierung, dann weiter, Ergebnis als Entwurf markieren.
         redacted = redact(task, classification)
         redacted_task = redacted.redacted_text
+        is_draft = decision == PolicyDecision.APPROVAL_REQUIRED
+        dc_names = [c.value for c in data_classes]
+        approval_id: int | None = None
+        if is_draft and run_id:
+            try:
+                approval = create_approval_request(
+                    tool="llm_call",
+                    input_params={"task_length": len(task), "data_classes": dc_names},
+                    risk_level="high",
+                    risk_reason=f"Sensible Daten erkannt: {', '.join(dc_names)}",
+                    run_id=run_id,
+                    tenant_id=tenant_id,
+                )
+                approval_id = approval.get("id")
+            except Exception:
+                pass
         write_audit_entry(
-            action="governance.task_redacted",
+            action="governance.draft_prepared" if is_draft else "governance.task_redacted",
             tenant_id=tenant_id,
-            metadata={"data_classes": [c.value for c in data_classes], "redaction_applied": True},
+            metadata={
+                "data_classes": dc_names,
+                "redaction_applied": True,
+                "is_draft": is_draft,
+                "approval_id": approval_id,
+            },
         )
+        notice = (
+            f"Personenbezogene Daten erkannt ({', '.join(dc_names)}) und lokal pseudonymisiert (DSGVO Art. 25). "
+            + ("Ergebnis als Entwurf vorbereitet — menschliche Prüfung erforderlich." if is_draft else "")
+        ).strip()
         return {
             "decision": "allow_with_notice",
             "task": redacted_task,
-            "notice": (
-                f"Personenbezogene Daten erkannt ({', '.join(c.value for c in data_classes)}) "
-                "und pseudonymisiert (DSGVO Art. 25)."
-            ),
+            "notice": notice,
+            "is_draft": is_draft,
+            "approval_id": approval_id,
             "pii_detected": {
                 "has_pii": True,
                 "requires_consent": True,
-                "items": [{"type": m, "requires_consent": True} for m in classification.matched_patterns],
+                "items": [{"type": m, "requires_consent": True} for m in getattr(classification, "matched_patterns", [])],
             },
         }
 
@@ -665,9 +667,10 @@ def run_agent(
             "results": [],
         }
 
-    # ── Governance Pre-Check: classify → data_matrix → redact/block/approval ─
-    # Läuft VOR jedem Tool-Call und LLM-Call. Guest-Nutzung erlaubt, aber
-    # sensible Daten werden redacted oder stoppen den Flow (Approval-Gate).
+    # ── Governance Pre-Check: classify → data_matrix → redact/block ─────────
+    # Läuft VOR jedem Tool-Call und LLM-Call.
+    # BLOCK: nur bei CREDENTIALS / SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
+    # PERSONAL_DATA/HR/LEGAL/FINANCIAL: lokal redacten, als Entwurf weiterlaufen.
     pre_check = _governance_pre_check(payload.task, tenant_id=tenant)
 
     if pre_check["decision"] == "block":
@@ -679,22 +682,10 @@ def run_agent(
             "results": [],
         }
 
-    if pre_check["decision"] == "approval_required":
-        # Flow pausiert — kein LLM-Call, kein Tool-Call.
-        # Freigabe muss durch eingeloggten Admin/Operator erfolgen.
-        return {
-            "status": "pending_approval",
-            "approval_id": pre_check.get("approval_id"),
-            "message": pre_check["message"],
-            "ai_response": pre_check["message"],
-            "data_classes": pre_check.get("data_classes", []),
-            "steps": [],
-            "results": [],
-        }
-
     # Bei Redaction: pseudonymisierte Aufgabe verwenden
     effective_task = pre_check.get("task", payload.task)
     pii_detected = pre_check.get("pii_detected")
+    governance_is_draft = pre_check.get("is_draft", False)
 
     runtime = AgentRuntime()
     result = runtime.run(effective_task)
@@ -719,6 +710,15 @@ def run_agent(
                 result["llm_notice"] = MESSAGES.get(error_code, "")
     elif result.get("message") == "Agent run completed" and search_text:
         result["message"] = search_text
+
+    # Governance Draft-Markierung übernehmen (HR/LEGAL/FINANCIAL nach Redaction)
+    if governance_is_draft and result.get("status") not in ("draft", "blocked"):
+        result["status"] = "draft"
+        result["draft"] = True
+        result["approval_id"] = pre_check.get("approval_id")
+        result["draft_notice"] = (
+            "Entwurf — personenbezogene Daten lokal maskiert, menschliche Prüfung erforderlich."
+        )
 
     result["ai_response"] = result.get("message", "")
     result["tenant_id"] = tenant

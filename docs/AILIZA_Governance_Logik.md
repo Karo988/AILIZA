@@ -35,4 +35,4 @@ Blockiert wird nur bei eindeutig rechtswidrigen, missbräuchlichen oder technisc
 | Audit-Log pro Anfrage | ✅ umgesetzt (`write_audit_entry`) |
 | Erweitertes Audit-Log (Anbieter, Modell, Websuche) | ✅ umgesetzt (`agent_runtime.run`) |
 | PII nach Antwort lokal wieder einsetzen | 🔲 geplant |
-| `_governance_pre_check` als zentraler Einstiegspunkt | 🔲 geplant |
+| `_governance_pre_check` als zentraler Einstiegspunkt | ✅ umgesetzt (`main._governance_pre_check`) |
