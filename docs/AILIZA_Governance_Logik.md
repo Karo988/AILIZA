@@ -33,6 +33,6 @@ Blockiert wird nur bei eindeutig rechtswidrigen, missbräuchlichen oder technisc
 | HIGH als Entwurf vorbereiten | ✅ umgesetzt (`agent_runtime._precheck`) |
 | PII lokal maskieren vor LLM-Call | ✅ umgesetzt (`redactor.py`) |
 | Audit-Log pro Anfrage | ✅ umgesetzt (`write_audit_entry`) |
-| Erweitertes Audit-Log (Anbieter, Modell, Websuche) | 🔲 geplant |
+| Erweitertes Audit-Log (Anbieter, Modell, Websuche) | ✅ umgesetzt (`agent_runtime.run`) |
 | PII nach Antwort lokal wieder einsetzen | 🔲 geplant |
 | `_governance_pre_check` als zentraler Einstiegspunkt | 🔲 geplant |

@@ -332,7 +332,19 @@ class AgentRuntime:
         }
         self.update_run_record(run_id, status=final_status, pending_approval_id=draft_approval_id if is_draft else None, result=final_response)
         event = "agent.run.draft" if is_draft else "agent.run.completed"
-        self.audit_writer(event, {"run_id": run_id, "steps": len(steps), "approval_id": draft_approval_id})
+        tools_used = [r.get("tool") for r in results]
+        providers_used = list({r.get("result", {}).get("provider") for r in results if r.get("result", {}).get("provider")})
+        models_used = list({r.get("result", {}).get("model") for r in results if r.get("result", {}).get("model")})
+        self.audit_writer(event, {
+            "run_id": run_id,
+            "steps": len(steps),
+            "approval_id": draft_approval_id,
+            "decision_type": final_status,
+            "web_search_used": "search" in tools_used,
+            "redaction_used": bool(getattr(self, "_redacted_task", task) != task),
+            "provider": providers_used[0] if len(providers_used) == 1 else (providers_used or None),
+            "model": models_used[0] if len(models_used) == 1 else (models_used or None),
+        })
         return final_response
 
     def continue_after_approval(self, approval_id: int) -> dict[str, Any]:
