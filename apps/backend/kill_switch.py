@@ -53,8 +53,18 @@ def get_operation_mode() -> OperationMode:
 
 
 def _env_enabled() -> bool:
-    raw = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    raw = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "").strip().lower()
+    # Explizit deaktiviert → False
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    # Explizit aktiviert → True
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    # Nicht gesetzt: aktivieren wenn ein API-Key vorhanden ist (Render-Deployment)
+    has_key = bool(
+        os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    )
+    return has_key
 
 
 def _db_flag_enabled() -> bool | None:

@@ -107,6 +107,7 @@ body{
 .msg-tag{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500}
 .tag-ai{background:var(--accent-soft);color:var(--accent)}
 .tag-warn{background:var(--warn-soft);color:var(--warn)}
+.draft-banner{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;color:#1D4ED8;font-size:12px;font-weight:500;padding:6px 12px;margin-bottom:6px}
 .msg-meta{font-size:10px;color:var(--text-muted);padding:0 4px}
 .typing{background:var(--surface);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-self:flex-start}
 .typing span{width:5px;height:5px;background:var(--text-muted);border-radius:50%;animation:bounce .8s infinite}
@@ -412,7 +413,8 @@ function renderMsg(m){
   const text=(m.content||"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
   if(m.role==="user")return`<div class="msg user"><div class="bubble user">${text}</div></div>`;
   const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
-  return`<div class="msg ai"><div class="bubble ai">${text}</div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
+  const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
+  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
 function loadHistory(){if(!chatHistory.length)return;context=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));renderChat()}
 function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
@@ -443,9 +445,12 @@ async function runAgent(text){
   if(data.message&&data.message!=="Agent run completed")answer=data.message;
   if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
   if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
-  addAiMessage(answer.trim());
+  // Draft-Hinweis: bei status:draft oder draft:true klar anzeigen
+  const isDraft=data.status==="draft"||data.draft===true;
+  const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
+  addAiMessage(answer.trim(),undefined,isDraft?draftHint:undefined);
 }
-function addAiMessage(text,warn){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
+function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}

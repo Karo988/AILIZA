@@ -43,7 +43,7 @@ try:
     from .auth.models import UserCreate, UserInDB
     from .auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
     from .governance.data_governance import classify, DataClass, DataTarget
-    from .governance.redaction import redact
+    from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
 except ImportError:
     from agent_runtime import AgentRuntime
@@ -67,7 +67,7 @@ except ImportError:
     from auth.models import UserCreate, UserInDB
     from auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
     from governance.data_governance import classify, DataClass, DataTarget
-    from governance.redaction import redact
+    from governance.redaction import redact, reinsert
     from governance.data_matrix import check_data_target, PolicyDecision
 
 
@@ -608,6 +608,8 @@ def _governance_pre_check(
         return {
             "decision": "allow_with_notice",
             "task": redacted_task,
+            # reinsertion_map: NUR lokal im RAM — NIEMALS loggen oder persistieren
+            "reinsertion_map": redacted.reinsertion_map,
             "notice": notice,
             "is_draft": is_draft,
             "approval_id": approval_id,
@@ -683,7 +685,9 @@ def run_agent(
         }
 
     # Bei Redaction: pseudonymisierte Aufgabe verwenden
+    # reinsertion_map: NUR lokal im RAM — nie loggen oder persistieren
     effective_task = pre_check.get("task", payload.task)
+    reinsertion_map: dict[str, str] = pre_check.get("reinsertion_map", {})
     pii_detected = pre_check.get("pii_detected")
     governance_is_draft = pre_check.get("is_draft", False)
 
@@ -711,6 +715,24 @@ def run_agent(
     elif result.get("message") == "Agent run completed" and search_text:
         result["message"] = search_text
 
+    # PII-Reinsertion: Originalwerte lokal wieder einsetzen (NUR RAM, nie loggen)
+    reinsertion_used = False
+    if reinsertion_map:
+        current_message = result.get("message", "")
+        reinserted, fully_reinserted = reinsert(current_message, reinsertion_map)
+        result["message"] = reinserted
+        reinsertion_used = True
+        if not fully_reinserted:
+            result["reinsertion_notice"] = (
+                "Originaldaten konnten nicht vollständig automatisch eingesetzt werden."
+            )
+        write_audit_entry(
+            action="governance.reinsertion_applied",
+            tenant_id=tenant,
+            # Nur Statistik loggen — keine Originalwerte, kein Mapping-Inhalt
+            metadata={"reinsertion_used": True, "fully_reinserted": fully_reinserted},
+        )
+
     # Governance Draft-Markierung übernehmen (HR/LEGAL/FINANCIAL nach Redaction)
     if governance_is_draft and result.get("status") not in ("draft", "blocked"):
         result["status"] = "draft"
@@ -722,6 +744,7 @@ def run_agent(
 
     result["ai_response"] = result.get("message", "")
     result["tenant_id"] = tenant
+    result["reinsertion_used"] = reinsertion_used
     if pii_detected:
         result["pii_detected"] = pii_detected
     if pre_check["decision"] == "allow_with_notice":

@@ -34,5 +34,5 @@ Blockiert wird nur bei eindeutig rechtswidrigen, missbräuchlichen oder technisc
 | PII lokal maskieren vor LLM-Call | ✅ umgesetzt (`redactor.py`) |
 | Audit-Log pro Anfrage | ✅ umgesetzt (`write_audit_entry`) |
 | Erweitertes Audit-Log (Anbieter, Modell, Websuche) | ✅ umgesetzt (`agent_runtime.run`) |
-| PII nach Antwort lokal wieder einsetzen | 🔲 geplant |
+| PII nach Antwort lokal wieder einsetzen | ✅ umgesetzt (`governance/redaction.reinsert`, `main.run_agent`) |
 | `_governance_pre_check` als zentraler Einstiegspunkt | ✅ umgesetzt (`main._governance_pre_check`) |

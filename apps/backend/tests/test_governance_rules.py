@@ -176,3 +176,84 @@ class TestAgentRuntimeGovernance:
         runtime = self._make_runtime({"status": "completed", "tool": "search", "parameters": {}, "result": {"results": []}})
         result = runtime.run("Was ist FastAPI?")
         assert result["status"] == "completed"
+
+
+# ── 4. PII-Reinsertion ─────────────────────────────────────────────────────────
+
+class TestPIIReinsertion:
+    def test_reinsert_replaces_placeholder_with_original(self):
+        from apps.backend.governance.redaction import redact, reinsert
+        result = redact("Schreibe eine E-Mail an max.mueller@example.com.")
+        assert "max.mueller@example.com" not in result.redacted_text
+        assert "[EMAIL_1]" in result.redacted_text
+        assert result.reinsertion_map.get("[EMAIL_1]") == "max.mueller@example.com"
+
+        reinserted, fully = reinsert(
+            "Sehr geehrter Herr Müller, bitte schreiben Sie an [EMAIL_1].",
+            result.reinsertion_map,
+        )
+        assert "max.mueller@example.com" in reinserted
+        assert "[EMAIL_1]" not in reinserted
+        assert fully is True
+
+    def test_reinsert_partial_returns_false(self):
+        from apps.backend.governance.redaction import reinsert
+        text, fully = reinsert("Hallo [EMAIL_1] und [EMAIL_2].", {"[EMAIL_1]": "a@b.de"})
+        assert "a@b.de" in text
+        assert "[EMAIL_1]" not in text
+        assert "[EMAIL_2]" in text  # nicht im Map
+        assert fully is False
+
+    def test_reinsert_empty_map_returns_unchanged(self):
+        from apps.backend.governance.redaction import reinsert
+        text, fully = reinsert("Hallo Welt.", {})
+        assert text == "Hallo Welt."
+        assert fully is True
+
+    def test_reinsertion_map_not_in_log_safe_replacements(self):
+        """replacements-Dict darf keine Originalwerte enthalten."""
+        from apps.backend.governance.redaction import redact
+        result = redact("Kontakt: test@example.com, +4915112345678")
+        for placeholder, value in result.replacements.items():
+            assert "@" not in value, "E-Mail-Adresse im log-sicheren replacements-Dict!"
+            assert not any(c.isdigit() for c in value.replace("_", "")), \
+                f"Ziffern im replacements-Typ '{value}' — Originalwert geleakt?"
+
+    def test_secrets_never_reinserted(self):
+        """Secret-Werte dürfen niemals in reinsertion_map landen."""
+        from apps.backend.governance.redaction import redact
+        secret_text = "sk-proj-" + "a" * 40
+        result = redact(f"API Key: {secret_text}")
+        # Kernregel: Originalwert darf nicht im reinsertion_map sein
+        for v in result.reinsertion_map.values():
+            assert secret_text not in v, "Secret-Wert im reinsertion_map!"
+
+
+# ── 5. Kill-Switch / Provider-Auto-Enable ─────────────────────────────────────
+
+class TestKillSwitch:
+    def test_external_llm_enabled_when_groq_key_present(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key-abc")
+        monkeypatch.delenv("AILIZA_EXTERNAL_LLM_ENABLED", raising=False)
+        from importlib import reload
+        import apps.backend.kill_switch as ks
+        reload(ks)
+        assert ks._env_enabled() is True
+
+    def test_external_llm_disabled_when_no_keys(self, monkeypatch):
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("AILIZA_EXTERNAL_LLM_ENABLED", raising=False)
+        from importlib import reload
+        import apps.backend.kill_switch as ks
+        reload(ks)
+        assert ks._env_enabled() is False
+
+    def test_explicit_false_overrides_key(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key-abc")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "false")
+        from importlib import reload
+        import apps.backend.kill_switch as ks
+        reload(ks)
+        assert ks._env_enabled() is False
