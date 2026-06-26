@@ -688,6 +688,32 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
         return None, exc.code
 
 
+def _ask_llm_directly(task: str) -> tuple[str | None, str | None]:
+    """Direkter LLM-Call ohne Suche — Fallback wenn Tavily fehlt."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. "
+                "Antworte kurz und direkt auf Deutsch."
+            ),
+        },
+        {"role": "user", "content": task},
+    ]
+    try:
+        answer = _orchestrator.generate(messages)
+        _prov = getattr(_orchestrator, "default_provider", "unknown")
+        _model = getattr(_orchestrator.providers.get(_prov), "model", "unknown")
+        print(
+            f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)} mode=direct",
+            flush=True,
+        )
+        return answer, None
+    except AILIZAError as exc:
+        print(f"AILIZA LLM FAILED | code={exc.code} mode=direct", flush=True)
+        return None, exc.code
+
+
 @app.post("/agent/run")
 @_limiter.limit("30/minute")
 def run_agent(
@@ -747,12 +773,43 @@ def run_agent(
     )
     # ── Ende Entscheidungs-Diagnose ──────────────────────────────────────────
 
-    # Local-only / degraded mode: direkt zurückgeben, kein LLM-Call versuchen
+    # Local-only / degraded: Suche fehlgeschlagen, aber LLM direkt fragen
     if result.get("status") in ("local_only", "degraded"):
+        answer, error_code = _ask_llm_directly(effective_task)
+        if answer is not None:
+            result["status"] = "completed"
+            result["message"] = answer
+            # PII-Reinsertion auch hier anwenden
+            if reinsertion_map:
+                reinserted, fully = reinsert(answer, reinsertion_map)
+                result["message"] = reinserted
+                if not fully:
+                    result["reinsertion_notice"] = (
+                        "Originaldaten konnten nicht vollständig automatisch eingesetzt werden."
+                    )
+                write_audit_entry(
+                    action="governance.reinsertion_applied",
+                    tenant_id=tenant,
+                    metadata={"reinsertion_used": True, "fully_reinserted": fully},
+                )
+            result["ai_response"] = result["message"]
+            result["tenant_id"] = tenant
+            if pii_detected:
+                result["pii_detected"] = pii_detected
+            if governance_is_draft:
+                result["status"] = "draft"
+                result["draft"] = True
+                result["draft_notice"] = (
+                    "Entwurf — personenbezogene Daten lokal maskiert, menschliche Prüfung erforderlich."
+                )
+            return result
+        # LLM auch nicht verfügbar → lokale Antwort zurückgeben
         result["ai_response"] = result.get("message", "")
         result["tenant_id"] = tenant
         if pii_detected:
             result["pii_detected"] = pii_detected
+        if error_code:
+            result["llm_notice"] = MESSAGES.get(error_code, "")
         return result
 
     search_text = extract_agent_answer(result)

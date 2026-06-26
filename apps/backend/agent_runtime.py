@@ -265,6 +265,12 @@ class AgentRuntime:
                             "reason": "provider_not_configured",
                         },
                     )
+                    print(
+                        f"AILIZA LOCAL_ONLY DECISION | reason=missing_provider "
+                        f"source=tool_executor tool={call.tool} "
+                        f"detail={getattr(exc, 'detail', str(exc))!r}",
+                        flush=True,
+                    )
                     return local_result
                 status = "blocked" if exc.status_code == 403 else "failed"
                 self.update_run_record(

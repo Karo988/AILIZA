@@ -11,6 +11,7 @@ python-multipart>=0.0.9   # Datei-Uploads (/documents/scan)
 # AI / Agent
 anthropic>=0.40.0
 openai>=1.50.0
+tavily-python>=0.3.0
 
 # Datenbank
 SQLAlchemy>=2.0.0
