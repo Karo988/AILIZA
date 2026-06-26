@@ -455,3 +455,90 @@ def reload_registry() -> Registry:
     global _registry
     _registry = load_registry()
     return _registry
+
+
+# ── Registry-Check für Orchestrator ──────────────────────────────────────────
+
+def check_provider_in_registry(
+    provider_id: str,
+    data_classes: list[str],
+) -> tuple[bool, str, str]:
+    """
+    Prüft ob ein Provider in der Registry vorhanden, freigegeben und für die
+    angegebenen Datenklassen erlaubt ist.
+
+    Gibt zurück: (allowed: bool, error_code: str, reason: str)
+    - allowed=True → Provider darf genutzt werden
+    - allowed=False → error_code enthält den AILIZA-Fehlercode
+
+    Fail-closed: Registry nicht ladbar → (False, "registry_unavailable", ...)
+    """
+    try:
+        reg = get_registry()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Registry konnte nicht geladen werden: %s", exc)
+        return False, "registry_unavailable", f"Registry-Ladefehler: {type(exc).__name__}"
+
+    if not reg.providers:
+        # Registry leer → fail-closed wenn kein locals gefunden
+        return False, "registry_unavailable", "Registry enthält keine Provider."
+
+    entry = reg.get_provider(provider_id)
+
+    if entry is None:
+        return (
+            False,
+            "registry_provider_not_found",
+            f"Provider '{provider_id}' ist nicht in der Registry registriert.",
+        )
+
+    if not entry.enabled:
+        return (
+            False,
+            "registry_provider_disabled",
+            f"Provider '{provider_id}' ist deaktiviert (enabled=false).",
+        )
+
+    if not entry.admin_approved:
+        return (
+            False,
+            "registry_provider_not_approved",
+            f"Provider '{provider_id}' wartet auf Admin-Freigabe (admin_approved=false).",
+        )
+
+    if entry.transfer_basis == "none":
+        return (
+            False,
+            "registry_provider_not_approved",
+            f"Provider '{provider_id}': kein gültiger Drittland-Transfermechanismus.",
+        )
+
+    # Datenklassen-Check: jede übergebene Klasse muss erlaubt sein
+    for dc in data_classes:
+        if not entry.allows_data(dc):
+            return (
+                False,
+                "registry_data_class_not_allowed",
+                f"Provider '{provider_id}': Datenklasse '{dc}' nicht erlaubt "
+                f"(forbidden oder nicht in allowed_data).",
+            )
+
+    # health_status=down nur blockieren wenn es keine Alternative gibt —
+    # das entscheidet der Orchestrator; hier nur melden
+    health_note = ""
+    if entry.health_status == "down":
+        health_note = f" [health=down — als letzter Fallback trotzdem versucht]"
+
+    return True, "", f"ok{health_note}"
+
+
+def get_routing_for_task(task_type: str) -> RoutingRule | None:
+    """
+    Gibt die Routing-Regel für den angegebenen Aufgabentyp zurück.
+    Fallback auf general_task wenn task_type unbekannt.
+    """
+    try:
+        reg = get_registry()
+        return reg.get_routing_rule(task_type)
+    except Exception:
+        return None
