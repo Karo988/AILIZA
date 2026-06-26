@@ -148,11 +148,25 @@ _SPECIAL_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     )),
 ]
 
+# ── Personennamen (DSGVO Art. 4 Nr. 1 — natürliche Person identifizierbar) ────
+# Keyword-getriggert: Titel/Rolle gefolgt von Vorname + Nachname
+_PERSON_NAME_PATTERN = re.compile(
+    r"(?:Herr(?:n|en)?|Frau|Hr\.|Fr\."
+    r"|Mitarbeiter(?:in)?|Kollege|Kollegin"
+    r"|Bewerber(?:in)?|Kandidat(?:in)?"
+    r"|Arbeitnehmer(?:in)?|Angestellte[rn]?"
+    r"|Vorgesetzte[rn]?|Auszubildende[rn]?|Praktikant(?:in)?)"
+    r"\s+"
+    r"([A-ZÄÖÜ][a-zäöüß\-]+(?:\s+[A-ZÄÖÜ][a-zäöüß\-]+)+)",
+    re.UNICODE,
+)
+
 # ── HR / Personalplanung (DSGVO Art. 22, EU AI Act — requires_human_decision) ─
 _HR_PATTERN = re.compile(
     r"\b(Mitarbeitereinsatz|Personalplanung|Schichtplan|Dienstplan|Personalentscheidung"
-    r"|Leistungsbewertung|Bewerberdaten|Bewerber|Kündigung|Abmahnung|Beurteilung"
-    r"|Gehaltsabrechnung|Lohnabrechnung|Personalakte|Urlaubsantrag\s+genehmigen"
+    r"|Leistungsbewertung|Bewerberdaten|Bewerber|Kündigung|Abmahnung|abgemahnt|abmahnen"
+    r"|Beurteilung|Gehaltsabrechnung|Lohnabrechnung|Personalakte|Urlaubsantrag\s+genehmigen"
+    r"|Entlassung|Versetzung|Disziplinar(?:verfahren|maßnahme|maßnahmen)?"
     r"|staff\s+(?:assignment|scheduling|decision)|shift\s+plan|workforce\s+planning"
     r"|performance\s+(?:review|evaluation)|employee\s+(?:record|file|evaluation)"
     r"|termination|disciplinary|payroll|leave\s+approval)\b",
@@ -203,6 +217,11 @@ def classify(text: str) -> ClassificationResult:
             classes.add(DataClass.PERSONAL_DATA)
         if _PERSONAL_ID_PATTERN.search(text):
             matched.append("personal_identifier")
+            classes.add(DataClass.PERSONAL_DATA)
+
+        # ── Personennamen (DSGVO Art. 4 Nr. 1) ───────────────────────────────
+        if _PERSON_NAME_PATTERN.search(text):
+            matched.append("person_name")
             classes.add(DataClass.PERSONAL_DATA)
 
         # ── Tabellarische Personendaten (CSV / Event-Log) ────────────────────

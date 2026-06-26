@@ -22,6 +22,7 @@ from .data_governance import (
     _EMAIL_PATTERN,
     _IBAN_PATTERN,
     _IP_PATTERN,
+    _PERSON_NAME_PATTERN,
     _PHONE_PATTERN,
     _SECRET_PATTERNS,
 )
@@ -59,6 +60,33 @@ def _replace_sequential(
         replacements[placeholder] = label.lower()       # log-sicher: nur Typ
         reinsertion_map[placeholder] = original         # RAM-only: Originalwert
         return placeholder
+
+    new_text = pattern.sub(_sub, text)
+    return new_text, counter["n"]
+
+
+def _replace_name_group(
+    text: str,
+    pattern: re.Pattern,
+    label: str,
+    replacements: dict[str, str],
+    reinsertion_map: dict[str, str],
+) -> tuple[str, int]:
+    """Ersetzt Gruppe 1 (Name) im Pattern; Keyword-Präfix bleibt erhalten."""
+    counter = {"n": 0}
+    seen: dict[str, str] = {}
+
+    def _sub(match: re.Match) -> str:
+        name = match.group(1)
+        prefix = match.group(0)[: match.start(1) - match.start(0)]
+        if name in seen:
+            return prefix + seen[name]
+        counter["n"] += 1
+        placeholder = f"[{label}_{counter['n']}]"
+        seen[name] = placeholder
+        replacements[placeholder] = label.lower()
+        reinsertion_map[placeholder] = name
+        return prefix + placeholder
 
     new_text = pattern.sub(_sub, text)
     return new_text, counter["n"]
@@ -112,6 +140,9 @@ def redact(text: str, classification: ClassificationResult | None = None) -> Red
         secrets_blocked += count
 
     # 2. PII durch Platzhalter ersetzen (mit lokaler Reinsertion-Map)
+    # Personennamen zuerst (vor Email, damit "Max.Mueller@..." korrekt bleibt)
+    text, n = _replace_name_group(text, _PERSON_NAME_PATTERN, "PERSON", replacements, reinsertion_map)
+    pii_replaced += n
     text, n = _replace_sequential(text, _EMAIL_PATTERN, "EMAIL", replacements, reinsertion_map)
     pii_replaced += n
     text, n = _replace_sequential(text, _IBAN_PATTERN, "IBAN", replacements, reinsertion_map)

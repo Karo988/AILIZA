@@ -228,6 +228,47 @@ class TestPIIReinsertion:
         for v in result.reinsertion_map.values():
             assert secret_text not in v, "Secret-Wert im reinsertion_map!"
 
+    def test_person_name_redacted_mitarbeiter(self):
+        """'Mitarbeiter Max Müller' → [PERSON_1], redaction_applied=True."""
+        from apps.backend.governance.redaction import redact, reinsert
+        text = "ob Mitarbeiter Max Müller wegen häufiger Verspätung abgemahnt werden sollte."
+        result = redact(text)
+        assert result.redaction_applied is True
+        assert "Max Müller" not in result.redacted_text
+        assert "[PERSON_1]" in result.redacted_text
+        assert result.reinsertion_map.get("[PERSON_1]") == "Max Müller"
+        # Keyword bleibt erhalten
+        assert "Mitarbeiter" in result.redacted_text
+        # Reinsertion stellt Namen wieder her
+        reinserted, fully = reinsert(result.redacted_text, result.reinsertion_map)
+        assert "Max Müller" in reinserted
+        assert fully is True
+
+    def test_person_name_herr_redacted(self):
+        """'Herr Thomas Schmidt' → [PERSON_1]."""
+        from apps.backend.governance.redaction import redact
+        result = redact("Bitte kontaktieren Sie Herrn Thomas Schmidt bezüglich der Abmahnung.")
+        assert result.redaction_applied is True
+        assert "Thomas Schmidt" not in result.redacted_text
+        assert "[PERSON_1]" in result.redacted_text
+        assert result.reinsertion_map.get("[PERSON_1]") == "Thomas Schmidt"
+
+    def test_person_name_classification_sets_personal_data(self):
+        """classify() muss bei 'Mitarbeiter Max Müller' PERSONAL_DATA erkennen."""
+        from apps.backend.governance.data_governance import classify, DataClass
+        result = classify("ob Mitarbeiter Max Müller wegen Verspätung abgemahnt werden sollte.")
+        assert DataClass.PERSONAL_DATA in result.data_classes
+        assert DataClass.HR in result.data_classes
+        assert result.requires_human_decision is True
+
+    def test_log_safe_replacements_no_person_name(self):
+        """replacements-Dict darf keinen echten Namen enthalten."""
+        from apps.backend.governance.redaction import redact
+        result = redact("Mitarbeiter Max Müller hat sich vorgestellt.")
+        for placeholder, value in result.replacements.items():
+            # Typ-String, kein Originalwert
+            assert value in {"person", "email", "iban", "phone", "card", "ip"}
+
 
 # ── 5. Kill-Switch / Provider-Auto-Enable ─────────────────────────────────────
 
