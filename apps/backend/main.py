@@ -1563,8 +1563,17 @@ def delete_messenger_binding(
                       metadata={"deleted_by": _admin.user_id})
     return {"status": "deleted", "chat_id": chat_id}
 
-
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
+@app.get("/config.js")
+def config_js():
+    return FileResponse(FRONTEND_DIR / "config.js")
+
+
+@app.get("/")
+def index():
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 
 @app.get("/")
