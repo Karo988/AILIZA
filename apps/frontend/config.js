@@ -3,7 +3,7 @@
 window.AILIZA_API = "https://IHRE-APP.onrender.com";
 
 // Beispiel:
-// window.AILIZA_API = "https://ailiza-backend.onrender.com";
+// window.AILIZA_API = "https://ailiza.onrender.com";
 //
 // Lokal testen (PC):
 // window.AILIZA_API = "http://localhost:8000";
