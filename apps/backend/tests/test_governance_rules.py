@@ -123,6 +123,117 @@ class TestProviderProfiles:
             allowed, _ = check_provider_policy("local", [dc])
             assert allowed, f"local should allow {dc}"
 
+    def test_groq_allows_text_generation(self):
+        """Groq muss text_generation als Use Case erlauben (Schreibaufgaben)."""
+        allowed, reason = check_provider_policy("groq", [DataClass.PUBLIC], use_case="text_generation")
+        assert allowed, reason
+
+    def test_openai_profile_exists_and_active(self):
+        from apps.backend.providers.provider_profiles import get_profile
+        profile = get_profile("openai")
+        assert profile is not None
+        assert profile.active is True
+        assert not profile.admin_disabled
+
+    def test_openai_allows_text_generation(self):
+        allowed, reason = check_provider_policy("openai", [DataClass.PUBLIC], use_case="text_generation")
+        assert allowed, reason
+
+    def test_openai_allows_personal_data(self):
+        allowed, reason = check_provider_policy("openai", [DataClass.PERSONAL_DATA])
+        assert allowed, reason
+
+    def test_openai_failover_priority_lower_than_groq(self):
+        from apps.backend.providers.provider_profiles import get_profile
+        groq = get_profile("groq")
+        openai = get_profile("openai")
+        assert groq is not None and openai is not None
+        assert openai.failover_priority > groq.failover_priority
+
+
+class TestProviderFailover:
+    def test_orchestrator_has_openai_provider(self):
+        from apps.backend.providers.orchestrator import ProviderOrchestrator
+        orch = ProviderOrchestrator()
+        assert "openai" in orch.providers
+
+    def test_groq_fails_openai_attempted(self, monkeypatch):
+        """Wenn Groq provider_not_configured wirft, soll OpenAI versucht werden."""
+        from apps.backend.providers.orchestrator import ProviderOrchestrator
+        from apps.backend.errors import AILIZAError
+        import os
+
+        calls = []
+
+        class FakeGroq:
+            provider_id = "groq"
+            model = "test-groq"
+            def count_tokens(self, text): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                calls.append("groq")
+                raise AILIZAError.from_code("provider_not_configured")
+
+        class FakeOpenAI:
+            provider_id = "openai"
+            model = "test-openai"
+            def count_tokens(self, text): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                calls.append("openai")
+                return "E-Mail Entwurf: Betreff: Test"
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+
+        orch = ProviderOrchestrator(providers={"groq": FakeGroq(), "openai": FakeOpenAI()})
+        result = orch.generate([{"role": "user", "content": "Schreibe eine E-Mail"}])
+        assert "groq" in calls
+        assert "openai" in calls
+        assert "Betreff" in result
+
+    def test_both_fail_raises_error(self, monkeypatch):
+        """Wenn alle Provider scheitern, muss AILIZAError geworfen werden."""
+        from apps.backend.providers.orchestrator import ProviderOrchestrator
+        from apps.backend.errors import AILIZAError
+        import pytest
+
+        class FailProvider:
+            provider_id = "groq"
+            model = "x"
+            def count_tokens(self, text): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                raise AILIZAError.from_code("provider_not_configured")
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+
+        orch = ProviderOrchestrator(providers={"groq": FailProvider()})
+        with pytest.raises(AILIZAError):
+            orch.generate([{"role": "user", "content": "test"}])
+
+    def test_answer_contains_betreff_not_error_message(self, monkeypatch):
+        """Bei Schreibaufgabe darf die Antwort kein Fehler sein."""
+        from apps.backend.providers.orchestrator import ProviderOrchestrator
+
+        class FakeProvider:
+            provider_id = "openai"
+            model = "gpt-4o-mini"
+            def count_tokens(self, text): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                return "Betreff: Rechnung 4711\n\nSehr geehrte Damen und Herren,\n\nbitte finden Sie beigefügt..."
+
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+
+        orch = ProviderOrchestrator(providers={"openai": FakeProvider()})
+        result = orch.generate([{"role": "user", "content": "Schreibe eine E-Mail"}])
+        assert "Betreff" in result
+        assert "Kein KI-Anbieter" not in result
+
 
 # ── 3. AgentRuntime-Governance ─────────────────────────────────────────────────
 

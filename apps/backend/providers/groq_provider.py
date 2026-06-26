@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from typing import Any
@@ -63,7 +64,17 @@ class GroqProvider(LLMProvider):
                 return data["choices"][0]["message"]["content"]
         except AILIZAError:
             raise
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            print(f"AILIZA GROQ HTTP ERROR | status={status} model={self.model}", flush=True)
+            if status in (401, 403):
+                raise AILIZAError.from_code("no_api_key") from exc
+            raise AILIZAError.from_code("provider_not_configured") from exc
+        except urllib.error.URLError as exc:
+            print(f"AILIZA GROQ URL ERROR | reason={exc.reason} model={self.model}", flush=True)
+            raise AILIZAError.from_code("provider_not_configured") from exc
         except Exception as exc:  # noqa: BLE001
+            print(f"AILIZA GROQ ERROR | type={type(exc).__name__} model={self.model}", flush=True)
             raise AILIZAError.from_code("provider_not_configured") from exc
 
     def stream(self, messages: list[dict[str, Any]], context: Any = None) -> Iterator[str]:

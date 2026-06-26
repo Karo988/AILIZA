@@ -76,7 +76,7 @@ _PROFILES: dict[str, ProviderProfile] = {
             # Nach Redaction erlaubt — data_matrix prüft redaction_applied=True
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
-        allowed_use_cases=["kmu_assistant", "summarization", "classification"],
+        allowed_use_cases=["kmu_assistant", "summarization", "classification", "text_generation"],
         logs_prompts=False,
         used_for_training=False,
         active=True,
@@ -85,6 +85,27 @@ _PROFILES: dict[str, ProviderProfile] = {
         notes="US-Provider, SCC. Nach Redaction erlaubt für PERSONAL_DATA/HR/LEGAL/FINANCIAL. "
               "AVV/DPA noch zu unterzeichnen. data_matrix kontrolliert redaction_applied-Gate.",
         tags=["llm", "groq", "us", "scc"],
+    ),
+    "openai": ProviderProfile(
+        provider_id="openai",
+        name="OpenAI",
+        region="US",
+        transfer_basis=TransferBasis.SCC,
+        avv_signed=False,               # ⚠ DPA noch zu unterzeichnen
+        allowed_data_classes=[
+            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
+        ],
+        allowed_use_cases=["kmu_assistant", "summarization", "classification", "text_generation"],
+        logs_prompts=False,
+        used_for_training=False,
+        active=True,
+        profile_version="1.0.0",
+        failover_priority=2,
+        notes="US-Provider, SCC. Fallback wenn Groq nicht verfügbar. "
+              "Nach Redaction erlaubt für PERSONAL_DATA/HR/LEGAL/FINANCIAL. "
+              "AVV/DPA noch zu unterzeichnen.",
+        tags=["llm", "openai", "us", "scc", "fallback"],
     ),
     "anthropic": ProviderProfile(
         provider_id="anthropic",
@@ -96,7 +117,7 @@ _PROFILES: dict[str, ProviderProfile] = {
             DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
-        allowed_use_cases=["kmu_assistant", "summarization", "code_assist", "classification"],
+        allowed_use_cases=["kmu_assistant", "summarization", "code_assist", "classification", "text_generation"],
         logs_prompts=False,
         used_for_training=False,
         active=True,

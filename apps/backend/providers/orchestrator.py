@@ -21,7 +21,8 @@ try:
     from .base import LLMProvider
     from .groq_provider import GroqProvider
     from .anthropic_provider import AnthropicProvider
-    from .provider_profiles import check_provider_policy
+    from .openai_provider import OpenAIProvider
+    from .provider_profiles import check_provider_policy, get_profile
     from ..capabilities.registry import check_capability
     from ..governance.data_governance import DataClass
 except ImportError:  # pragma: no cover
@@ -30,7 +31,8 @@ except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
     from providers.groq_provider import GroqProvider
     from providers.anthropic_provider import AnthropicProvider
-    from providers.provider_profiles import check_provider_policy
+    from providers.openai_provider import OpenAIProvider
+    from providers.provider_profiles import check_provider_policy, get_profile
     from capabilities.registry import check_capability
     from governance.data_governance import DataClass
 
@@ -46,6 +48,7 @@ class ProviderOrchestrator:
         if providers is None:
             _p: dict[str, LLMProvider] = {
                 "groq": GroqProvider(),
+                "openai": OpenAIProvider(),
                 "anthropic": AnthropicProvider(),
             }
             if _HAS_OPENROUTER:
@@ -53,6 +56,30 @@ class ProviderOrchestrator:
             providers = _p
         self.providers = providers
         self.default_provider = default_provider
+
+    def _failover_order(self, preferred: str | None, data_classes: list[DataClass], use_case: str = "kmu_assistant") -> list[tuple[str, LLMProvider]]:
+        """Returns providers sorted by failover_priority, filtered to those allowed for data_classes+use_case."""
+        candidates = []
+        for pid, prov in self.providers.items():
+            profile = get_profile(pid)
+            key_present = bool(__import__("os").getenv(
+                {"groq": "GROQ_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}.get(pid, ""),
+                ""
+            ))
+            allowed, reason = check_provider_policy(pid, data_classes, use_case)
+            priority = profile.failover_priority if profile else 99
+            print(
+                f"AILIZA PROVIDER SELECT | capability={use_case} provider={pid} "
+                f"model={getattr(prov, 'model', 'unknown')} "
+                f"key_present={key_present} allowed={allowed} "
+                f"blocked_reason={repr(reason) if not allowed else ''}",
+                flush=True,
+            )
+            if allowed:
+                candidates.append((priority, pid, prov))
+        # Sort: preferred provider first if allowed, else by priority
+        candidates.sort(key=lambda t: (0 if t[1] == (preferred or self.default_provider) else 1, t[0]))
+        return [(pid, prov) for _, pid, prov in candidates]
 
     def _select(self, provider_id: str | None, data_classes: list[DataClass]) -> LLMProvider:
         """
@@ -107,25 +134,36 @@ class ProviderOrchestrator:
         if not cap_result.allowed:
             raise AILIZAError.from_code("policy_blocked")
 
-        provider = self._select(provider_id, list(data_classes))
-        tokens_in = sum(provider.count_tokens(m.get("content", "")) for m in messages)
-        start = time.time()
-        error_type = None
-        try:
-            result = provider.generate(messages, context)
-            tokens_out = provider.count_tokens(result)
-            return result
-        except AILIZAError as exc:
-            error_type = exc.code
-            tokens_out = 0
-            raise
-        except Exception as exc:  # noqa: BLE001
-            error_type = type(exc).__name__
-            tokens_out = 0
-            raise AILIZAError.from_code("internal_error") from exc
-        finally:
-            latency_ms = int((time.time() - start) * 1000)
-            self._log_metrics(context, provider, latency_ms, tokens_in, tokens_out, error_type)
+        use_case = getattr(context, "purpose", "kmu_assistant") if context else "kmu_assistant"
+        candidates = self._failover_order(provider_id, list(data_classes), use_case)
+        if not candidates:
+            raise AILIZAError.from_code("provider_not_configured")
+
+        last_exc: AILIZAError | None = None
+        for pid, provider in candidates:
+            tokens_in = sum(provider.count_tokens(m.get("content", "")) for m in messages)
+            start = time.time()
+            error_type = None
+            try:
+                result = provider.generate(messages, context)
+                tokens_out = provider.count_tokens(result)
+                print(f"AILIZA PROVIDER OK | provider={pid} model={getattr(provider, 'model', 'unknown')}", flush=True)
+                return result
+            except AILIZAError as exc:
+                error_type = exc.code
+                tokens_out = 0
+                print(f"AILIZA PROVIDER FAIL | provider={pid} code={exc.code} — trying next", flush=True)
+                last_exc = exc
+            except Exception as exc:  # noqa: BLE001
+                error_type = type(exc).__name__
+                tokens_out = 0
+                print(f"AILIZA PROVIDER FAIL | provider={pid} type={error_type} — trying next", flush=True)
+                last_exc = AILIZAError.from_code("internal_error")
+            finally:
+                latency_ms = int((time.time() - start) * 1000)
+                self._log_metrics(context, provider, latency_ms, tokens_in, tokens_out, error_type)
+
+        raise last_exc or AILIZAError.from_code("provider_not_configured")
 
     def stream(self, messages: list[dict[str, Any]], context: Any = None, provider_id: str | None = None) -> Iterator[str]:
         enforce_kill_switch()
