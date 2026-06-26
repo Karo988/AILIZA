@@ -20,7 +20,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 try:
-    from .agent_runtime import AgentRuntime
+    from .agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from .database import (
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
@@ -46,7 +46,7 @@ try:
     from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
 except ImportError:
-    from agent_runtime import AgentRuntime
+    from agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from database import (
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
@@ -696,24 +696,35 @@ def _ask_llm_directly(task: str) -> tuple[str | None, str | None]:
             "content": (
                 "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. "
                 "Bei Schreibaufgaben (E-Mail, Brief, Entwurf, Übersetzung, Zusammenfassung) "
-                "lieferst du direkt den fertigen Text mit Betreff und Inhalt. "
+                "lieferst du direkt den fertigen Text mit Betreff und Inhalt auf Deutsch. "
                 "Bei Wissensfragen antwortest du kurz und direkt auf Deutsch."
             ),
         },
         {"role": "user", "content": task},
     ]
+    _prov = getattr(_orchestrator, "default_provider", "unknown")
+    _model = "unknown"
     try:
-        answer = _orchestrator.generate(messages)
-        _prov = getattr(_orchestrator, "default_provider", "unknown")
         _model = getattr(_orchestrator.providers.get(_prov), "model", "unknown")
+        answer = _orchestrator.generate(messages)
         print(
             f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)} mode=direct",
             flush=True,
         )
         return answer, None
     except AILIZAError as exc:
-        print(f"AILIZA LLM FAILED | code={exc.code} mode=direct", flush=True)
+        print(
+            f"AILIZA LLM FAILED | code={exc.code} provider={_prov} model={_model} mode=direct",
+            flush=True,
+        )
         return None, exc.code
+    except Exception as exc:  # noqa: BLE001
+        _etype = type(exc).__name__
+        print(
+            f"AILIZA LLM FAILED | code=unexpected_error type={_etype} provider={_prov} mode=direct",
+            flush=True,
+        )
+        return None, "internal_error"
 
 
 @app.post("/agent/run")
@@ -757,6 +768,72 @@ def run_agent(
     reinsertion_map: dict[str, str] = pre_check.get("reinsertion_map", {})
     pii_detected = pre_check.get("pii_detected")
     governance_is_draft = pre_check.get("is_draft", False)
+
+    # ── Schreibaufgaben: direkt LLM ohne AgentRuntime / Tavily ────────────────
+    _is_writing = (
+        _WRITING_INTENT_PATTERN.search(effective_task) is not None
+        and _SEARCH_INTENT_PATTERN.search(effective_task) is None
+    )
+    if _is_writing:
+        print(
+            f"AILIZA WRITING TASK | direct_llm_called=True "
+            f"redaction_applied={bool(reinsertion_map)} "
+            f"task_chars={len(effective_task)}",
+            flush=True,
+        )
+        answer, error_code = _ask_llm_directly(effective_task)
+        print(
+            f"AILIZA WRITING TASK | direct_llm_called=True "
+            f"answer_chars={len(answer) if answer else 0} "
+            f"error={error_code}",
+            flush=True,
+        )
+        if answer is not None:
+            if reinsertion_map:
+                answer, fully = reinsert(answer, reinsertion_map)
+                if not fully:
+                    pass  # partial reinsertion — kein Block, nur Statistik
+            final = {
+                "status": "draft" if governance_is_draft else "completed",
+                "message": answer,
+                "ai_response": answer,
+                "steps": [],
+                "results": [],
+                "web_search": False,
+                "redaction_applied": bool(reinsertion_map),
+                "reinsertion_used": bool(reinsertion_map),
+                "tenant_id": tenant,
+            }
+            if governance_is_draft:
+                final["draft"] = True
+                final["draft_notice"] = (
+                    "Entwurf — personenbezogene Daten lokal maskiert, menschliche Prüfung erforderlich."
+                )
+            if pii_detected:
+                final["pii_detected"] = pii_detected
+            if pre_check["decision"] == "allow_with_notice":
+                final["governance_notice"] = pre_check.get("notice", "")
+            write_audit_entry(
+                action="agent.writing_task.completed",
+                tenant_id=tenant,
+                metadata={
+                    "redaction_applied": bool(reinsertion_map),
+                    "answer_chars": len(answer),
+                    "draft": governance_is_draft,
+                },
+            )
+            return final
+        # LLM fehlgeschlagen → Fehlermeldung zurückgeben
+        return {
+            "status": "failed",
+            "message": MESSAGES.get(error_code or "internal_error", "LLM-Aufruf fehlgeschlagen."),
+            "ai_response": MESSAGES.get(error_code or "internal_error", "LLM-Aufruf fehlgeschlagen."),
+            "steps": [],
+            "results": [],
+            "tenant_id": tenant,
+            "llm_notice": MESSAGES.get(error_code or "internal_error", ""),
+        }
+    # ── Ende Schreibaufgaben-Pfad ─────────────────────────────────────────────
 
     runtime = AgentRuntime()
     result = runtime.run(effective_task)

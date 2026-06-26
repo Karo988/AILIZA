@@ -315,6 +315,47 @@ class TestPIIReinsertion:
         tools = [p.tool for p in plan]
         assert "search" in tools
 
+    def test_writing_task_redaction_and_reinsertion(self):
+        """E-Mail-Schreibaufgabe: redaction + reinsertion korrekt, kein 'Agent run completed'."""
+        from apps.backend.governance.redaction import redact, reinsert
+        task = "Schreibe eine E-Mail an max.mueller@example.com wegen Rechnung 4711."
+        result = redact(task)
+        # Beide PII maskiert
+        assert result.redaction_applied is True
+        assert "max.mueller@example.com" not in result.redacted_text
+        assert "4711" not in result.redacted_text
+        assert "[EMAIL_1]" in result.redacted_text
+        assert "[REFERENCE_1]" in result.redacted_text
+        # Simulierter LLM-Entwurf mit Platzhaltern
+        llm_answer = (
+            "Betreff: Rückfrage zur [REFERENCE_1]\n\n"
+            "Guten Tag,\n\nich schreibe Ihnen bezüglich der [REFERENCE_1].\n"
+            "Bitte geben Sie mir kurz Rückmeldung.\n\nMit freundlichen Grüßen"
+        )
+        reinserted, fully = reinsert(llm_answer, result.reinsertion_map)
+        assert "Rechnung 4711" in reinserted
+        assert "[REFERENCE_1]" not in reinserted
+        assert fully is True
+
+    def test_writing_intent_detection_with_redacted_task(self):
+        """Auch der redactete Task ('Schreibe ... [EMAIL_1] ... [REFERENCE_1]') muss als writing erkannt werden."""
+        from apps.backend.agent_runtime import _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
+        redacted_task = "Schreibe eine E-Mail an [EMAIL_1] wegen [REFERENCE_1]."
+        assert _WRITING_INTENT_PATTERN.search(redacted_task) is not None
+        assert _SEARCH_INTENT_PATTERN.search(redacted_task) is None
+
+    def test_formuliere_also_writing_intent(self):
+        """'Formuliere' muss als Schreibaufgabe erkannt werden."""
+        from apps.backend.agent_runtime import plan_tool_calls
+        plan = plan_tool_calls("Formuliere eine Antwort auf die Beschwerde von Frau Müller.")
+        assert plan == [], f"Erwartet: kein Tool. Geplant: {plan}"
+
+    def test_verfasse_also_writing_intent(self):
+        """'Verfasse' muss als Schreibaufgabe erkannt werden."""
+        from apps.backend.agent_runtime import plan_tool_calls
+        plan = plan_tool_calls("Verfasse einen kurzen Bericht über den Quartalsumsatz.")
+        assert plan == [], f"Erwartet: kein Tool. Geplant: {plan}"
+
 
 # ── 5. Kill-Switch / Provider-Auto-Enable ─────────────────────────────────────
 
