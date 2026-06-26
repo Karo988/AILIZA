@@ -92,9 +92,16 @@ class AgentRuntime:
     def _precheck(self, task: str, run_id: str) -> dict[str, Any] | None:
         """
         classify → redact → decide.
+
+        Governance-Grundregel:
+        - BLOCKED: nur bei echten Rechtsverstößen (EU AI Act Art. 5) — stoppt den Flow.
+        - HIGH: Approval-Request anlegen, aber Flow läuft weiter — Ergebnis als Entwurf.
+        - MEDIUM/PII: redact, dann weiter.
+        - LOW: direkt weiter.
+
         Gibt None zurück wenn der Flow normal weiterlaufen soll.
-        Gibt ein Ergebnis-Dict zurück wenn der Flow gestoppt wird (blocked / approval_required).
-        Gibt redacted task als Seiteneffekt über self._redacted_task zurück.
+        Gibt ein Ergebnis-Dict zurück wenn der Flow gestoppt wird (nur bei BLOCKED).
+        Seiteneffekt: self._redacted_task, self._draft_approval_id, self._is_draft.
         """
         classification = classify(task)
         self.audit_writer(
@@ -109,11 +116,16 @@ class AgentRuntime:
             },
         )
 
+        # Nur echte Rechtsverstöße werden gestoppt
         if classification.blocked:
             self.update_run_record(
                 run_id,
                 status="blocked",
                 result={"reason": classification.reason, "user_message": classification.user_message},
+            )
+            self.audit_writer(
+                "agent.input.blocked",
+                {"run_id": run_id, "reason": classification.reason},
             )
             return {
                 "run_id": run_id,
@@ -121,6 +133,10 @@ class AgentRuntime:
                 "message": classification.user_message,
                 "reason": classification.reason,
             }
+
+        # HIGH-Risiko: Approval-Request anlegen, aber weiterverarbeiten als Entwurf
+        self._draft_approval_id: int | None = None
+        self._is_draft: bool = classification.requires_approval
 
         if classification.requires_approval:
             if self.persist_runs:
@@ -134,29 +150,19 @@ class AgentRuntime:
                     risk_level=classification.risk_level.value,
                     risk_reason=classification.reason,
                 )
-                approval_id = approval["id"]
-            else:
-                approval_id = None
-            self.link_approval_record(approval_id, run_id)
-            self.update_run_record(
-                run_id,
-                status="pending_approval",
-                pending_approval_id=approval_id,
-                result={"message": classification.user_message, "approval_id": approval_id},
-            )
+                self._draft_approval_id = approval["id"]
+            self.link_approval_record(self._draft_approval_id, run_id)
             self.audit_writer(
-                "agent.input.approval_required",
-                {"run_id": run_id, "approval_id": approval_id, "reason": classification.reason},
+                "agent.input.draft_prepared",
+                {
+                    "run_id": run_id,
+                    "approval_id": self._draft_approval_id,
+                    "reason": classification.reason,
+                    "note": "Flow läuft weiter — Ergebnis gilt als Entwurf bis zur Freigabe",
+                },
             )
-            return {
-                "run_id": run_id,
-                "status": "pending_approval",
-                "message": classification.user_message,
-                "approval_id": approval_id,
-                "risk_level": classification.risk_level.value,
-                "next_action": "approve_or_reject",
-            }
 
+        # PII redact (auch bei HIGH, bevor der LLM-Call kommt)
         if classification.pii_detected:
             redaction = redact(task)
             self._redacted_task = redaction.redacted_text
@@ -256,15 +262,21 @@ class AgentRuntime:
                 }
             )
 
+        is_draft = getattr(self, "_is_draft", False)
+        draft_approval_id = getattr(self, "_draft_approval_id", None)
+        final_status = "draft" if is_draft else "completed"
         final_response = {
             "run_id": run_id,
-            "status": "completed",
-            "message": "Agent run completed",
+            "status": final_status,
+            "message": "Entwurf — wartet auf menschliche Freigabe" if is_draft else "Agent run completed",
+            "draft": is_draft,
+            "approval_id": draft_approval_id if is_draft else None,
             "steps": steps,
             "results": results,
         }
-        self.update_run_record(run_id, status="completed", pending_approval_id=None, result=final_response)
-        self.audit_writer("agent.run.completed", {"run_id": run_id, "steps": len(steps)})
+        self.update_run_record(run_id, status=final_status, pending_approval_id=draft_approval_id if is_draft else None, result=final_response)
+        event = "agent.run.draft" if is_draft else "agent.run.completed"
+        self.audit_writer(event, {"run_id": run_id, "steps": len(steps), "approval_id": draft_approval_id})
         return final_response
 
     def continue_after_approval(self, approval_id: int) -> dict[str, Any]:

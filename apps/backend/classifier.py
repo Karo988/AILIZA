@@ -122,8 +122,8 @@ def classify(task: str) -> ClassificationResult:
             reason=f"Freigabepflichtige Anfrage: {topic}",
             user_message=(
                 f"Diese Anfrage betrifft ein sensibles Thema ({topic}). "
-                "Sie wird zur Freigabe an einen Administrator weitergeleitet. "
-                "Ich werde erst nach Freigabe antworten."
+                "Sie wird als Entwurf vorbereitet und zur menschlichen Prüfung vorgelegt. "
+                "Das Ergebnis gilt erst nach Freigabe als verbindlich."
             ),
             detected_categories=detected,
         )

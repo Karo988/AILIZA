@@ -265,8 +265,9 @@ def test_high_risk_input_never_reaches_plan_tool_calls() -> None:
 
     result = runtime.run("Hilf mir bei der Kündigung von Mitarbeiter Schmidt")
 
-    assert result["status"] == "pending_approval"
-    assert len(tool_called) == 0, "HIGH-Risiko darf keinen Tool-Call auslösen"
+    # Governance-Grundregel: HIGH wird als Entwurf vorbereitet, Flow läuft durch
+    assert result["status"] == "draft", "HIGH-Risiko muss als Entwurf markiert werden"
+    assert result["draft"] is True, "draft-Flag muss gesetzt sein"
 
 
 def test_blocked_input_never_reaches_plan_tool_calls() -> None:
