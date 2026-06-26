@@ -18,6 +18,7 @@ MESSAGES: dict[str, str] = {
     "invalid_api_key": "Der API-Schluessel ist ungueltig. Bitte pruefen Sie die Konfiguration.",
     "provider_forbidden": "Der Anbieter verweigert den Zugriff. Bitte pruefen Sie die Berechtigungen.",
     "model_not_found": "Das angeforderte KI-Modell ist nicht verfuegbar.",
+    "model_not_allowed": "Das KI-Modell ist in Ihrem aktuellen Anbieter-Plan nicht freigeschaltet. Bitte GROQ_MODEL anpassen oder einen Administrator kontaktieren.",
     "rate_limited": "Der KI-Anbieter ist momentan ausgelastet. Bitte versuchen Sie es spaeter erneut.",
     "provider_unavailable": "Der KI-Anbieter ist momentan nicht erreichbar. Bitte versuchen Sie es spaeter erneut.",
     "provider_error": "Der KI-Anbieter hat einen unbekannten Fehler gemeldet. Bitte versuchen Sie es spaeter erneut.",

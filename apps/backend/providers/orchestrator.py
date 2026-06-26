@@ -288,7 +288,10 @@ class ProviderOrchestrator:
         if not candidates:
             raise AILIZAError.from_code("provider_not_configured")
 
+        # Ursachen je Provider sammeln — für verständliche all_providers_failed-Meldung
+        failure_reasons: list[str] = []
         last_exc: AILIZAError | None = None
+
         for pid, provider in candidates:
             tokens_in = sum(provider.count_tokens(m.get("content", "")) for m in messages)
             start = time.time()
@@ -305,18 +308,23 @@ class ProviderOrchestrator:
             except AILIZAError as exc:
                 error_type = exc.code
                 tokens_out = 0
+                # Ursache für finale Fehlermeldung merken (ohne PII/Keys)
+                reason_parts = exc.safe_alternatives or []
+                reason_summary = reason_parts[0] if reason_parts else exc.code
+                failure_reasons.append(f"{pid}: {reason_summary}")
                 print(f"AILIZA PROVIDER FAIL | provider={pid} code={exc.code} — trying next", flush=True)
                 last_exc = exc
             except Exception as exc:  # noqa: BLE001
                 error_type = type(exc).__name__
                 tokens_out = 0
+                failure_reasons.append(f"{pid}: {error_type}")
                 print(f"AILIZA PROVIDER FAIL | provider={pid} type={error_type} — trying next", flush=True)
                 last_exc = AILIZAError.from_code("internal_error")
             finally:
                 latency_ms = int((time.time() - start) * 1000)
                 self._log_metrics(context, provider, latency_ms, tokens_in, tokens_out, error_type)
 
-        raise AILIZAError.from_code("all_providers_failed")
+        raise AILIZAError.from_code("all_providers_failed", safe_alternatives=failure_reasons)
 
     # ── stream() ───────────────────────────────────────────────────────────────
 
