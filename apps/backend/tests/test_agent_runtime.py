@@ -40,6 +40,7 @@ def test_agent_completes_safe_tool_call() -> None:
     assert calls == [("search", {"query": "Find FastAPI docs"})]
     assert [event[0] for event in events] == [
         "agent.run.started",
+        "agent.input.classified",
         "agent.tool.planned",
         "agent.run.completed",
     ]
