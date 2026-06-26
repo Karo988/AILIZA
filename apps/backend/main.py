@@ -536,7 +536,7 @@ def _governance_pre_check(
         )
         return {"decision": "block", "message": "Anfrage konnte nicht sicher klassifiziert werden."}
 
-    data_classes = list(classification.classes)
+    data_classes = list(getattr(classification, "classes", getattr(classification, "data_classes", [])) or [])
 
     # Provider-Profil aktiv? Aktuell: alle Provider haben admin_disabled=True → False
     try:
