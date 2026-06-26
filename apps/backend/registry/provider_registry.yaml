@@ -1,0 +1,163 @@
+# AILIZA Provider Registry
+# =========================
+# Definiert alle bekannten LLM-Provider.
+# Aktivierung neuer Provider IMMER über Admin-Freigabe (admin_approved: true).
+# Änderungen werden in pending_changes gespeichert und auditiert.
+#
+# Felder:
+#   type:             text_llm | multimodal_llm | embedding | image | audio
+#   status:           active | inactive | degraded | unknown
+#   enabled:          true = darf genutzt werden (nach Admin-Freigabe)
+#   admin_approved:   true = explizit durch Admin freigegeben
+#   region:           us | eu | asia | local
+#   transfer_basis:   scc | adequacy | bcr | eu_internal | none
+#   avv_signed:       true = Auftragsverarbeitungsvertrag vorhanden
+#   allowed_data:     Erlaubte Datenklassen (nach Redaktion)
+#   forbidden_data:   Niemals erlaubt, auch nach Redaktion nicht
+#   failover_priority: 1 = höchste Priorität
+#   health_status:    ok | degraded | down | unknown
+#   notes:            Kurze Erklärung, warum diese Konfiguration so ist
+
+providers:
+
+  groq:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false          # ⚠ DPA noch zu unterzeichnen
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data          # nur nach Redaktion
+      - financial              # nur nach Redaktion
+      - hr                     # nur nach Redaktion
+      - legal                  # nur nach Redaktion
+    forbidden_data:
+      - credentials
+      - special_category
+    default_model: llama-3.3-70b-versatile
+    fallback_models:
+      - llama-3.1-8b-instant
+    failover_priority: 1
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      US-Provider via SCC. Nach Redaktion für PERSONAL_DATA/HR/LEGAL/FINANCIAL erlaubt.
+      AVV/DPA noch zu unterzeichnen. Groq speichert keine Prompts (laut ToS Stand 2025).
+
+  openai:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false          # ⚠ DPA noch zu unterzeichnen
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data          # nur nach Redaktion
+      - financial              # nur nach Redaktion
+      - hr                     # nur nach Redaktion
+      - legal                  # nur nach Redaktion
+    forbidden_data:
+      - credentials
+      - special_category
+    default_model: gpt-4o-mini
+    fallback_models:
+      - gpt-3.5-turbo
+    failover_priority: 2
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      US-Provider via SCC. Fallback wenn Groq nicht verfügbar.
+      Nach Redaktion für PERSONAL_DATA/HR/LEGAL/FINANCIAL erlaubt.
+      AVV/DPA noch zu unterzeichnen.
+
+  anthropic:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false          # ⚠ Commercial API Terms prüfen
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data          # nur nach Redaktion
+      - financial              # nur nach Redaktion
+      - hr                     # nur nach Redaktion
+      - legal                  # nur nach Redaktion
+    forbidden_data:
+      - credentials
+      - special_category
+    default_model: claude-haiku-4-5-20251001
+    fallback_models: []
+    failover_priority: 3
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      US-Provider via SCC. Dritter Fallback.
+      AVV/DPA noch zu unterzeichnen.
+
+  openrouter:
+    type: text_llm
+    enabled: false             # ⚠ Explizit inaktiv — Subverarbeiter-Kette ungeklärt
+    admin_approved: false
+    region: us
+    transfer_basis: scc
+    avv_signed: false
+    allowed_data:
+      - public                 # Nur PUBLIC — bis Subverarbeiter-Liste vorliegt
+    forbidden_data:
+      - credentials
+      - special_category
+      - personal_data
+      - financial
+      - hr
+      - legal
+    default_model: openai/gpt-4o-mini
+    fallback_models: []
+    failover_priority: 99
+    health_status: unknown
+    logs_prompts: true         # ⚠ Kann Requests loggen
+    used_for_training: false
+    notes: >
+      Aggregator-API: unterlagert wechselnde Sub-Provider.
+      Subverarbeiter-Kette ungeklärt → DSGVO Art. 28 Abs. 4 nicht abgedeckt.
+      Aktivierung erfordert: AVV, Subverarbeiter-Liste, Admin-Freigabe.
+
+  local:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: local
+    transfer_basis: eu_internal
+    avv_signed: true
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data
+      - financial
+      - hr
+      - legal
+      - credentials
+      - special_category
+    forbidden_data: []
+    default_model: fast-path
+    fallback_models: []
+    failover_priority: 0
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      Lokale Verarbeitung ohne externen Datenabfluss.
+      Alle Datenklassen erlaubt. Kein AVV erforderlich.
