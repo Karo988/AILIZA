@@ -646,7 +646,7 @@ def _governance_pre_check(
             "pii_detected": {
                 "has_pii": True,
                 "requires_consent": True,
-                "items": [{"type": m, "requires_consent": True} for m in getattr(classification, "matched_patterns", [])],
+                "items": [{"type": m, "requires_consent": True} for m in getattr(classification, "matched_rules", [])],
             },
         }
 
@@ -689,13 +689,15 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
 
 
 def _ask_llm_directly(task: str) -> tuple[str | None, str | None]:
-    """Direkter LLM-Call ohne Suche — Fallback wenn Tavily fehlt."""
+    """Direkter LLM-Call ohne Suche — für Schreibaufgaben und Fallback wenn Tavily fehlt."""
     messages = [
         {
             "role": "system",
             "content": (
                 "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. "
-                "Antworte kurz und direkt auf Deutsch."
+                "Bei Schreibaufgaben (E-Mail, Brief, Entwurf, Übersetzung, Zusammenfassung) "
+                "lieferst du direkt den fertigen Text mit Betreff und Inhalt. "
+                "Bei Wissensfragen antwortest du kurz und direkt auf Deutsch."
             ),
         },
         {"role": "user", "content": task},
@@ -815,6 +817,7 @@ def run_agent(
     search_text = extract_agent_answer(result)
 
     if search_text:
+        # Tool (Tavily) hat Ergebnisse geliefert → LLM fasst zusammen
         answer, error_code = _summarize_with_llm(effective_task, search_text)
         if answer is not None:
             result["message"] = answer
@@ -822,8 +825,13 @@ def run_agent(
             result["message"] = search_text
             if error_code:
                 result["llm_notice"] = MESSAGES.get(error_code, "")
-    elif result.get("message") == "Agent run completed" and search_text:
-        result["message"] = search_text
+    elif not result.get("steps"):
+        # Kein Tool geplant (Schreibaufgabe, Übersetzung etc.) → LLM direkt
+        answer, error_code = _ask_llm_directly(effective_task)
+        if answer is not None:
+            result["message"] = answer
+        elif error_code:
+            result["llm_notice"] = MESSAGES.get(error_code, "")
 
     # PII-Reinsertion: Originalwerte lokal wieder einsetzen (NUR RAM, nie loggen)
     reinsertion_used = False

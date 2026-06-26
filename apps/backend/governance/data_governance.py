@@ -148,6 +148,20 @@ _SPECIAL_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     )),
 ]
 
+# ── Referenznummern (Kundennummer, Rechnungsnummer, Aktenzeichen — Identifier) ─
+_REFERENCE_NUMBER_PATTERN = re.compile(
+    r"(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?"
+    r"|Kundennummer|Kunden-?Nr\.?"
+    r"|Auftrag(?:s(?:nummer)?)?|Auftrags-?Nr\.?"
+    r"|Bestellung(?:s(?:nummer)?)?|Bestell-?Nr\.?"
+    r"|Aktenzeichen|Az\.?"
+    r"|Vertrag(?:s(?:nummer)?)?|Vertrags-?Nr\.?"
+    r"|Fall(?:nummer)?|Fall-?Nr\.?"
+    r"|Ticket-?(?:Nr\.?|Nummer)?)"
+    r"\s*[:\-#]?\s*\d[\w\-/]{1,19}",
+    re.I | re.UNICODE,
+)
+
 # ── Personennamen (DSGVO Art. 4 Nr. 1 — natürliche Person identifizierbar) ────
 # Keyword-getriggert: Titel/Rolle gefolgt von Vorname + Nachname
 _PERSON_NAME_PATTERN = re.compile(
@@ -222,6 +236,11 @@ def classify(text: str) -> ClassificationResult:
         # ── Personennamen (DSGVO Art. 4 Nr. 1) ───────────────────────────────
         if _PERSON_NAME_PATTERN.search(text):
             matched.append("person_name")
+            classes.add(DataClass.PERSONAL_DATA)
+
+        # ── Referenznummern (Kunden-/Rechnungs-/Auftragsnummer — Identifier) ─
+        if _REFERENCE_NUMBER_PATTERN.search(text):
+            matched.append("reference_number")
             classes.add(DataClass.PERSONAL_DATA)
 
         # ── Tabellarische Personendaten (CSV / Event-Log) ────────────────────

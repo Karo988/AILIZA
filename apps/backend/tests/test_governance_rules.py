@@ -267,7 +267,53 @@ class TestPIIReinsertion:
         result = redact("Mitarbeiter Max Müller hat sich vorgestellt.")
         for placeholder, value in result.replacements.items():
             # Typ-String, kein Originalwert
-            assert value in {"person", "email", "iban", "phone", "card", "ip"}
+            assert value in {"person", "email", "iban", "phone", "card", "ip", "reference"}
+
+    def test_reference_number_redacted(self):
+        """'Rechnung 4711' muss als [REFERENCE_1] maskiert werden."""
+        from apps.backend.governance.redaction import redact, reinsert
+        text = "Schreibe eine E-Mail an max.mueller@example.com wegen Rechnung 4711."
+        result = redact(text)
+        assert result.redaction_applied is True
+        # E-Mail maskiert
+        assert "max.mueller@example.com" not in result.redacted_text
+        assert "[EMAIL_1]" in result.redacted_text
+        # Referenznummer maskiert (ganzer Ausdruck "Rechnung 4711" → [REFERENCE_1])
+        assert "4711" not in result.redacted_text
+        assert "[REFERENCE_1]" in result.redacted_text
+        assert result.reinsertion_map.get("[REFERENCE_1]") == "Rechnung 4711"
+        # Reinsertion stellt beides wieder her
+        reinserted, fully = reinsert(result.redacted_text, result.reinsertion_map)
+        assert "max.mueller@example.com" in reinserted
+        assert "4711" in reinserted
+        assert fully is True
+
+    def test_reference_number_classification(self):
+        """classify() muss 'Rechnung 4711' als PERSONAL_DATA erkennen."""
+        from apps.backend.governance.data_governance import classify, DataClass
+        result = classify("Schreibe eine E-Mail wegen Rechnung 4711.")
+        assert DataClass.PERSONAL_DATA in result.data_classes
+        assert "reference_number" in result.matched_rules
+
+    def test_writing_intent_no_search_tool(self):
+        """Schreibaufgabe darf kein search-Tool planen."""
+        from apps.backend.agent_runtime import plan_tool_calls
+        plan = plan_tool_calls("Schreibe eine E-Mail an max.mueller@example.com wegen Rechnung 4711.")
+        assert plan == [], f"Erwartet: kein Tool. Geplant: {plan}"
+
+    def test_search_intent_still_uses_search(self):
+        """Explizite Recherche-Anfrage muss search-Tool planen."""
+        from apps.backend.agent_runtime import plan_tool_calls
+        plan = plan_tool_calls("Recherchiere die aktuellen Datenschutz-Bußgelder in der EU.")
+        tools = [p.tool for p in plan]
+        assert "search" in tools
+
+    def test_normal_question_uses_search(self):
+        """Wissensfragen ohne Schreibintent nutzen weiterhin search."""
+        from apps.backend.agent_runtime import plan_tool_calls
+        plan = plan_tool_calls("Was ist FastAPI und wofür wird es verwendet?")
+        tools = [p.tool for p in plan]
+        assert "search" in tools
 
 
 # ── 5. Kill-Switch / Provider-Auto-Enable ─────────────────────────────────────

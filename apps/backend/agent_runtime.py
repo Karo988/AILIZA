@@ -887,10 +887,35 @@ class AgentRuntime:
         yield stream_event("resume_completed", final_response)
 
 
+# Schreibaufgaben → kein Tool, direkter LLM-Call
+_WRITING_INTENT_PATTERN = re.compile(
+    r"\b(?:schreib(?:e|en)?|formulier(?:e|en)?|verfass(?:e|en)?"
+    r"|beantworte?|antworte?\s+auf"
+    r"|übersetze?|übersetz(?:e|en)?"
+    r"|erstell(?:e|en)?\s+(?:eine?[rn]?\s+)?(?:e[-\s]?mail|nachricht|brief|entwurf|bericht|text|zusammenfassung))\b",
+    re.I | re.UNICODE,
+)
+
+# Explizite Websuche / aktuelle Infos → immer search
+_SEARCH_INTENT_PATTERN = re.compile(
+    r"\b(?:such(?:e|en)?\s+(?:im\s+internet|online|im\s+web|nach)"
+    r"|recherchier(?:e|en)?"
+    r"|aktuell(?:e[rsnm]?)?\s+(?:news|nachrichten|preis|stand|kurs)"
+    r"|was\s+kostet\s+(?:aktuell|heute|gerade)"
+    r"|neuest(?:e[rsnm]?)?\s+(?:version|news|nachrichten)"
+    r"|wer\s+ist\s+(?:der|die|das)\s+(?:aktuell|neue))\b",
+    re.I | re.UNICODE,
+)
+
+
 def plan_tool_calls(task: str) -> list[PlannedToolCall]:
     urls = [clean_url(match.group(0)) for match in URL_PATTERN.finditer(task)]
     if urls:
         return [PlannedToolCall("fetch", {"url": url}) for url in urls]
+
+    # Schreibaufgaben ohne expliziten Rechercheauftrag → kein Tool, LLM direkt
+    if _WRITING_INTENT_PATTERN.search(task) and not _SEARCH_INTENT_PATTERN.search(task):
+        return []
 
     return [PlannedToolCall("search", {"query": task.strip()})]
 

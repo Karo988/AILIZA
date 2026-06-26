@@ -24,6 +24,7 @@ from .data_governance import (
     _IP_PATTERN,
     _PERSON_NAME_PATTERN,
     _PHONE_PATTERN,
+    _REFERENCE_NUMBER_PATTERN,
     _SECRET_PATTERNS,
 )
 
@@ -152,6 +153,8 @@ def redact(text: str, classification: ClassificationResult | None = None) -> Red
     text, n = _replace_sequential(text, _CARD_PATTERN, "CARD", replacements, reinsertion_map)
     pii_replaced += n
     text, n = _replace_sequential(text, _IP_PATTERN, "IP", replacements, reinsertion_map)
+    pii_replaced += n
+    text, n = _replace_sequential(text, _REFERENCE_NUMBER_PATTERN, "REFERENCE", replacements, reinsertion_map)
     pii_replaced += n
 
     applied = secrets_blocked > 0 or pii_replaced > 0

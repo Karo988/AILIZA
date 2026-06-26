@@ -343,6 +343,8 @@ const PRIVACY_RULES=[
   {level:"high",label:"IBAN",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
   {level:"normal",label:"E-Mail",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
   {level:"normal",label:"Telefon",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
+  {level:"normal",label:"Person",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin|Bewerber(?:in)?|Kandidat(?:in)?)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
+  {level:"normal",label:"Referenz",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
   {level:"normal",label:"Name",pattern:/\b(?:mein name ist|ich heiße)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+/g},
   {level:"normal",label:"Adresse",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|weg|platz)\s+\d+/gi},
 ];
