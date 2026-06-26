@@ -1,6 +1,6 @@
 // AILIZA Backend-URL
 // Nach dem Deployen auf Render.com hier die URL eintragen:
-window.AILIZA_API = "https://IHRE-APP.onrender.com";
+window.AILIZA_API = "https://ailiza.onrender.com";";
 
 // Beispiel:
 // window.AILIZA_API = "https://ailiza.onrender.com";
