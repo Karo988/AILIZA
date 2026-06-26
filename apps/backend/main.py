@@ -141,8 +141,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()
 
     # ── Provider-Diagnose beim Startup (kein Key-Inhalt, nur Präsenz) ─────────
-    import logging as _log_diag
-    _diag = _log_diag.getLogger(__name__)
     try:
         from .kill_switch import is_external_llm_enabled as _is_ext_enabled
     except ImportError:
@@ -153,11 +151,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _diag_tavily = bool(os.getenv("TAVILY_API_KEY"))
     _diag_ext_env = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "(not set)")
     _diag_ext_allowed = _is_ext_enabled()
-    _diag.info(
-        "AILIZA PROVIDER STATUS | groq_key=%s openai_key=%s anthropic_key=%s "
-        "tavily_key=%s AILIZA_EXTERNAL_LLM_ENABLED=%s external_llm_allowed=%s",
-        _diag_groq, _diag_openai, _diag_anthropic,
-        _diag_tavily, _diag_ext_env, _diag_ext_allowed,
+    print(
+        f"AILIZA PROVIDER STATUS | groq_key={_diag_groq} openai_key={_diag_openai} "
+        f"anthropic_key={_diag_anthropic} tavily_key={_diag_tavily} "
+        f"AILIZA_EXTERNAL_LLM_ENABLED={_diag_ext_env} external_llm_allowed={_diag_ext_allowed}",
+        flush=True,
     )
     write_audit_entry(
         action="startup.provider_status",
@@ -676,21 +674,17 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
     ]
     try:
         answer = _orchestrator.generate(messages, context=context)
-        import logging as _log_llm
-        _log_llm.getLogger(__name__).info(
-            "AILIZA LLM | provider=%s model=%s result=ok chars=%d",
-            getattr(_orchestrator, "default_provider", "unknown"),
-            getattr(_orchestrator.providers.get(
-                getattr(_orchestrator, "default_provider", ""), {}
-            ), "model", "unknown"),
-            len(answer),
+        _prov = getattr(_orchestrator, "default_provider", "unknown")
+        _model = getattr(
+            _orchestrator.providers.get(_prov), "model", "unknown"
+        )
+        print(
+            f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)}",
+            flush=True,
         )
         return answer, None
     except AILIZAError as exc:
-        import logging as _log_llm_err
-        _log_llm_err.getLogger(__name__).warning(
-            "AILIZA LLM FAILED | code=%s", exc.code
-        )
+        print(f"AILIZA LLM FAILED | code={exc.code}", flush=True)
         return None, exc.code
 
 
@@ -740,21 +734,16 @@ def run_agent(
     result = runtime.run(effective_task)
 
     # ── Entscheidungs-Diagnose je Request (kein Inhalt, kein PII) ────────────
-    import logging as _log_req
-    _run_logger = _log_req.getLogger(__name__)
     _run_status = result.get("status", "unknown")
     _web_search_req = any(
         s.get("tool") == "search" for s in result.get("steps", [])
     )
-    _run_logger.info(
-        "AILIZA RUN | run_id=%s status=%s local_only=%s "
-        "redaction_applied=%s draft=%s web_search=%s",
-        result.get("run_id", "n/a"),
-        _run_status,
-        _run_status in ("local_only", "degraded"),
-        bool(reinsertion_map),
-        governance_is_draft,
-        _web_search_req,
+    print(
+        f"AILIZA RUN | run_id={result.get('run_id', 'n/a')} status={_run_status} "
+        f"local_only={_run_status in ('local_only', 'degraded')} "
+        f"redaction_applied={bool(reinsertion_map)} draft={governance_is_draft} "
+        f"web_search={_web_search_req}",
+        flush=True,
     )
     # ── Ende Entscheidungs-Diagnose ──────────────────────────────────────────
 
