@@ -383,16 +383,155 @@ class TestAdminHints:
             assert "gsk_" not in hint, f"Groq-Key-Prefix in ADMIN_HINTS['{code}']"
             assert "sk-" not in hint, f"OpenAI-Key-Prefix in ADMIN_HINTS['{code}']"
 
-    def test_all_providers_failed_hint_mentions_groq_model(self):
-        """Der all_providers_failed Hint muss auf GROQ_MODEL hinweisen."""
+    def test_all_providers_failed_hint_points_to_provider_test(self):
+        """all_providers_failed Hint muss auf provider-test Endpunkt verweisen."""
         from apps.backend.errors import ADMIN_HINTS
         hint = ADMIN_HINTS.get("all_providers_failed", "")
-        assert "groq" in hint.lower() or "groq_model" in hint.lower()
+        # Verweist auf Live-Diagnose, nicht auf einen spezifischen Provider
+        assert "provider-test" in hint or "provider_errors" in hint, (
+            "all_providers_failed Hint muss auf /api/debug/provider-test oder "
+            "provider_errors verweisen — provider-spezifische Ursachen stehen dort"
+        )
 
     def test_provider_forbidden_hint_mentions_free_tier_fix(self):
-        """provider_forbidden Hint muss die kostenlose Lösung erwähnen."""
+        """provider_forbidden Hint enthält keine zirkulären Modellnamen mehr."""
         from apps.backend.errors import ADMIN_HINTS
         hint = ADMIN_HINTS.get("provider_forbidden", "")
-        assert "llama-3.1-8b-instant" in hint, (
-            "provider_forbidden Hint muss llama-3.1-8b-instant als Fix nennen"
+        # ADMIN_HINTS ist jetzt provider-neutral — kein "Groq:" Prefix, kein Modellname als Fix
+        assert len(hint) > 20
+        # Kein zirkulärer Fix-Vorschlag im globalen Hint
+        assert "GROQ_MODEL=llama-3.1-8b-instant" not in hint, (
+            "ADMIN_HINTS[provider_forbidden] darf keinen konkreten Modellnamen als Fix enthalten — "
+            "das ist zirkulär wenn dieses Modell bereits aktiv ist"
         )
+
+
+# ── 8. Groq 403 Hinweis ist kontextabhängig (kein zirkulärer Fix) ────────────
+
+class TestGroq403HintContextAware:
+
+    def test_default_model_403_hint_no_circular_fix(self):
+        """
+        Wenn llama-3.1-8b-instant (Default) 403 gibt, darf der Hinweis NICHT
+        'GROQ_MODEL=llama-3.1-8b-instant setzen' vorschlagen — das ist zirkulär.
+        """
+        from apps.backend.providers.groq_provider import _map_groq_http_error, _DEFAULT_MODEL
+        code, detail = _map_groq_http_error(403, _DEFAULT_MODEL)
+        assert code == "provider_forbidden"
+        # Kein zirkulärer Fix-Vorschlag
+        assert f"GROQ_MODEL={_DEFAULT_MODEL}" not in detail, (
+            f"403-Hinweis für Default-Modell '{_DEFAULT_MODEL}' schlägt dieses Modell "
+            "als Fix vor — das ist widersprüchlich"
+        )
+        # Stattdessen: Groq-Dashboard-Hinweis
+        assert "dashboard" in detail.lower() or "projekt" in detail.lower() or "berechtigung" in detail.lower()
+
+    def test_non_default_model_403_hint_suggests_fix(self):
+        """
+        Wenn ein Paid-Modell 403 gibt, soll der Hinweis explizit llama-3.1-8b-instant empfehlen.
+        """
+        from apps.backend.providers.groq_provider import _map_groq_http_error, _DEFAULT_MODEL
+        code, detail = _map_groq_http_error(403, "llama-3.3-70b-versatile")
+        assert code == "provider_forbidden"
+        assert _DEFAULT_MODEL in detail, (
+            f"Hinweis für Paid-Modell 403 muss '{_DEFAULT_MODEL}' als Fix nennen"
+        )
+        assert "GROQ_MODEL" in detail
+
+
+# ── 9. OpenAI-Fehler haben OpenAI-Prefix — nie Groq-Prefix ──────────────────
+
+class TestOpenAIErrorLabels:
+
+    def test_openai_rate_limit_hint_starts_with_openai(self):
+        """
+        429 von OpenAI → safe_alternatives muss mit 'OpenAI:' beginnen.
+        Kein 'Groq:' oder anderer Provider-Name in OpenAI-Hints.
+        """
+        from apps.backend.providers.openai_provider import _map_openai_exc
+
+        class FakeRateLimit(Exception):
+            status_code = 429
+        FakeRateLimit.__name__ = "RateLimitError"
+
+        code, detail = _map_openai_exc(FakeRateLimit())
+        assert code == "rate_limited"
+        assert detail.startswith("OpenAI:"), (
+            f"OpenAI rate-limit Hinweis muss mit 'OpenAI:' beginnen, "
+            f"nicht mit '{detail[:20]}'"
+        )
+        assert "Groq" not in detail, "OpenAI-Hinweis enthält 'Groq' — falscher Provider-Label"
+
+    def test_openai_auth_error_hint_starts_with_openai(self):
+        """401 von OpenAI → Hinweis mit 'OpenAI:', kein 'Groq:'."""
+        from apps.backend.providers.openai_provider import _map_openai_exc
+
+        class FakeAuth(Exception):
+            status_code = 401
+        FakeAuth.__name__ = "AuthenticationError"
+
+        code, detail = _map_openai_exc(FakeAuth())
+        assert code == "invalid_api_key"
+        assert detail.startswith("OpenAI:")
+        assert "Groq" not in detail
+
+    def test_openai_provider_errors_contain_openai_in_reasons(self, monkeypatch):
+        """
+        Wenn OpenAI 429 wirft, muss provider_errors 'openai' und 'OpenAI:' enthalten.
+        Nicht 'openai: Groq: ...' oder 'openai: rate_limited'.
+        """
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        import apps.backend.registry.registry_loader as rl
+        rl._registry = None
+
+        orch = ProviderOrchestrator(providers={
+            "openai": _FailProvider(
+                "openai",
+                code="rate_limited",
+                detail="OpenAI: Rate-Limit oder Quota erreicht (HTTP 429) — platform.openai.com/usage prüfen",
+            ),
+        })
+        with pytest.raises(AILIZAError) as exc_info:
+            orch.generate([{"role": "user", "content": "test"}])
+
+        exc = exc_info.value
+        reasons_text = " ".join(exc.safe_alternatives or [])
+        # "openai:" Prefix vom Orchestrator + "OpenAI:" aus dem Provider-Hint
+        assert "openai" in reasons_text.lower()
+        # Kein falsches Groq-Label im OpenAI-Fehler
+        assert "Groq:" not in reasons_text, (
+            f"OpenAI-Fehler enthält 'Groq:' — falscher Provider-Label: {reasons_text!r}"
+        )
+
+    def test_groq_403_provider_errors_contain_groq_dashboard_hint(self, monkeypatch):
+        """
+        Wenn Groq 403 für Default-Modell wirft, muss provider_errors Groq-Dashboard-Hinweis
+        enthalten — KEIN 'GROQ_MODEL=llama-3.1-8b-instant' als Fix.
+        """
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("GROQ_MODEL", "")  # → Default llama-3.1-8b-instant
+        import apps.backend.registry.registry_loader as rl
+        rl._registry = None
+
+        from apps.backend.providers.groq_provider import _DEFAULT_MODEL
+        groq_detail = (
+            f"Groq verweigert Zugriff auf '{_DEFAULT_MODEL}' (HTTP 403). "
+            "Mögliche Ursachen: Groq-Projekt hat dieses Modell nicht freigeschaltet. "
+            "Bitte Groq-Dashboard → API Keys → Projekt-Berechtigungen prüfen."
+        )
+        orch = ProviderOrchestrator(providers={
+            "groq": _FailProvider("groq", code="provider_forbidden", detail=groq_detail),
+        })
+        with pytest.raises(AILIZAError) as exc_info:
+            orch.generate([{"role": "user", "content": "test"}])
+
+        reasons_text = " ".join(exc_info.value.safe_alternatives or [])
+        # Zirkulärer Fix-Vorschlag darf nicht vorkommen
+        assert f"GROQ_MODEL={_DEFAULT_MODEL}" not in reasons_text, (
+            "provider_errors schlägt dasselbe Modell als Fix vor, das bereits fehlschlägt"
+        )
+        # Stattdessen: Dashboard-Hinweis
+        assert "dashboard" in reasons_text.lower() or "berechtigung" in reasons_text.lower()

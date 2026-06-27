@@ -18,31 +18,25 @@ except ImportError:  # pragma: no cover
     from errors import AILIZAError
 
 
-def _map_openai_exc(exc: Exception) -> str:
-    """Mappt OpenAI-SDK-Exceptions auf AILIZA-Fehlercodes."""
+def _map_openai_exc(exc: Exception) -> tuple[str, str]:
+    """
+    Mappt OpenAI-SDK-Exceptions auf (AILIZA-Fehlercode, OpenAI-spezifischer Admin-Hinweis).
+    Hinweis: immer mit "OpenAI:" prefixiert — niemals Groq- oder anderen Provider-Namen.
+    """
     name = type(exc).__name__
-    # OpenAI SDK exception hierarchy
-    if name == "AuthenticationError":
-        return "invalid_api_key"
-    if name == "PermissionDeniedError":
-        return "provider_forbidden"
-    if name == "NotFoundError":
-        return "model_not_found"
-    if name == "RateLimitError":
-        return "rate_limited"
-    if name in ("APIConnectionError", "APITimeoutError"):
-        return "provider_unavailable"
-    # Fallback: beliebige openai.APIStatusError mit status_code
     status = getattr(exc, "status_code", None)
-    if status == 401:
-        return "invalid_api_key"
-    if status == 403:
-        return "provider_forbidden"
-    if status == 404:
-        return "model_not_found"
-    if status == 429:
-        return "rate_limited"
-    return "provider_error"
+
+    if name == "AuthenticationError" or status == 401:
+        return "invalid_api_key", "OpenAI: Ungültiger API-Key (HTTP 401) — OPENAI_API_KEY in Render prüfen"
+    if name == "PermissionDeniedError" or status == 403:
+        return "provider_forbidden", "OpenAI: Zugriff verweigert (HTTP 403) — API-Key-Berechtigungen prüfen"
+    if name == "NotFoundError" or status == 404:
+        return "model_not_found", f"OpenAI: Modell nicht gefunden (HTTP 404) — OPENAI_MODEL prüfen"
+    if name == "RateLimitError" or status == 429:
+        return "rate_limited", "OpenAI: Rate-Limit oder Quota erreicht (HTTP 429) — platform.openai.com/usage und Billing prüfen"
+    if name in ("APIConnectionError", "APITimeoutError"):
+        return "provider_unavailable", "OpenAI: Verbindungsfehler — temporär nicht erreichbar"
+    return "provider_error", f"OpenAI: Unbekannter Fehler ({name})"
 
 
 class OpenAIProvider(LLMProvider):
@@ -53,22 +47,31 @@ class OpenAIProvider(LLMProvider):
     def __init__(self, model: str = "gpt-4o-mini") -> None:
         self.model = model
 
-    def _build_client(self):
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise AILIZAError.from_code("no_api_key")
-        try:
-            from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover
-            raise AILIZAError.from_code("provider_not_configured") from exc
-        return OpenAI(api_key=api_key)
-
     @property
     def max_context_tokens(self) -> int:
         return 128000
 
     def estimate_cost(self, tokens_in: int, tokens_out: int) -> float:
         return round((tokens_in * 0.00000015) + (tokens_out * 0.0000006), 8)
+
+    def _no_api_key_error(self) -> AILIZAError:
+        return AILIZAError.from_code(
+            "no_api_key",
+            safe_alternatives=["OpenAI: OPENAI_API_KEY nicht gesetzt — in Render-Env prüfen"],
+        )
+
+    def _build_client(self):
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise self._no_api_key_error()
+        try:
+            from openai import OpenAI
+        except ImportError as exc:  # pragma: no cover
+            raise AILIZAError.from_code(
+                "provider_not_configured",
+                safe_alternatives=["OpenAI: 'openai' Python-Paket nicht installiert"],
+            ) from exc
+        return OpenAI(api_key=api_key)
 
     def generate(self, messages: list[dict[str, Any]], context: Any = None) -> str:
         key_present = bool(os.getenv("OPENAI_API_KEY"))
@@ -87,13 +90,13 @@ class OpenAIProvider(LLMProvider):
         except AILIZAError:
             raise
         except Exception as exc:  # noqa: BLE001
-            code = _map_openai_exc(exc)
+            code, detail = _map_openai_exc(exc)
             status = getattr(exc, "status_code", None)
             print(
                 f"AILIZA OPENAI FAILED | code={code} type={type(exc).__name__} status={status}",
                 flush=True,
             )
-            raise AILIZAError.from_code(code) from exc
+            raise AILIZAError.from_code(code, safe_alternatives=[detail]) from exc
 
     def stream(self, messages: list[dict[str, Any]], context: Any = None) -> Iterator[str]:
         yield self.generate(messages, context)

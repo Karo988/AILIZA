@@ -45,41 +45,41 @@ MESSAGES: dict[str, str] = {
 
 
 # Admin-sichtbare Diagnose-Hinweise je Fehlercode.
+# Provider-NEUTRAL: kein "Groq:" / "OpenAI:"-Prefix hier.
+# Provider-spezifische Hinweise kommen aus den Provider-Adaptern (safe_alternatives).
 # Nur für /api/debug/* und interne Logs — niemals direkt zum Nutzer.
 # Kein API-Key, kein Secret, keine PII.
 ADMIN_HINTS: dict[str, str] = {
     "provider_forbidden": (
         "HTTP 403: Provider verweigert Zugriff auf das konfigurierte Modell. "
-        "Häufigste Ursache: GROQ_MODEL ist auf ein Paid-Only-Modell gesetzt "
-        "(z.B. llama-3.3-70b-versatile). Fix: GROQ_MODEL=llama-3.1-8b-instant "
-        "in Render-Env setzen oder löschen (Free-Tier)."
+        "Häufige Ursachen: Modell nicht im Plan, Projekt-Einschränkung, Account-Sperre. "
+        "Sanitisierter Provider-Hinweis steht in 'error_sanitized' des jeweiligen Providers."
     ),
     "no_api_key": (
-        "API-Key fehlt. Prüfe ob GROQ_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY "
-        "in den Render-Umgebungsvariablen gesetzt sind."
+        "API-Key fehlt oder nicht gesetzt. "
+        "Prüfe die Render-Umgebungsvariablen für den betroffenen Provider."
     ),
     "invalid_api_key": (
         "API-Key vorhanden aber ungültig (HTTP 401). "
-        "Key in Render-Env aktualisieren."
+        "Key im Provider-Dashboard erneuern und in Render aktualisieren."
     ),
     "rate_limited": (
-        "Rate-Limit / Quota erschöpft (HTTP 429). "
-        "Provider-Plan prüfen oder später erneut versuchen. "
-        "Bei OpenAI: Billing-Limit in dashboard.openai.com prüfen."
+        "Rate-Limit oder Quota erschöpft (HTTP 429). "
+        "Provider-Plan oder Billing im jeweiligen Dashboard prüfen. "
+        "Sanitisierter Hinweis steht in 'error_sanitized' des jeweiligen Providers."
     ),
     "provider_unavailable": (
-        "Provider nicht erreichbar (Netzwerkfehler oder 5xx). "
-        "Temporärer Ausfall — nächster Provider im Failover wird versucht."
+        "Provider nicht erreichbar (Netzwerkfehler oder HTTP 5xx). "
+        "Temporärer Ausfall — Failover zum nächsten Provider wird versucht."
     ),
     "all_providers_failed": (
         "Alle konfigurierten Provider haben fehlgeschlagen. "
-        "Häufigste Ursachen: (1) GROQ_MODEL auf Paid-Plan-Modell gesetzt → 403, "
-        "(2) Rate-Limit bei OpenAI → 429, (3) API-Key fehlt/ungültig für Anthropic. "
-        "Prüfe /api/debug/provider-test für Einzeldetails."
+        "Einzelursachen je Provider stehen in 'provider_errors'. "
+        "Prüfe /api/debug/provider-test für Live-Diagnose."
     ),
     "model_not_found": (
         "Das konfigurierte Modell existiert nicht (HTTP 404). "
-        "GROQ_MODEL / OPENAI_MODEL auf bekanntes Modell setzen."
+        "Modell-Env-Variable des betroffenen Providers prüfen."
     ),
     "kill_switch_active": (
         "Kill-Switch aktiv — AILIZA_EXTERNAL_LLM_ENABLED=false oder "

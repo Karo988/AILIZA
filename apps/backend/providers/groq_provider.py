@@ -46,24 +46,30 @@ def _map_groq_http_error(status: int, model: str) -> tuple[str, str]:
     """
     Gibt (error_code, admin_detail) zurück.
     admin_detail ist sanitisiert — kein Key, kein PII.
-    401 → no_api_key
-    403 → provider_forbidden (Modell nicht im Plan)
-    404 → model_not_found
-    429 → rate_limited
-    5xx → provider_unavailable
+    403-Hinweis ist kontextabhängig: wenn model == _DEFAULT_MODEL, kein zirkulärer Fix-Vorschlag.
     """
     if status == 401:
-        return "no_api_key", "Groq: Ungültiger API-Key (HTTP 401) — Key in Render prüfen"
+        return "no_api_key", "Groq: Ungültiger API-Key (HTTP 401) — GROQ_API_KEY in Render prüfen"
     if status == 403:
-        return "provider_forbidden", (
-            f"Groq: Modellzugriff verweigert für '{model}' (HTTP 403) — "
-            "Modell nicht im aktuellen Plan oder Projekt-Einschränkung. "
-            "Fix: GROQ_MODEL=llama-3.1-8b-instant setzen (kostenloser Plan)."
-        )
+        if model == _DEFAULT_MODEL:
+            # Free-Tier-Modell schlägt fehl → kein "setze dieses Modell"-Fix, da es schon gesetzt ist
+            detail = (
+                f"Groq verweigert Zugriff auf '{model}' (HTTP 403). "
+                "Mögliche Ursachen: Groq-Projekt hat dieses Modell nicht freigeschaltet, "
+                "API-Key fehlt Projekt-Berechtigung oder Account-Sperre. "
+                "Bitte Groq-Dashboard → API Keys → Projekt-Berechtigungen prüfen."
+            )
+        else:
+            detail = (
+                f"Groq verweigert Zugriff auf '{model}' (HTTP 403). "
+                "Modell nicht im aktuellen Groq-Plan verfügbar. "
+                "Fix: GROQ_MODEL=llama-3.1-8b-instant in Render setzen (kostenloser Plan)."
+            )
+        return "provider_forbidden", detail
     if status == 404:
         return "model_not_found", f"Groq: Modell '{model}' nicht gefunden (HTTP 404)"
     if status == 429:
-        return "rate_limited", f"Groq: Rate-Limit / Quota erschöpft (HTTP 429) — später erneut versuchen"
+        return "rate_limited", "Groq: Rate-Limit oder Quota erschöpft (HTTP 429) — Groq-Dashboard prüfen"
     if status >= 500:
         return "provider_unavailable", f"Groq: Server-Fehler (HTTP {status}) — temporär nicht erreichbar"
     return "provider_error", f"Groq: Unbekannter HTTP-Fehler (HTTP {status})"

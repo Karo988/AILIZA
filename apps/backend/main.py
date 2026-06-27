@@ -554,10 +554,16 @@ def debug_provider_test() -> dict[str, Any]:
         )
         results[pid] = entry
 
-    try:
-        from .errors import ADMIN_HINTS as _AH
-    except ImportError:
-        from errors import ADMIN_HINTS as _AH  # type: ignore[no-redef]
+    # Admin-Hinweise: provider-spezifisch aus error_sanitized (kommt direkt vom Provider-Adapter).
+    # Kein globales ADMIN_HINTS-Dict mehr — verhindert falsche Provider-Attribution.
+    admin_hints: dict[str, str] = {}
+    for pid, entry in results.items():
+        if not isinstance(entry, dict):
+            continue
+        sanitized = entry.get("error_sanitized") or ""
+        if sanitized and sanitized != entry.get("error_type", ""):
+            # Nutze den provider-spezifischen Hinweis aus dem Adapter (hat korrekten Provider-Prefix)
+            admin_hints[pid] = sanitized
 
     return {
         "request_id": rid,
@@ -565,15 +571,11 @@ def debug_provider_test() -> dict[str, Any]:
         "selected_provider": selected_provider,
         "groq_model_resolved": groq_model_used,
         "groq_model_advice": (
-            "GROQ_MODEL sollte 'llama-3.1-8b-instant' (kostenlos) sein. "
-            "'llama-3.3-70b-versatile' erfordert einen bezahlten Groq-Plan → 403."
+            "Default ist 'llama-3.1-8b-instant' (kostenloser Groq-Plan). "
+            "Wenn 403 auf diesem Modell: Groq-Dashboard → API Key → Projekt-Berechtigungen prüfen."
         ),
         "providers": results,
-        "admin_hints": {
-            pid: _AH.get(entry.get("error_type", ""), "")
-            for pid, entry in results.items()
-            if isinstance(entry, dict) and entry.get("error_type") and _AH.get(entry.get("error_type", ""))
-        },
+        "admin_hints": admin_hints,
         "note": "Dieser Endpunkt sollte in Produktion durch AILIZA_DEBUG-Flag geschützt werden.",
     }
 
