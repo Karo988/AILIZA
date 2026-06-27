@@ -111,32 +111,32 @@ providers:
 
   openrouter:
     type: text_llm
-    enabled: false             # ⚠ Explizit inaktiv — Subverarbeiter-Kette ungeklärt
-    admin_approved: false
+    enabled: true              # Freigegeben für PUBLIC-Daten als Fallback (Admin-Entscheid 2026-06-27)
+    admin_approved: true
     region: us
     transfer_basis: scc
-    avv_signed: false
+    avv_signed: false          # ⚠ AVV noch zu unterzeichnen
     allowed_data:
-      - public                 # Nur PUBLIC — bis Subverarbeiter-Liste vorliegt
+      - public                 # Nur PUBLIC — Subverarbeiter-Kette ungeklärt
     forbidden_data:
       - credentials
       - special_category
-      - personal_data
+      - personal_data          # ⚠ Bis AVV + Subverarbeiter-Liste vorliegt
       - financial
       - hr
       - legal
-    default_model: openai/gpt-4o-mini
+    default_model: meta-llama/llama-3.1-8b-instruct
     fallback_models: []
-    failover_priority: 99
+    failover_priority: 4
     health_status: unknown
     logs_prompts: true         # ⚠ Kann Requests loggen
     used_for_training: false
     notes: >
       Aggregator-API: unterlagert wechselnde Sub-Provider.
-      Subverarbeiter-Kette ungeklärt → DSGVO Art. 28 Abs. 4 nicht abgedeckt.
-      Aktivierung erfordert: AVV, Subverarbeiter-Liste, Admin-Freigabe.
-      Render-Env (wenn freigegeben): OPENROUTER_API_KEY=sk-or-v1-... (openrouter.ai → Keys).
-      Optional: AILIZA_OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct (Default).
+      Subverarbeiter-Kette ungeklärt → nur PUBLIC-Daten erlaubt.
+      AVV/DPA noch zu unterzeichnen (DSGVO Art. 28).
+      Render-Env: OPENROUTER_API_KEY=sk-or-v1-... (openrouter.ai → Keys).
+      Optional: AILIZA_OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct (Default).
 
   local:
     type: text_llm

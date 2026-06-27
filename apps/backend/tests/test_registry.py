@@ -52,18 +52,20 @@ class TestProviderRegistry:
     def test_local_is_usable(self, registry):
         assert registry.get_provider("local").is_usable()
 
-    def test_openrouter_not_usable(self, registry):
-        """OpenRouter ist admin_approved=false — darf nicht genutzt werden."""
+    def test_openrouter_usable_for_public_data(self, registry):
+        """OpenRouter ist für PUBLIC-Daten freigegeben (Admin-Entscheid 2026-06-27)."""
         entry = registry.get_provider("openrouter")
-        assert not entry.is_usable(), "OpenRouter muss blockiert sein bis Admin-Freigabe"
+        assert entry.is_usable(), "OpenRouter muss für PUBLIC-Daten nutzbar sein"
+        assert entry.allows_data("public"), "OpenRouter muss public-Daten erlauben"
 
     def test_unknown_provider_returns_none(self, registry):
         """Unbekannter Provider → get_provider gibt None zurück."""
         assert registry.get_provider("some_new_chinese_provider") is None
 
-    def test_usable_providers_excludes_unapproved(self, registry):
+    def test_usable_providers_includes_approved_openrouter(self, registry):
+        """OpenRouter ist jetzt admin_approved=true → muss in get_usable_providers() auftauchen."""
         usable_ids = {p.provider_id for p in registry.get_usable_providers()}
-        assert "openrouter" not in usable_ids
+        assert "openrouter" in usable_ids
 
     def test_local_allows_all_data_classes(self, registry):
         local = registry.get_provider("local")
@@ -88,12 +90,12 @@ class TestProviderRegistry:
         openai = registry.get_provider("openai")
         assert groq.failover_priority < openai.failover_priority
 
-    def test_provider_blocks_reason_for_unapproved(self, registry):
-        """OpenRouter gibt einen verständlichen Grund zurück warum er blockiert ist."""
+    def test_openrouter_blocks_personal_data(self, registry):
+        """OpenRouter darf keine PERSONAL_DATA verarbeiten (Subverarbeiter-Kette ungeklärt)."""
         entry = registry.get_provider("openrouter")
-        reason = entry.blocks_reason()
-        assert reason is not None
-        assert "Admin" in reason or "Freigabe" in reason or "deaktiviert" in reason
+        assert not entry.allows_data("personal_data"), "OpenRouter darf keine personal_data verarbeiten"
+        assert not entry.allows_data("hr"), "OpenRouter darf keine HR-Daten verarbeiten"
+        assert not entry.allows_data("credentials"), "OpenRouter darf keine Credentials verarbeiten"
 
 
 # ── 2. Neuer Provider bleibt pending ──────────────────────────────────────────

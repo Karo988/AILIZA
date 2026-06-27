@@ -68,12 +68,22 @@ _KEY_ENV: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
+# Standard-Reihenfolge: OpenAI zuerst (Groq aktuell unzuverlässig wegen 403).
+# Überschreibbar mit AILIZA_PROVIDER_ORDER=openai,openrouter,groq,anthropic,local
+_DEFAULT_PROVIDER_ORDER = "openai,openrouter,groq,anthropic,local"
+
+
+def _get_provider_order() -> list[str]:
+    """Liest AILIZA_PROVIDER_ORDER aus der Env, fällt auf Default zurück."""
+    raw = os.getenv("AILIZA_PROVIDER_ORDER", _DEFAULT_PROVIDER_ORDER)
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
 
 class ProviderOrchestrator:
     def __init__(
         self,
         providers: dict[str, LLMProvider] | None = None,
-        default_provider: str = "groq",
+        default_provider: str = "openai",
     ) -> None:
         if providers is None:
             _p: dict[str, LLMProvider] = {
@@ -120,15 +130,14 @@ class ProviderOrchestrator:
     ) -> list[tuple[str, LLMProvider]]:
         """
         Gibt Provider sortiert nach Priorität zurück.
-        Filtert nach:
-          1. Registry (Vorrang): enabled + admin_approved + Datenklassen
-          2. Legacy provider_profiles.py (zweite Schicht)
-          3. Routing-Regel (optionale Bevorzugung aus routing_rules.yaml)
-
-        health_status=down → Provider wird ans Ende gestellt, aber nicht entfernt
-        (falls alle anderen auch scheitern, wird er als letzter Fallback versucht).
+        Reihenfolge (höchste zu niedrigste Priorität):
+          1. AILIZA_PROVIDER_ORDER (Env-Var, Default: openai,openrouter,groq,anthropic,local)
+          2. Registry-Gesundheit: health_status=down → ans Ende (+1000 Penalty)
+          3. Registry-Check: enabled + admin_approved + Datenklassen (Governance-Gate)
+          4. Legacy provider_profiles.py (zweite Schicht)
         """
         dc_strings = [dc.value if hasattr(dc, "value") else str(dc) for dc in data_classes]
+        provider_order = _get_provider_order()
 
         # Routing-Regel: bestimmt bevorzugte Provider für diesen Aufgabentyp
         routing_rule = get_routing_for_task(task_type or "general_task") if task_type else None
@@ -144,12 +153,17 @@ class ProviderOrchestrator:
                 flush=True,
             )
 
+        print(
+            f"AILIZA PROVIDER ORDER | order={provider_order} preferred_override={preferred or 'none'}",
+            flush=True,
+        )
+
         candidates: list[tuple[int, int, str, LLMProvider]] = []
 
         for pid, prov in self.providers.items():
             key_present = bool(os.getenv(_KEY_ENV.get(pid, ""), ""))
 
-            # 1. Registry-Check (Vorrang)
+            # 1. Registry-Check (Governance-Gate — Vorrang vor allem)
             reg_allowed, reg_code, reg_reason = self._registry_check(pid, dc_strings)
 
             # 2. Legacy provider_profiles.py (nur wenn Registry OK)
@@ -160,43 +174,39 @@ class ProviderOrchestrator:
             allowed = reg_allowed and legacy_allowed
             reason = reg_reason if not reg_allowed else (legacy_reason if not legacy_allowed else "ok")
 
-            # Registry-Priorität als Basis, dann Routing-Bevorzugung
+            # Priorität aus AILIZA_PROVIDER_ORDER (0-basiert; nicht gelistet → 999)
+            order_priority = provider_order.index(pid) if pid in provider_order else 999
+
+            # health_status=down → ans Ende (+500 auf order_priority)
             reg_entry = None
             try:
                 reg_entry = get_registry().get_provider(pid)
             except Exception:
                 pass
-            base_priority = reg_entry.failover_priority if reg_entry else 99
-            # Routing-bevorzugte Provider bekommen einen Bonus in der Reihenfolge
-            routing_bonus = preferred_by_routing.index(pid) if pid in preferred_by_routing else 50
-
-            # health_status=down → ans Ende (Prio +1000), aber nicht entfernen
-            health_penalty = 0
-            if reg_entry and reg_entry.health_status == "down":
-                health_penalty = 1000
+            health_penalty = 500 if (reg_entry and reg_entry.health_status == "down") else 0
 
             print(
                 f"AILIZA PROVIDER SELECT | capability={use_case} provider={pid} "
                 f"model={getattr(prov, 'model', 'unknown')} "
                 f"key_present={key_present} allowed={allowed} "
+                f"order_pos={order_priority} health_penalty={health_penalty} "
                 f"registry={reg_allowed} "
                 f"blocked_reason={repr(reason) if not allowed else ''}",
                 flush=True,
             )
 
             if allowed:
-                candidates.append((base_priority + health_penalty, routing_bonus, pid, prov))
+                candidates.append((order_priority + health_penalty, pid, prov))
 
-        # Sortierung: 1. preferred/explicit, 2. routing_bonus, 3. base_priority
-        explicit_preferred = preferred or self.default_provider
+        # Sortierung: 1. explicit preferred (wenn gesetzt), 2. AILIZA_PROVIDER_ORDER + health
+        explicit_preferred = preferred  # None = kein Override, Default-Reihenfolge gilt
         candidates.sort(
             key=lambda t: (
-                0 if t[2] == explicit_preferred else 1,
-                t[1],   # routing_bonus
-                t[0],   # base_priority + health_penalty
+                0 if explicit_preferred and t[1] == explicit_preferred else 1,
+                t[0],  # order_priority + health_penalty
             )
         )
-        return [(pid, prov) for _, _, pid, prov in candidates]
+        return [(pid, prov) for _, pid, prov in candidates]
 
     # ── Legacy _select (für stream()) ──────────────────────────────────────────
 

@@ -38,8 +38,13 @@ class OpenRouterProvider(LLMProvider):
     provider_id = "openrouter"
 
     def __init__(self, model: str | None = None) -> None:
-        # Model aus Env oder sicherer Default (kein proprietaeres closed-source Modell als default)
-        self.model = model or os.getenv("AILIZA_OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
+        # Env: OPENROUTER_MODEL (kurz) oder AILIZA_OPENROUTER_MODEL (legacy); sicherer Open-Source-Default
+        self.model = (
+            model
+            or os.getenv("OPENROUTER_MODEL")
+            or os.getenv("AILIZA_OPENROUTER_MODEL")
+            or "meta-llama/llama-3.1-8b-instruct"
+        )
 
     def _api_key(self) -> str:
         key = os.getenv("OPENROUTER_API_KEY")

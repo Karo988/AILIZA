@@ -516,7 +516,10 @@ def debug_provider_test() -> dict[str, Any]:
         "openrouter": "OPENROUTER_API_KEY",
     }
 
-    # Registry-Metadaten je Provider — zeigt health_status und enabled-Flag
+    # Effektive Provider-Reihenfolge aus AILIZA_PROVIDER_ORDER
+    from providers.orchestrator import _get_provider_order
+    provider_order_effective = _get_provider_order()
+
     def _reg_meta(pid: str) -> dict[str, Any]:
         try:
             from registry.registry_loader import get_registry
@@ -532,7 +535,16 @@ def debug_provider_test() -> dict[str, Any]:
             pass
         return {}
 
-    for pid, provider in getattr(_orchestrator, "providers", {}).items():
+    # Teste Provider in der konfigurierten Reihenfolge
+    all_pids = list(getattr(_orchestrator, "providers", {}).keys())
+    ordered_pids = [p for p in provider_order_effective if p in all_pids]
+    ordered_pids += [p for p in all_pids if p not in ordered_pids]
+
+    attempts_in_order: list[str] = []
+    failed_providers: dict[str, str] = {}
+
+    for pid in ordered_pids:
+        provider = _orchestrator.providers[pid]
         key_env = _KEY_ENV_TEST.get(pid, "")
         configured = bool(os.getenv(key_env)) if key_env else True
         model_used = getattr(provider, "model", "unknown")
@@ -547,10 +559,11 @@ def debug_provider_test() -> dict[str, Any]:
         }
 
         if not configured:
-            entry["error_sanitized"] = f"API-Key für '{pid}' nicht gesetzt (Render-Env: {key_env})"
+            entry["error_sanitized"] = f"API-Key nicht gesetzt — Render-Env: {key_env}"
             results[pid] = entry
             continue
 
+        attempts_in_order.append(pid)
         try:
             answer = provider.generate(_test_messages)
             entry["status"] = "ok"
@@ -561,13 +574,14 @@ def debug_provider_test() -> dict[str, Any]:
         except AILIZAError as exc:
             entry["status"] = "error"
             entry["error_type"] = exc.code
-            # Sanitisierte Ursache aus safe_alternatives (kein Key, kein PII)
             _alts = exc.safe_alternatives or []
             entry["error_sanitized"] = _alts[0] if _alts else exc.code
+            failed_providers[pid] = entry["error_sanitized"]
         except Exception as exc:  # noqa: BLE001
             entry["status"] = "error"
             entry["error_type"] = type(exc).__name__
             entry["error_sanitized"] = type(exc).__name__
+            failed_providers[pid] = entry["error_sanitized"]
 
         print(
             f"AILIZA PROVIDER TEST | request_id={rid} provider={pid} "
@@ -577,28 +591,24 @@ def debug_provider_test() -> dict[str, Any]:
         )
         results[pid] = entry
 
-    # Admin-Hinweise: provider-spezifisch aus error_sanitized (kommt direkt vom Provider-Adapter).
-    # Kein globales ADMIN_HINTS-Dict mehr — verhindert falsche Provider-Attribution.
-    admin_hints: dict[str, str] = {}
-    for pid, entry in results.items():
-        if not isinstance(entry, dict):
-            continue
-        sanitized = entry.get("error_sanitized") or ""
-        if sanitized and sanitized != entry.get("error_type", ""):
-            # Nutze den provider-spezifischen Hinweis aus dem Adapter (hat korrekten Provider-Prefix)
-            admin_hints[pid] = sanitized
-
     return {
         "request_id": rid,
         "final_status": final_status,
+        "provider_order_effective": provider_order_effective,
+        "provider_attempts_in_order": attempts_in_order,
+        "first_successful_provider": selected_provider,
         "selected_provider": selected_provider,
+        "failed_providers": failed_providers,
         "groq_model_resolved": groq_model_used,
-        "groq_model_advice": (
-            "Default ist 'llama-3.1-8b-instant' (kostenloser Groq-Plan). "
-            "Wenn 403 auf diesem Modell: Groq-Dashboard → API Key → Projekt-Berechtigungen prüfen."
-        ),
+        "groq_model_env_raw": results.pop("groq_model_env_raw", os.getenv("GROQ_MODEL", "(not set)")),
         "providers": results,
-        "admin_hints": admin_hints,
+        "render_env_required": {
+            "openai": "OPENAI_API_KEY (+ optional OPENAI_MODEL, default: gpt-4o-mini)",
+            "openrouter": "OPENROUTER_API_KEY (+ optional OPENROUTER_MODEL, default: meta-llama/llama-3.1-8b-instruct)",
+            "groq": "GROQ_API_KEY + GROQ_MODEL (default: llama-3.1-8b-instant) — aktuell health_status=down",
+            "anthropic": "ANTHROPIC_API_KEY (+ optional ANTHROPIC_MODEL)",
+            "provider_order": "AILIZA_PROVIDER_ORDER (optional, default: openai,openrouter,groq,anthropic,local)",
+        },
         "note": "Dieser Endpunkt sollte in Produktion durch AILIZA_DEBUG-Flag geschützt werden.",
     }
 

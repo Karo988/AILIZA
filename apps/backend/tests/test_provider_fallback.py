@@ -448,13 +448,9 @@ class TestOpenAIErrorLabels:
         429 von OpenAI → safe_alternatives muss mit 'OpenAI:' beginnen.
         Kein 'Groq:' oder anderer Provider-Name in OpenAI-Hints.
         """
-        from apps.backend.providers.openai_provider import _map_openai_exc
+        from apps.backend.providers.openai_provider import _map_openai_http_status
 
-        class FakeRateLimit(Exception):
-            status_code = 429
-        FakeRateLimit.__name__ = "RateLimitError"
-
-        code, detail = _map_openai_exc(FakeRateLimit())
+        code, detail = _map_openai_http_status(429, "gpt-4o-mini")
         assert code == "rate_limited"
         assert detail.startswith("OpenAI:"), (
             f"OpenAI rate-limit Hinweis muss mit 'OpenAI:' beginnen, "
@@ -464,13 +460,9 @@ class TestOpenAIErrorLabels:
 
     def test_openai_auth_error_hint_starts_with_openai(self):
         """401 von OpenAI → Hinweis mit 'OpenAI:', kein 'Groq:'."""
-        from apps.backend.providers.openai_provider import _map_openai_exc
+        from apps.backend.providers.openai_provider import _map_openai_http_status
 
-        class FakeAuth(Exception):
-            status_code = 401
-        FakeAuth.__name__ = "AuthenticationError"
-
-        code, detail = _map_openai_exc(FakeAuth())
+        code, detail = _map_openai_http_status(401, "gpt-4o-mini")
         assert code == "invalid_api_key"
         assert detail.startswith("OpenAI:")
         assert "Groq" not in detail
@@ -535,3 +527,186 @@ class TestOpenAIErrorLabels:
         )
         # Stattdessen: Dashboard-Hinweis
         assert "dashboard" in reasons_text.lower() or "berechtigung" in reasons_text.lower()
+
+
+# ── 10. Neue Tests: Provider-Reihenfolge, Fallback-Robustheit ─────────────────
+
+class TestProviderOrderEnvVar:
+    """AILIZA_PROVIDER_ORDER steuert die Reihenfolge — nicht Registry-Priorität allein."""
+
+    def _orch(self, monkeypatch, providers):
+        import apps.backend.registry.registry_loader as rl
+        rl._registry = None
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        from apps.backend.providers.orchestrator import ProviderOrchestrator
+        return ProviderOrchestrator(providers=providers)
+
+    def test_provider_order_env_respected(self, monkeypatch):
+        """AILIZA_PROVIDER_ORDER=openai,groq → openai wird zuerst versucht."""
+        calls = []
+
+        class FakeOpenAI:
+            provider_id = "openai"
+            model = "gpt-4o-mini"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                calls.append("openai")
+                return "ok"
+
+        class FakeGroq:
+            provider_id = "groq"
+            model = "llama"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                calls.append("groq")
+                return "ok"
+
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_PROVIDER_ORDER", "openai,groq")
+
+        orch = self._orch(monkeypatch, {"openai": FakeOpenAI(), "groq": FakeGroq()})
+        orch.generate([{"role": "user", "content": "test"}])
+        assert calls[0] == "openai", f"openai muss zuerst versucht werden, war: {calls}"
+
+    def test_groq_403_does_not_block_openai(self, monkeypatch):
+        """Groq 403 (provider_forbidden) → OpenAI antwortet, kein all_providers_failed."""
+        from apps.backend.errors import AILIZAError
+
+        class FakeGroq:
+            provider_id = "groq"
+            model = "llama"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                raise AILIZAError.from_code("provider_forbidden",
+                                             safe_alternatives=["Groq: HTTP 403"])
+
+        class FakeOpenAI:
+            provider_id = "openai"
+            model = "gpt-4o-mini"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                return "Antwort von OpenAI"
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_PROVIDER_ORDER", "groq,openai")
+
+        orch = self._orch(monkeypatch, {"groq": FakeGroq(), "openai": FakeOpenAI()})
+        result = orch.generate([{"role": "user", "content": "test"}])
+        assert "OpenAI" in result
+
+    def test_openai_ok_even_if_groq_fails(self, monkeypatch):
+        """Chat antwortet erfolgreich, wenn OpenAI ok und Groq failt."""
+        from apps.backend.errors import AILIZAError
+
+        class FakeGroq:
+            provider_id = "groq"
+            model = "llama"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                raise AILIZAError.from_code("provider_forbidden")
+
+        class FakeOpenAI:
+            provider_id = "openai"
+            model = "gpt-4o-mini"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                return "Betreff: Offene Rechnung\n\nSehr geehrte Damen und Herren..."
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+
+        orch = self._orch(monkeypatch, {"groq": FakeGroq(), "openai": FakeOpenAI()})
+        result = orch.generate([{"role": "user", "content": "Schreibe eine E-Mail"}])
+        assert "Betreff" in result
+        assert "Kein KI-Anbieter" not in result
+
+    def test_all_fail_user_gets_safe_message(self, monkeypatch):
+        """Alle Provider fail → Nutzer bekommt deutsche Kurzmeldung, kein Stack-Trace."""
+        import pytest
+        from apps.backend.errors import AILIZAError
+
+        class FailProvider:
+            provider_id = "groq"
+            model = "llama"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                raise AILIZAError.from_code("provider_forbidden",
+                                             safe_alternatives=["Groq: HTTP 403"])
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake")
+
+        orch = self._orch(monkeypatch, {"groq": FailProvider()})
+        with pytest.raises(AILIZAError) as exc_info:
+            orch.generate([{"role": "user", "content": "test"}])
+        exc = exc_info.value
+        assert exc.code == "all_providers_failed"
+        # Nutzermeldung auf Deutsch, kein Stack-Trace, kein API-Key
+        assert "KI-Anbieter" in exc.message_de or "Provider" in exc.message_de
+        assert "fake" not in exc.message_de
+
+    def test_all_fail_provider_errors_contains_reasons(self, monkeypatch):
+        """provider_errors (safe_alternatives) enthält sanitisierte Ursachen je Provider."""
+        import pytest
+        from apps.backend.errors import AILIZAError
+
+        class FailProvider:
+            provider_id = "openai"
+            model = "gpt-4o-mini"
+            def count_tokens(self, t): return 1
+            def estimate_cost(self, i, o): return 0.0
+            def generate(self, messages, context=None):
+                raise AILIZAError.from_code("rate_limited",
+                                             safe_alternatives=["OpenAI: Rate-Limit (HTTP 429)"])
+
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+
+        orch = self._orch(monkeypatch, {"openai": FailProvider()})
+        with pytest.raises(AILIZAError) as exc_info:
+            orch.generate([{"role": "user", "content": "test"}])
+        exc = exc_info.value
+        reasons = exc.safe_alternatives
+        assert any("openai" in r.lower() or "OpenAI" in r for r in reasons), \
+            f"provider_errors soll openai-Ursache enthalten: {reasons}"
+        assert all("fake" not in r for r in reasons), "Kein API-Key in provider_errors"
+
+
+class TestOpenRouterConfigured:
+    """OpenRouter configured=false wenn kein Key gesetzt."""
+
+    def test_openrouter_no_key_raises_no_api_key(self, monkeypatch):
+        """Wenn OPENROUTER_API_KEY nicht gesetzt → no_api_key, nicht configured=true."""
+        import pytest
+        from apps.backend.errors import AILIZAError
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("AILIZA_OPENROUTER_MODEL", raising=False)
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        from apps.backend.providers.openrouter_provider import OpenRouterProvider
+        provider = OpenRouterProvider()
+        with pytest.raises(AILIZAError) as exc_info:
+            provider.generate([{"role": "user", "content": "test"}])
+        assert exc_info.value.code == "no_api_key"
+
+    def test_openrouter_model_env_var(self, monkeypatch):
+        """OPENROUTER_MODEL Env-Var wird als Modell genutzt."""
+        monkeypatch.setenv("OPENROUTER_MODEL", "my-custom-model")
+        monkeypatch.delenv("AILIZA_OPENROUTER_MODEL", raising=False)
+        from apps.backend.providers.openrouter_provider import OpenRouterProvider
+        provider = OpenRouterProvider()
+        assert provider.model == "my-custom-model"
+
+    def test_openrouter_default_model(self, monkeypatch):
+        """Default-Modell ist meta-llama/llama-3.1-8b-instruct."""
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        monkeypatch.delenv("AILIZA_OPENROUTER_MODEL", raising=False)
+        from apps.backend.providers.openrouter_provider import OpenRouterProvider
+        provider = OpenRouterProvider()
+        assert provider.model == "meta-llama/llama-3.1-8b-instruct"
