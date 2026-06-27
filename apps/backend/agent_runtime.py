@@ -907,14 +907,37 @@ _SEARCH_INTENT_PATTERN = re.compile(
     re.I | re.UNICODE,
 )
 
+# Allgemeine Wissens-/Erklärungsfragen → direkt LLM, kein Web-Search
+_KNOWLEDGE_INTENT_PATTERN = re.compile(
+    r"\b(?:erkl(?:är|aer)(?:e|en|st)?(?:\s+mir)?"
+    r"|was\s+(?:ist|sind|bedeutet|heißt|heisst)"
+    r"|wie\s+(?:funktioniert|geht|macht\s+man)"
+    r"|was\s+versteht\s+man\s+unter"
+    r"|definition\s+(?:von|des|der)?"
+    r"|was\s+muss\s+ich\s+(?:wissen|beachten)"
+    r"|was\s+sind\s+die\s+(?:regeln|anforderungen|pflichten|rechte)"
+    r"|kannst\s+du\s+(?:mir\s+)?erkl"
+    r"|fass(?:e|en)?\s+(?:zusammen|kurz)"
+    r"|gib\s+(?:mir\s+)?(?:eine?[rn]?)?\s+(?:überblick|zusammenfassung|kurze?\s+erkl))\b",
+    re.I | re.UNICODE,
+)
+
 
 def plan_tool_calls(task: str) -> list[PlannedToolCall]:
     urls = [clean_url(match.group(0)) for match in URL_PATTERN.finditer(task)]
     if urls:
         return [PlannedToolCall("fetch", {"url": url}) for url in urls]
 
-    # Schreibaufgaben ohne expliziten Rechercheauftrag → kein Tool, LLM direkt
-    if _WRITING_INTENT_PATTERN.search(task) and not _SEARCH_INTENT_PATTERN.search(task):
+    # Explizite Websuche hat höchste Priorität
+    if _SEARCH_INTENT_PATTERN.search(task):
+        return [PlannedToolCall("search", {"query": task.strip()})]
+
+    # Schreibaufgaben → kein Tool, LLM direkt
+    if _WRITING_INTENT_PATTERN.search(task):
+        return []
+
+    # Allgemeine Wissens-/Erklärungsfragen → kein Tool, LLM direkt
+    if _KNOWLEDGE_INTENT_PATTERN.search(task):
         return []
 
     return [PlannedToolCall("search", {"query": task.strip()})]

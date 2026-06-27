@@ -13,6 +13,35 @@ def test_agent_plans_search_when_task_has_no_url() -> None:
     assert plan[0].parameters == {"query": "Find FastAPI audit logging examples"}
 
 
+def test_erklaere_dsgvo_no_search() -> None:
+    """Einfache Erklärungsfrage darf KEINE Websuche auslösen."""
+    plan = plan_tool_calls("Erkläre mir kurz was DSGVO bedeutet")
+    assert plan == [], f"Erklärungsfrage löste unerwartet Tool aus: {plan}"
+
+
+def test_was_ist_no_search() -> None:
+    plan = plan_tool_calls("Was ist ein Auftragsverarbeiter?")
+    assert plan == []
+
+
+def test_wie_funktioniert_no_search() -> None:
+    plan = plan_tool_calls("Wie funktioniert die Zwei-Faktor-Authentifizierung?")
+    assert plan == []
+
+
+def test_explicit_recherche_triggers_search() -> None:
+    """Explizite Rechercheanfrage soll immer Websuche auslösen."""
+    plan = plan_tool_calls("Recherchiere aktuelle DSGVO-Neuigkeiten")
+    assert len(plan) == 1
+    assert plan[0].tool == "search"
+
+
+def test_aktuell_news_triggers_search() -> None:
+    plan = plan_tool_calls("Was sind die aktuellen News zur EU AI Act Regulierung?")
+    assert len(plan) == 1
+    assert plan[0].tool == "search"
+
+
 def test_agent_plans_fetch_for_url() -> None:
     plan = plan_tool_calls("Read https://example.com/docs.")
 
