@@ -168,10 +168,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         _reg_usable = ["(registry-load-error)"]
     _gate10_status = getattr(_integrity, "overall_status", "unknown")
+    # GROQ_MODEL: zeige welches Modell tatsächlich genutzt wird (entscheidend für 403-Diagnose)
+    _diag_groq_model = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant (default)"
     print(
         f"AILIZA PROVIDER STATUS | groq_key={_diag_groq} openai_key={_diag_openai} "
         f"anthropic_key={_diag_anthropic} tavily_key={_diag_tavily} "
         f"AILIZA_EXTERNAL_LLM_ENABLED={_diag_ext_env} external_llm_allowed={_diag_ext_allowed} "
+        f"groq_model={_diag_groq_model} "
         f"gate10={_gate10_status} "
         f"registry_usable={_reg_usable} "
         f"provider_profiles={_provider_debug}",
@@ -482,6 +485,87 @@ def debug_llm_status() -> dict[str, Any]:
     result["block_reasons"] = block_reasons if block_reasons else None
     result["diagnosis"] = "ok" if not block_reasons else "blocked"
     return result
+
+
+@app.get("/api/debug/provider-test")
+def debug_provider_test() -> dict[str, Any]:
+    """
+    Testet jeden Provider mit einer harmlosen Nachricht ohne Nutzerdaten.
+    Gibt sanitisierten Status je Provider zurück — keine Secrets, keine Keys.
+    Für Diagnose auf Render: zeigt welcher Provider fehlschlägt und warum.
+    WICHTIG: Deaktivieren wenn nicht gebraucht (AILIZA_DEBUG=false).
+    """
+    import uuid as _uuid
+    rid = _uuid.uuid4().hex[:8]
+    _test_prompt = "Antworte nur mit: AILIZA_PROVIDER_OK"
+    _test_messages = [{"role": "user", "content": _test_prompt}]
+
+    results: dict[str, Any] = {}
+    selected_provider: str | None = None
+    final_status = "all_failed"
+
+    # GROQ_MODEL — der häufigste Fehlergrund
+    groq_model_used = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
+    results["groq_model_resolved"] = groq_model_used
+    results["groq_model_env_raw"] = os.getenv("GROQ_MODEL", "(not set)")
+
+    for pid, provider in getattr(_orchestrator, "providers", {}).items():
+        key_env = {"groq": "GROQ_API_KEY", "openai": "OPENAI_API_KEY",
+                   "anthropic": "ANTHROPIC_API_KEY"}.get(pid, "")
+        configured = bool(os.getenv(key_env)) if key_env else True
+        model_used = getattr(provider, "model", "unknown")
+
+        entry: dict[str, Any] = {
+            "configured": configured,
+            "model": model_used,
+            "status": "skipped",
+            "error_type": None,
+            "error_sanitized": None,
+        }
+
+        if not configured:
+            entry["error_sanitized"] = f"API-Key für '{pid}' nicht gesetzt"
+            results[pid] = entry
+            continue
+
+        try:
+            answer = provider.generate(_test_messages)
+            entry["status"] = "ok"
+            entry["answer_preview"] = (answer or "")[:40]
+            if selected_provider is None:
+                selected_provider = pid
+                final_status = "ok"
+        except AILIZAError as exc:
+            entry["status"] = "error"
+            entry["error_type"] = exc.code
+            # Sanitisierte Ursache aus safe_alternatives (kein Key, kein PII)
+            _alts = exc.safe_alternatives or []
+            entry["error_sanitized"] = _alts[0] if _alts else exc.code
+        except Exception as exc:  # noqa: BLE001
+            entry["status"] = "error"
+            entry["error_type"] = type(exc).__name__
+            entry["error_sanitized"] = type(exc).__name__
+
+        print(
+            f"AILIZA PROVIDER TEST | request_id={rid} provider={pid} "
+            f"model={model_used} status={entry['status']} "
+            f"error={entry.get('error_type') or 'none'}",
+            flush=True,
+        )
+        results[pid] = entry
+
+    return {
+        "request_id": rid,
+        "final_status": final_status,
+        "selected_provider": selected_provider,
+        "groq_model_resolved": groq_model_used,
+        "groq_model_advice": (
+            "GROQ_MODEL sollte 'llama-3.1-8b-instant' (kostenlos) sein. "
+            "'llama-3.3-70b-versatile' erfordert einen bezahlten Groq-Plan (403)."
+        ),
+        "providers": results,
+        "note": "Dieser Endpunkt sollte in Produktion durch AILIZA_DEBUG-Flag geschützt werden.",
+    }
 
 
 @app.get("/ready")
@@ -817,8 +901,27 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
         return None, exc.code
 
 
-def _ask_llm_directly(task: str) -> tuple[str | None, str | None]:
+def _ask_llm_directly(
+    task: str,
+    request_id: str = "",
+    data_class: str = "public",
+    task_type: str = "general_task",
+) -> tuple[str | None, str | None]:
     """Direkter LLM-Call ohne Suche — für Schreibaufgaben und Fallback wenn Tavily fehlt."""
+    import uuid as _uuid
+    rid = request_id or _uuid.uuid4().hex[:8]
+
+    # Provider-Reihenfolge aus Orchestrator ableiten (für Diagnose-Log)
+    _provider_order = list(getattr(_orchestrator, "providers", {}).keys())
+    _groq_model = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
+
+    print(
+        f"AILIZA LLM START | request_id={rid} task_type={task_type} "
+        f"data_class={data_class} groq_model={_groq_model} "
+        f"provider_order={_provider_order}",
+        flush=True,
+    )
+
     messages = [
         {
             "role": "system",
@@ -831,26 +934,26 @@ def _ask_llm_directly(task: str) -> tuple[str | None, str | None]:
         },
         {"role": "user", "content": task},
     ]
-    _prov = getattr(_orchestrator, "default_provider", "unknown")
-    _model = "unknown"
     try:
-        _model = getattr(_orchestrator.providers.get(_prov), "model", "unknown")
         answer = _orchestrator.generate(messages)
         print(
-            f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)} mode=direct",
+            f"AILIZA LLM OK | request_id={rid} result=ok chars={len(answer)}",
             flush=True,
         )
         return answer, None
     except AILIZAError as exc:
+        # safe_alternatives enthält sanitisierte Ursachen je Provider (kein Key, kein PII)
+        _reasons = exc.safe_alternatives or []
         print(
-            f"AILIZA LLM FAILED | code={exc.code} provider={_prov} model={_model} mode=direct",
+            f"AILIZA LLM FAILED | request_id={rid} code={exc.code} "
+            f"provider_errors={_reasons}",
             flush=True,
         )
         return None, exc.code
     except Exception as exc:  # noqa: BLE001
         _etype = type(exc).__name__
         print(
-            f"AILIZA LLM FAILED | code=unexpected_error type={_etype} provider={_prov} mode=direct",
+            f"AILIZA LLM FAILED | request_id={rid} code=unexpected_error type={_etype}",
             flush=True,
         )
         return None, "internal_error"
