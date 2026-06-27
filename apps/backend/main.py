@@ -350,9 +350,10 @@ class AgentRunRequest(BaseModel):
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health() -> dict[str, Any]:
-    """Schneller Liveness-Check — kein DB-Call."""
-    return {"status": "ok", "service": "ailiza-backend"}
+    """Schneller Liveness-Check — kein DB-Call. Erreichbar unter /health und /api/health."""
+    return {"status": "ok", "service": "ailiza", "api": "online"}
 
 
 @app.get("/ready")
