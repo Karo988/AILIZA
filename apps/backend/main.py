@@ -376,6 +376,114 @@ def health() -> dict[str, Any]:
     return {"status": "ok", "service": "ailiza", "api": "online"}
 
 
+@app.get("/api/debug/llm-status")
+def debug_llm_status() -> dict[str, Any]:
+    """
+    Diagnose-Endpunkt: Zeigt LLM-Aktivierungsstatus ohne Secrets.
+    Hilft bei der Fehlersuche warum 'Die externe KI ist deaktiviert' erscheint.
+    Kein API-Key, kein Secret, keine PII im Response.
+    """
+    result: dict[str, Any] = {}
+    block_reasons: list[str] = []
+
+    # 1. Gate 10 — Governance-Integrität
+    try:
+        _base_dir = Path(__file__).parent
+        _manifest_path = _base_dir / "governance_integrity.json"
+        try:
+            from .config_integrity import verify_integrity
+        except ImportError:
+            from config_integrity import verify_integrity
+        _integrity = verify_integrity(_base_dir, _manifest_path)
+        gate10_ok = _integrity.all_ok
+        gate10_status = _integrity.overall_status
+        gate10_blocked = [r.path for r in _integrity.file_results if r.decision == "blocked"]
+    except Exception as e:
+        gate10_ok = False
+        gate10_status = f"check-error: {type(e).__name__}"
+        gate10_blocked = []
+        block_reasons.append("gate10_check_failed")
+    result["gate10_ok"] = gate10_ok
+    result["gate10_status"] = gate10_status
+    if gate10_blocked:
+        result["gate10_blocked_files"] = gate10_blocked
+        block_reasons.append("gate10_integrity_violation")
+
+    # 2. Secret-Key-Länge (nur Länge, kein Inhalt)
+    _sk_len = len(os.getenv("AILIZA_SECRET_KEY", ""))
+    secret_key_ok = _sk_len >= 32
+    result["secret_key_ok"] = secret_key_ok
+    result["secret_key_length"] = _sk_len
+    if not secret_key_ok:
+        block_reasons.append("secret_key_too_short")
+
+    # 3. Env-Variable roh
+    _ext_env_raw = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "(not set)")
+    result["env_AILIZA_EXTERNAL_LLM_ENABLED"] = _ext_env_raw
+    result["operation_mode"] = os.getenv("AILIZA_OPERATION_MODE", "normal")
+
+    # 4. Kill-Switch-Auswertung
+    try:
+        try:
+            from .kill_switch import is_external_llm_enabled, get_operation_mode, kill_switch_metadata
+        except ImportError:
+            from kill_switch import is_external_llm_enabled, get_operation_mode, kill_switch_metadata
+        ext_llm_enabled = is_external_llm_enabled()
+        ks_meta = kill_switch_metadata()
+        result["external_llm_enabled"] = ext_llm_enabled
+        result["kill_switch_metadata"] = {k: v for k, v in ks_meta.items()
+                                           if k not in ("api_key", "secret", "token")}
+        if not ext_llm_enabled:
+            block_reasons.append("kill_switch_active_or_env_false")
+    except Exception as e:
+        result["external_llm_enabled"] = False
+        result["kill_switch_error"] = type(e).__name__
+        block_reasons.append("kill_switch_check_failed")
+
+    # 5. API-Keys konfiguriert (nur Präsenz, nicht Inhalt)
+    result["groq_configured"] = bool(os.getenv("GROQ_API_KEY"))
+    result["openai_configured"] = bool(os.getenv("OPENAI_API_KEY"))
+    result["anthropic_configured"] = bool(os.getenv("ANTHROPIC_API_KEY"))
+    result["tavily_configured"] = bool(os.getenv("TAVILY_API_KEY"))
+
+    # 6. Provider-Profile
+    try:
+        try:
+            from .providers.provider_profiles import _PROFILES
+        except ImportError:
+            from providers.provider_profiles import _PROFILES
+        result["providers"] = [
+            {
+                "id": pid,
+                "active": p.active,
+                "admin_disabled": p.admin_disabled,
+                "transfer_basis": p.transfer_basis.value,
+            }
+            for pid, p in _PROFILES.items()
+        ]
+    except Exception as e:
+        result["providers"] = [{"error": type(e).__name__}]
+
+    # 7. Registry — nutzbare Provider
+    try:
+        try:
+            from .registry.registry_loader import get_registry
+        except ImportError:
+            from registry.registry_loader import get_registry
+        _reg = get_registry()
+        result["registry_usable"] = [p.provider_id for p in _reg.get_usable_providers()]
+        if not result["registry_usable"]:
+            block_reasons.append("no_usable_provider_in_registry")
+    except Exception as e:
+        result["registry_usable"] = []
+        result["registry_error"] = type(e).__name__
+        block_reasons.append("registry_load_failed")
+
+    result["block_reasons"] = block_reasons if block_reasons else None
+    result["diagnosis"] = "ok" if not block_reasons else "blocked"
+    return result
+
+
 @app.get("/ready")
 def ready() -> dict[str, Any]:
     """Readiness-Check: DB, Kill-Switch, Scheduler."""
