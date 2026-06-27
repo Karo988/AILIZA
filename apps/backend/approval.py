@@ -165,3 +165,71 @@ def assess_risk(tool: str, params: dict[str, Any]) -> RiskResult:
     if tool == "search":
         return assess_search_risk(str(params.get("query", "")))
     return RiskResult(True, f"Unknown tool: {tool}", RiskLevel.HIGH.value, tool, "<params-unknown>")
+
+
+# ── Approval Preview (kein Execute) ──────────────────────────────────────────
+
+@dataclass
+class ApprovalPreview:
+    """
+    Vorschau einer geplanten Aktion OHNE Ausführung.
+    Enthält alle Informationen die ein Mensch zur Freigabe braucht.
+    KEINE Secrets, KEIN vollständiger Input, KEIN Stack-Trace.
+    """
+    action: str                    # Was soll passieren
+    target_system: str             # Wo soll es passieren
+    data_class: str                # Welche Datenklasse ist betroffen
+    risk_level: str                # Risikoeinschätzung
+    reason: str                    # Warum braucht es eine Freigabe
+    safe_alternative: str          # Was passiert bei Ablehnung
+    required_role: str             # Wer darf freigeben
+    capability_id: str | None      # Welche Capability ist betroffen
+    provider_id: str | None        # Welcher Provider wird genutzt
+    approval_timeout_seconds: int  # Wie lange ist die Freigabe gültig
+    preview_only: bool = True      # Sicherheitsfeld: darf NICHT ausgeführt werden
+
+
+def create_approval_preview(
+    action: str,
+    tool: str,
+    params: dict[str, Any],
+    data_class: str = "unknown",
+    capability_id: str | None = None,
+    provider_id: str | None = None,
+    safe_alternative: str = "Aktion abbrechen oder lokal verarbeiten",
+) -> ApprovalPreview:
+    """
+    Erstellt eine Approval-Vorschau ohne die Aktion auszuführen.
+    Darf nur an den Nutzer/Admin gezeigt werden — nie ausführen.
+    """
+    risk = assess_risk(tool, params)
+    required_role = APPROVAL_ROLES.get(risk.risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
+    role_str = ", ".join(required_role)
+
+    target = "extern"
+    if tool == "fetch":
+        host = ""
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(str(params.get("url", ""))).hostname or "unbekannt"
+        except Exception:
+            host = "unbekannt"
+        target = f"URL-Abruf: {host}"
+    elif tool == "search":
+        target = "Web-Suche (Tavily)"
+    elif tool == "llm_call":
+        target = f"LLM-Provider: {provider_id or 'unbekannt'}"
+
+    return ApprovalPreview(
+        action=action,
+        target_system=target,
+        data_class=data_class,
+        risk_level=risk.risk_level,
+        reason=risk.reason,
+        safe_alternative=safe_alternative,
+        required_role=role_str,
+        capability_id=capability_id,
+        provider_id=provider_id,
+        approval_timeout_seconds=risk.approval_timeout(),
+        preview_only=True,
+    )

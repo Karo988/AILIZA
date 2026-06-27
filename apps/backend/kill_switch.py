@@ -142,3 +142,88 @@ def enforce_action_allowed(action: str) -> None:
             "kill_switch_active",
             safe_alternatives=[f"Aktion '{action}' ist im Modus '{mode.value}' nicht erlaubt."],
         )
+
+
+# ── Granularer Kill-Switch-Check (Provider / Modul / Capability) ──────────────
+
+def check_kill_switch(scope: str, name: str) -> dict[str, Any]:
+    """
+    Prueft Kill-Switch-Status fuer einen bestimmten Scope.
+
+    scope: "provider" | "module" | "capability" | "global"
+    name:  Provider-ID, Modul-Name oder Capability-ID
+
+    Gibt {allowed: bool, scope, name, reason, mode} zurueck.
+    Fail-closed: bei Fehler immer allowed=False.
+    """
+    try:
+        mode = get_operation_mode()
+        mode_blocks = _MODE_BLOCKS.get(mode, set())
+
+        if scope == "global":
+            allowed = "external_llm" not in mode_blocks and is_external_llm_enabled()
+            reason = "Kill-Switch aktiv" if not allowed else "ok"
+            return {"allowed": allowed, "scope": scope, "name": name,
+                    "reason": reason, "mode": mode.value}
+
+        if scope == "provider":
+            # Provider-spezifischer Kill-Switch: Admin-disabled-Flag aus provider_profiles
+            try:
+                from .providers.provider_profiles import get_profile
+            except ImportError:
+                from providers.provider_profiles import get_profile
+            profile = get_profile(name)
+            if profile is None:
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Unbekannter Provider '{name}'", "mode": mode.value}
+            if profile.admin_disabled:
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Provider '{name}' durch Admin-Kill-Switch deaktiviert",
+                        "mode": mode.value}
+            if not profile.active:
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Provider '{name}' ist inaktiv",
+                        "mode": mode.value}
+            # Globaler Modus blockiert externe Calls?
+            if "external_llm" in mode_blocks:
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Modus '{mode.value}' blockiert externe Provider-Calls",
+                        "mode": mode.value}
+            return {"allowed": True, "scope": scope, "name": name,
+                    "reason": "ok", "mode": mode.value}
+
+        if scope == "capability":
+            try:
+                from .capabilities.registry import _CAPABILITIES
+            except ImportError:
+                from capabilities.registry import _CAPABILITIES
+            cap = _CAPABILITIES.get(name)
+            if cap is None:
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Unbekannte Capability '{name}'", "mode": mode.value}
+            if not cap.enabled:
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Capability '{name}' ist deaktiviert",
+                        "mode": mode.value}
+            if cap.can_send_external and "external_llm" in mode_blocks:
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Modus '{mode.value}' blockiert externe Capability-Calls",
+                        "mode": mode.value}
+            return {"allowed": True, "scope": scope, "name": name,
+                    "reason": "ok", "mode": mode.value}
+
+        if scope == "module":
+            # Modul-Kill-Switch über action_allowed (Modul-Name entspricht Aktionsname)
+            allowed = is_action_allowed(name)
+            return {"allowed": allowed, "scope": scope, "name": name,
+                    "reason": "ok" if allowed else f"Modul '{name}' im Modus '{mode.value}' blockiert",
+                    "mode": mode.value}
+
+        # Unbekannter Scope → fail-closed
+        return {"allowed": False, "scope": scope, "name": name,
+                "reason": f"Unbekannter Scope '{scope}' — fail-closed", "mode": mode.value}
+
+    except Exception as exc:
+        return {"allowed": False, "scope": scope, "name": name,
+                "reason": f"Kill-Switch-Prüfung fehlgeschlagen — fail-closed: {type(exc).__name__}",
+                "mode": "unknown"}

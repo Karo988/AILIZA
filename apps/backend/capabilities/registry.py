@@ -57,6 +57,17 @@ class Capability:
     gdpr_purpose: str          # Zweckbindung nach Art. 5 DSGVO
     enabled: bool = True
     tags: list[str] = field(default_factory=list)
+    # Erweiterungsfelder für Orchestrator-Anbindung (Codex-Andockpunkt)
+    provider_profile_id: str | None = None   # verknüpfter Provider, falls extern
+    denied_data_classes: list[DataClass] = field(default_factory=list)
+    allowed_actions: list[str] = field(default_factory=list)  # "read","write","send_external","save_memory"
+    can_read: bool = True
+    can_write: bool = False
+    can_send_external: bool = False
+    can_save_memory: bool = False
+    approval_role: str = "admin"             # Mindest-Rolle für Freigabe
+    fallback_id: str | None = None           # Fallback-Capability bei Blockierung
+    default_risk: RiskLevel | None = None    # Überschreibbarer Risiko-Default
 
 
 # ── Statische Capability-Definitionen ────────────────────────────────────────
@@ -69,10 +80,16 @@ _CAPABILITIES: dict[str, Capability] = {
         description="Suche im Internet via Tavily. Kein PII im Query.",
         target=DataTarget.EXTERNAL_LLM,
         allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY,
+                             DataClass.PERSONAL_DATA, DataClass.HR, DataClass.FINANCIAL],
         risk_level=RiskLevel.MEDIUM,
         requires_approval=False,
         external_call=True,
+        can_send_external=True,
+        allowed_actions=["read", "send_external"],
         gdpr_purpose="Informationsbeschaffung fuer Nutzeranfragen",
+        provider_profile_id="tavily",
+        fallback_id="llm_call",
         tags=["search", "tavily", "external"],
     ),
     "web_fetch": Capability(
@@ -81,24 +98,33 @@ _CAPABILITIES: dict[str, Capability] = {
         description="Laedt eine Webseite. Nur http/https, keine privaten IPs.",
         target=DataTarget.EXTERNAL_LLM,
         allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY,
+                             DataClass.PERSONAL_DATA],
         risk_level=RiskLevel.MEDIUM,
         requires_approval=False,
         external_call=True,
+        can_send_external=True,
+        allowed_actions=["read", "send_external"],
         gdpr_purpose="Inhaltsbeschaffung fuer Nutzeranfragen",
+        fallback_id="llm_call",
         tags=["fetch", "http", "external"],
     ),
     "llm_call": Capability(
         capability_id="llm_call",
         name="LLM-Aufruf",
-        description="Sendet (redigierten) Prompt an externen Provider (Groq/Anthropic).",
+        description="Sendet (redigierten) Prompt an externen Provider (Groq/Anthropic/OpenAI).",
         target=DataTarget.EXTERNAL_LLM,
         allowed_data_classes=[
             DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
             DataClass.PERSONAL_DATA,
         ],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY],
         risk_level=RiskLevel.HIGH,
         requires_approval=False,
         external_call=True,
+        can_read=True,
+        can_send_external=True,
+        allowed_actions=["read", "send_external"],
         gdpr_purpose="KI-gestuetzte Verarbeitung von Nutzeranfragen",
         tags=["llm", "groq", "anthropic", "external"],
     ),
@@ -107,12 +133,16 @@ _CAPABILITIES: dict[str, Capability] = {
         name="Langzeitgedaechtnis speichern",
         description="Speichert abstrahierte Lerninhalte in reflection_facts. Nur opt-in.",
         target=DataTarget.MEMORY,
-        allowed_data_classes=[
-            DataClass.PUBLIC, DataClass.INTERNAL,
-        ],
+        allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY,
+                             DataClass.PERSONAL_DATA, DataClass.HR, DataClass.FINANCIAL],
         risk_level=RiskLevel.HIGH,
         requires_approval=True,
+        approval_role="admin",
         external_call=False,
+        can_write=True,
+        can_save_memory=True,
+        allowed_actions=["read", "write", "save_memory"],
         gdpr_purpose="Verbesserung der Agentenqualitaet mit Nutzereinwilligung",
         tags=["memory", "reflection", "opt-in"],
     ),
@@ -121,12 +151,13 @@ _CAPABILITIES: dict[str, Capability] = {
         name="Langzeitgedaechtnis lesen",
         description="Liest gespeicherte Facts aus reflection_facts.",
         target=DataTarget.MEMORY,
-        allowed_data_classes=[
-            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
-        ],
+        allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY],
         risk_level=RiskLevel.MEDIUM,
         requires_approval=False,
         external_call=False,
+        can_read=True,
+        allowed_actions=["read"],
         gdpr_purpose="Kontextabruf fuer verbesserte Antwortqualitaet",
         tags=["memory", "reflection", "read"],
     ),
@@ -136,9 +167,14 @@ _CAPABILITIES: dict[str, Capability] = {
         description="Agent schlaegt neuen Skill vor (abstrahiert, kein PII). Muss von Admin genehmigt werden.",
         target=DataTarget.MEMORY,
         allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY,
+                             DataClass.PERSONAL_DATA],
         risk_level=RiskLevel.HIGH,
         requires_approval=True,
+        approval_role="admin",
         external_call=False,
+        can_write=True,
+        allowed_actions=["read", "write"],
         gdpr_purpose="Selbstoptimierung des Agenten mit menschlicher Kontrolle",
         tags=["skill", "learning", "approval-required"],
     ),
@@ -147,27 +183,32 @@ _CAPABILITIES: dict[str, Capability] = {
         name="Skill ausfuehren",
         description="Fuehrt einen vom Admin freigegebenen Skill aus.",
         target=DataTarget.RAM,
-        allowed_data_classes=[
-            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
-        ],
+        allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY],
         risk_level=RiskLevel.MEDIUM,
         requires_approval=False,
         external_call=False,
+        can_read=True,
+        can_write=True,
+        allowed_actions=["read", "write"],
         gdpr_purpose="Ausfuehren freigegebener Agentenaufgaben",
         tags=["skill", "execute"],
     ),
     "document_scan": Capability(
         capability_id="document_scan",
         name="Dokument scannen",
-        description="Klassifiziert hochgeladene Dokumente vor der Verarbeitung.",
+        description="Klassifiziert hochgeladene Dokumente vor der Verarbeitung. Lokal, kein externer Call.",
         target=DataTarget.RAM,
         allowed_data_classes=[
             DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY],
         risk_level=RiskLevel.MEDIUM,
         requires_approval=False,
         external_call=False,
+        can_read=True,
+        allowed_actions=["read"],
         gdpr_purpose="Datenschutz-Vorpruefung vor Dokumentenverarbeitung",
         tags=["document", "classification", "local"],
     ),
@@ -177,9 +218,12 @@ _CAPABILITIES: dict[str, Capability] = {
         description="Schreibt Ereignis in Audit-Log (kein Inhalt, kein PII).",
         target=DataTarget.AUDIT,
         allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY],
         risk_level=RiskLevel.LOW,
         requires_approval=False,
         external_call=False,
+        can_write=True,
+        allowed_actions=["write"],
         gdpr_purpose="Nachweisfuehrung und Compliance-Dokumentation",
         tags=["audit", "logging", "internal"],
     ),
@@ -189,9 +233,12 @@ _CAPABILITIES: dict[str, Capability] = {
         description="Empfaengt Nachricht ueber Telegram. Nur nach Nutzer-Opt-in. Kein Inhalt in Logs.",
         target=DataTarget.RAM,
         allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY],
         risk_level=RiskLevel.MEDIUM,
         requires_approval=False,
         external_call=False,
+        can_read=True,
+        allowed_actions=["read"],
         gdpr_purpose="Entgegennahme von Nutzeranfragen ueber Messenger-Kanal (nur mit Einwilligung)",
         tags=["messenger", "telegram", "receive"],
     ),
@@ -204,9 +251,13 @@ _CAPABILITIES: dict[str, Capability] = {
             DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
             DataClass.PERSONAL_DATA,
         ],
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY],
         risk_level=RiskLevel.LOW,
         requires_approval=False,
         external_call=False,
+        can_read=True,
+        can_write=True,
+        allowed_actions=["read", "write"],
         gdpr_purpose="Datenschutz-Vorpruefung und Redaktion vor LLM-Verarbeitung",
         tags=["messenger", "classify", "redact", "local"],
     ),
@@ -216,9 +267,14 @@ _CAPABILITIES: dict[str, Capability] = {
         description="Sendet Antwort ueber Telegram/Slack/Discord an den Nutzer. Nur nach Opt-in und LLM-Verarbeitung.",
         target=DataTarget.EXTERNAL_LLM,
         allowed_data_classes=[DataClass.PUBLIC, DataClass.INTERNAL],
-        risk_level=RiskLevel.HIGH,  # Externer Call + Nutzer-Opt-in; CRITICAL ist Secrets/irreversiblen rechtl. Wirkungen vorbehalten
+        denied_data_classes=[DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY,
+                             DataClass.PERSONAL_DATA, DataClass.HR, DataClass.FINANCIAL],
+        risk_level=RiskLevel.HIGH,
         requires_approval=True,
+        approval_role="admin",
         external_call=True,
+        can_send_external=True,
+        allowed_actions=["send_external"],
         enabled=True,
         gdpr_purpose="Antwortlieferung ueber Messenger-Kanal (nur mit Einwilligung, Art. 6 Abs. 1 lit. a DSGVO)",
         tags=["messenger", "telegram", "slack", "send", "external"],
@@ -279,6 +335,24 @@ def check_capability(
     # Strengste Datenklasse bestimmen — Mischfaelle (PUBLIC+CREDENTIALS) → CREDENTIALS
     highest = _highest_class(data_classes)
 
+    # Explizit verbotene Datenklassen prüfen (denied_data_classes hat Vorrang)
+    explicitly_denied = [dc for dc in data_classes if dc in cap.denied_data_classes]
+    if explicitly_denied:
+        denied_names = [dc.value for dc in explicitly_denied]
+        return CapabilityCheckResult(
+            capability_id=capability_id,
+            allowed=False,
+            decision=PolicyDecision.BLOCK,
+            reason=f"Datenklassen explizit verboten fuer '{capability_id}': {', '.join(denied_names)}",
+            requires_approval=True,
+            risk_level=cap.risk_level.value,
+            capability_enabled=True,
+            context_summary={
+                "denied_classes": denied_names,
+                "fallback_id": cap.fallback_id,
+            },
+        )
+
     # Datenklassen gegen erlaubte Liste pruefen
     forbidden = [dc for dc in data_classes if dc not in cap.allowed_data_classes]
     if forbidden:
@@ -334,7 +408,7 @@ def check_capability(
 
 
 def get_all_capabilities() -> list[dict[str, Any]]:
-    """Gibt alle Capabilities als Dict-Liste zurueck (fuer Admin-Dashboard)."""
+    """Gibt alle Capabilities als Dict-Liste zurueck (fuer Admin-Dashboard und Codex-Orchestrator)."""
     return [
         {
             "capability_id": cap.capability_id,
@@ -342,11 +416,20 @@ def get_all_capabilities() -> list[dict[str, Any]]:
             "description": cap.description,
             "target": cap.target.value,
             "allowed_data_classes": [dc.value for dc in cap.allowed_data_classes],
+            "denied_data_classes": [dc.value for dc in cap.denied_data_classes],
             "risk_level": cap.risk_level.value,
             "requires_approval": cap.requires_approval,
+            "approval_role": cap.approval_role,
             "external_call": cap.external_call,
+            "can_read": cap.can_read,
+            "can_write": cap.can_write,
+            "can_send_external": cap.can_send_external,
+            "can_save_memory": cap.can_save_memory,
+            "allowed_actions": cap.allowed_actions,
             "enabled": cap.enabled,
             "gdpr_purpose": cap.gdpr_purpose,
+            "provider_profile_id": cap.provider_profile_id,
+            "fallback_id": cap.fallback_id,
             "tags": cap.tags,
         }
         for cap in _CAPABILITIES.values()

@@ -537,12 +537,14 @@ class TestPIIReinsertion:
         tools = [p.tool for p in plan]
         assert "search" in tools
 
-    def test_normal_question_uses_search(self):
-        """Wissensfragen ohne Schreibintent nutzen weiterhin search."""
+    def test_knowledge_question_goes_direct_to_llm(self):
+        """Wissensfragen (was ist, erkläre) gehen direkt ans LLM — kein search-Tool."""
         from apps.backend.agent_runtime import plan_tool_calls
         plan = plan_tool_calls("Was ist FastAPI und wofür wird es verwendet?")
         tools = [p.tool for p in plan]
-        assert "search" in tools
+        assert "search" not in tools, (
+            "Einfache Wissensfragen sollen direkt ans LLM, nicht zur Websuche"
+        )
 
     def test_writing_task_redaction_and_reinsertion(self):
         """E-Mail-Schreibaufgabe: redaction + reinsertion korrekt, kein 'Agent run completed'."""
