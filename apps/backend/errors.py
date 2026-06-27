@@ -44,6 +44,51 @@ MESSAGES: dict[str, str] = {
 }
 
 
+# Admin-sichtbare Diagnose-Hinweise je Fehlercode.
+# Nur für /api/debug/* und interne Logs — niemals direkt zum Nutzer.
+# Kein API-Key, kein Secret, keine PII.
+ADMIN_HINTS: dict[str, str] = {
+    "provider_forbidden": (
+        "HTTP 403: Provider verweigert Zugriff auf das konfigurierte Modell. "
+        "Häufigste Ursache: GROQ_MODEL ist auf ein Paid-Only-Modell gesetzt "
+        "(z.B. llama-3.3-70b-versatile). Fix: GROQ_MODEL=llama-3.1-8b-instant "
+        "in Render-Env setzen oder löschen (Free-Tier)."
+    ),
+    "no_api_key": (
+        "API-Key fehlt. Prüfe ob GROQ_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY "
+        "in den Render-Umgebungsvariablen gesetzt sind."
+    ),
+    "invalid_api_key": (
+        "API-Key vorhanden aber ungültig (HTTP 401). "
+        "Key in Render-Env aktualisieren."
+    ),
+    "rate_limited": (
+        "Rate-Limit / Quota erschöpft (HTTP 429). "
+        "Provider-Plan prüfen oder später erneut versuchen. "
+        "Bei OpenAI: Billing-Limit in dashboard.openai.com prüfen."
+    ),
+    "provider_unavailable": (
+        "Provider nicht erreichbar (Netzwerkfehler oder 5xx). "
+        "Temporärer Ausfall — nächster Provider im Failover wird versucht."
+    ),
+    "all_providers_failed": (
+        "Alle konfigurierten Provider haben fehlgeschlagen. "
+        "Häufigste Ursachen: (1) GROQ_MODEL auf Paid-Plan-Modell gesetzt → 403, "
+        "(2) Rate-Limit bei OpenAI → 429, (3) API-Key fehlt/ungültig für Anthropic. "
+        "Prüfe /api/debug/provider-test für Einzeldetails."
+    ),
+    "model_not_found": (
+        "Das konfigurierte Modell existiert nicht (HTTP 404). "
+        "GROQ_MODEL / OPENAI_MODEL auf bekanntes Modell setzen."
+    ),
+    "kill_switch_active": (
+        "Kill-Switch aktiv — AILIZA_EXTERNAL_LLM_ENABLED=false oder "
+        "Gate-10-Integritätsprüfung fehlgeschlagen. "
+        "Prüfe /api/debug/llm-status für Details."
+    ),
+}
+
+
 class AILIZAError(Exception):
     """Basis-Exception mit deutscher Meldung, Code und sicheren Alternativen."""
 

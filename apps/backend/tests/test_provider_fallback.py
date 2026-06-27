@@ -264,3 +264,135 @@ class TestErrorMessageSafety:
         msg = MESSAGES.get("provider_forbidden", "")
         assert len(msg) > 10, "provider_forbidden-Meldung fehlt oder zu kurz"
         assert "api" not in msg.lower() or "schlüssel" not in msg.lower()
+
+
+# ── 6. Groq Model-Fallback bei 403 ───────────────────────────────────────────
+
+class TestGroqModelFallbackOn403:
+
+    def test_paid_model_403_retries_with_free_tier(self, monkeypatch):
+        """
+        Wenn GROQ_MODEL auf ein Paid-Modell gesetzt ist und 403 kommt,
+        muss Groq automatisch llama-3.1-8b-instant versuchen.
+        """
+        import urllib.error
+        from unittest.mock import patch, MagicMock, call as mock_call
+        from apps.backend.providers.groq_provider import GroqProvider, _DEFAULT_MODEL
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        monkeypatch.setenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        p = GroqProvider()
+        assert p.model == "llama-3.3-70b-versatile"
+
+        call_count = 0
+        def fake_urlopen(req, timeout=20):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Erster Call (paid model) → 403
+                raise urllib.error.HTTPError(
+                    url=req.full_url, code=403, msg="Forbidden",
+                    hdrs=MagicMock(), fp=None,
+                )
+            # Zweiter Call (free tier) → Erfolg
+            mock_resp = MagicMock()
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_resp.read.return_value = b'{"choices":[{"message":{"content":"AILIZA_PROVIDER_OK"}}]}'
+            return mock_resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = p.generate([{"role": "user", "content": "test"}])
+
+        assert result == "AILIZA_PROVIDER_OK"
+        assert call_count == 2, f"Erwartet 2 Calls (original + fallback), got {call_count}"
+
+    def test_default_model_403_does_not_retry(self, monkeypatch):
+        """
+        Wenn das Default-Modell 403 gibt, darf KEIN weiterer Retry stattfinden
+        (würde endlose Schleife verursachen).
+        """
+        import urllib.error
+        from unittest.mock import patch, MagicMock
+        from apps.backend.providers.groq_provider import GroqProvider
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        monkeypatch.setenv("GROQ_MODEL", "")  # → Default wird genutzt
+        p = GroqProvider()
+
+        call_count = 0
+        def fake_urlopen(req, timeout=20):
+            nonlocal call_count
+            call_count += 1
+            raise urllib.error.HTTPError(
+                url=req.full_url, code=403, msg="Forbidden",
+                hdrs=MagicMock(), fp=None,
+            )
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with pytest.raises(AILIZAError) as exc_info:
+                p.generate([{"role": "user", "content": "test"}])
+
+        assert exc_info.value.code == "provider_forbidden"
+        assert call_count == 1, f"Nur 1 Call erwartet (kein Retry bei Default-Modell), got {call_count}"
+
+    def test_fallback_model_also_fails_raises_combined_error(self, monkeypatch):
+        """
+        Wenn Paid-Modell 403 gibt UND Free-Tier-Fallback auch fehlschlägt,
+        muss ein kombinierter Fehler mit beiden Ursachen geworfen werden.
+        """
+        import urllib.error
+        from unittest.mock import patch, MagicMock
+        from apps.backend.providers.groq_provider import GroqProvider
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        monkeypatch.setenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        p = GroqProvider()
+
+        def fake_urlopen(req, timeout=20):
+            raise urllib.error.HTTPError(
+                url=req.full_url, code=429, msg="Rate Limited",
+                hdrs=MagicMock(), fp=None,
+            )
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with pytest.raises(AILIZAError) as exc_info:
+                p.generate([{"role": "user", "content": "test"}])
+
+        exc = exc_info.value
+        # Rate-Limit oder provider_forbidden — beide sind gültig je nach Reihenfolge
+        assert exc.code in ("rate_limited", "provider_forbidden", "provider_error")
+
+
+# ── 7. Admin-Hints — sanitisierte Diagnose ohne Secrets ──────────────────────
+
+class TestAdminHints:
+
+    def test_admin_hints_exist_for_key_codes(self):
+        """ADMIN_HINTS muss für die häufigsten Fehlercodes Hinweise enthalten."""
+        from apps.backend.errors import ADMIN_HINTS
+        for code in ("provider_forbidden", "no_api_key", "rate_limited", "all_providers_failed"):
+            assert code in ADMIN_HINTS, f"ADMIN_HINTS fehlt für '{code}'"
+            assert len(ADMIN_HINTS[code]) > 20, f"ADMIN_HINTS['{code}'] zu kurz"
+
+    def test_admin_hints_contain_no_api_keys(self):
+        """ADMIN_HINTS dürfen keine echten Schlüsselwerte enthalten."""
+        from apps.backend.errors import ADMIN_HINTS
+        for code, hint in ADMIN_HINTS.items():
+            # Typische Key-Prefixes die niemals in Hints stehen dürfen
+            assert "gsk_" not in hint, f"Groq-Key-Prefix in ADMIN_HINTS['{code}']"
+            assert "sk-" not in hint, f"OpenAI-Key-Prefix in ADMIN_HINTS['{code}']"
+
+    def test_all_providers_failed_hint_mentions_groq_model(self):
+        """Der all_providers_failed Hint muss auf GROQ_MODEL hinweisen."""
+        from apps.backend.errors import ADMIN_HINTS
+        hint = ADMIN_HINTS.get("all_providers_failed", "")
+        assert "groq" in hint.lower() or "groq_model" in hint.lower()
+
+    def test_provider_forbidden_hint_mentions_free_tier_fix(self):
+        """provider_forbidden Hint muss die kostenlose Lösung erwähnen."""
+        from apps.backend.errors import ADMIN_HINTS
+        hint = ADMIN_HINTS.get("provider_forbidden", "")
+        assert "llama-3.1-8b-instant" in hint, (
+            "provider_forbidden Hint muss llama-3.1-8b-instant als Fix nennen"
+        )

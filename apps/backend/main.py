@@ -554,6 +554,11 @@ def debug_provider_test() -> dict[str, Any]:
         )
         results[pid] = entry
 
+    try:
+        from .errors import ADMIN_HINTS as _AH
+    except ImportError:
+        from errors import ADMIN_HINTS as _AH  # type: ignore[no-redef]
+
     return {
         "request_id": rid,
         "final_status": final_status,
@@ -561,9 +566,14 @@ def debug_provider_test() -> dict[str, Any]:
         "groq_model_resolved": groq_model_used,
         "groq_model_advice": (
             "GROQ_MODEL sollte 'llama-3.1-8b-instant' (kostenlos) sein. "
-            "'llama-3.3-70b-versatile' erfordert einen bezahlten Groq-Plan (403)."
+            "'llama-3.3-70b-versatile' erfordert einen bezahlten Groq-Plan → 403."
         ),
         "providers": results,
+        "admin_hints": {
+            pid: _AH.get(entry.get("error_type", ""), "")
+            for pid, entry in results.items()
+            if isinstance(entry, dict) and entry.get("error_type") and _AH.get(entry.get("error_type", ""))
+        },
         "note": "Dieser Endpunkt sollte in Produktion durch AILIZA_DEBUG-Flag geschützt werden.",
     }
 
@@ -906,12 +916,15 @@ def _ask_llm_directly(
     request_id: str = "",
     data_class: str = "public",
     task_type: str = "general_task",
-) -> tuple[str | None, str | None]:
-    """Direkter LLM-Call ohne Suche — für Schreibaufgaben und Fallback wenn Tavily fehlt."""
+) -> tuple[str | None, str | None, list[str]]:
+    """
+    Direkter LLM-Call ohne Suche.
+    Gibt (answer, error_code, provider_errors) zurück.
+    provider_errors: sanitisierte Ursachen je Provider (kein Key, kein PII) — für Admin-Debug.
+    """
     import uuid as _uuid
     rid = request_id or _uuid.uuid4().hex[:8]
 
-    # Provider-Reihenfolge aus Orchestrator ableiten (für Diagnose-Log)
     _provider_order = list(getattr(_orchestrator, "providers", {}).keys())
     _groq_model = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
 
@@ -940,23 +953,22 @@ def _ask_llm_directly(
             f"AILIZA LLM OK | request_id={rid} result=ok chars={len(answer)}",
             flush=True,
         )
-        return answer, None
+        return answer, None, []
     except AILIZAError as exc:
-        # safe_alternatives enthält sanitisierte Ursachen je Provider (kein Key, kein PII)
         _reasons = exc.safe_alternatives or []
         print(
             f"AILIZA LLM FAILED | request_id={rid} code={exc.code} "
             f"provider_errors={_reasons}",
             flush=True,
         )
-        return None, exc.code
+        return None, exc.code, _reasons
     except Exception as exc:  # noqa: BLE001
         _etype = type(exc).__name__
         print(
             f"AILIZA LLM FAILED | request_id={rid} code=unexpected_error type={_etype}",
             flush=True,
         )
-        return None, "internal_error"
+        return None, "internal_error", [f"Unerwarteter Fehler: {_etype}"]
 
 
 @app.post("/agent/run")
@@ -1013,7 +1025,7 @@ def run_agent(
             f"task_chars={len(effective_task)}",
             flush=True,
         )
-        answer, error_code = _ask_llm_directly(effective_task)
+        answer, error_code, provider_errors = _ask_llm_directly(effective_task)
         print(
             f"AILIZA WRITING TASK | direct_llm_called=True "
             f"answer_chars={len(answer) if answer else 0} "
@@ -1055,16 +1067,22 @@ def run_agent(
                 },
             )
             return final
-        # LLM fehlgeschlagen → Fehlermeldung zurückgeben
-        return {
+        # LLM fehlgeschlagen → sichere Fehlermeldung für Nutzer, Admin-Details separat
+        _user_msg = MESSAGES.get(error_code or "internal_error", "LLM-Aufruf fehlgeschlagen.")
+        _failed_resp: dict[str, Any] = {
             "status": "failed",
-            "message": MESSAGES.get(error_code or "internal_error", "LLM-Aufruf fehlgeschlagen."),
-            "ai_response": MESSAGES.get(error_code or "internal_error", "LLM-Aufruf fehlgeschlagen."),
+            "message": _user_msg,
+            "ai_response": _user_msg,
             "steps": [],
             "results": [],
             "tenant_id": tenant,
-            "llm_notice": MESSAGES.get(error_code or "internal_error", ""),
+            "llm_notice": _user_msg,
         }
+        # provider_errors: sanitisierte Ursachen je Provider (kein Key, kein PII)
+        # Nur im Response wenn vorhanden — Admin kann diese für Diagnose nutzen
+        if provider_errors:
+            _failed_resp["provider_errors"] = provider_errors
+        return _failed_resp
     # ── Ende Schreibaufgaben-Pfad ─────────────────────────────────────────────
 
     runtime = AgentRuntime()
@@ -1086,7 +1104,7 @@ def run_agent(
 
     # Local-only / degraded: Suche fehlgeschlagen, aber LLM direkt fragen
     if result.get("status") in ("local_only", "degraded"):
-        answer, error_code = _ask_llm_directly(effective_task)
+        answer, error_code, provider_errors = _ask_llm_directly(effective_task)
         if answer is not None:
             result["status"] = "completed"
             result["message"] = answer
@@ -1121,6 +1139,8 @@ def run_agent(
             result["pii_detected"] = pii_detected
         if error_code:
             result["llm_notice"] = MESSAGES.get(error_code, "")
+        if provider_errors:
+            result["provider_errors"] = provider_errors
         return result
 
     search_text = extract_agent_answer(result)
@@ -1136,11 +1156,14 @@ def run_agent(
                 result["llm_notice"] = MESSAGES.get(error_code, "")
     elif not result.get("steps"):
         # Kein Tool geplant (Schreibaufgabe, Übersetzung etc.) → LLM direkt
-        answer, error_code = _ask_llm_directly(effective_task)
+        answer, error_code, provider_errors = _ask_llm_directly(effective_task)
         if answer is not None:
             result["message"] = answer
-        elif error_code:
-            result["llm_notice"] = MESSAGES.get(error_code, "")
+        else:
+            if error_code:
+                result["llm_notice"] = MESSAGES.get(error_code, "")
+            if provider_errors:
+                result["provider_errors"] = provider_errors
 
     # PII-Reinsertion: Originalwerte lokal wieder einsetzen (NUR RAM, nie loggen)
     reinsertion_used = False
