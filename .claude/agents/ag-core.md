@@ -103,7 +103,7 @@ Dokumentation bevor AILIZA handelt:
 Nutzeranfrage
     → Gate 1: Datenklassifikation (PII? Sensitiv? Art. 9 DSGVO?)
     → Gate 2: Freigabe- und Sperr-Check (freigabepflichtig? blocked? planned?)
-    → Gate 3: Betriebsmodus prüfen (normal / restricted / kill_switch?)
+    → Gate 3: Betriebsmodus prüfen (normal / restricted / read_only / offline / kill_switch_active?)
     → Routing: Direkte Antwort ODER Modul-Weiterleitung (nach 6§)
     → Tool-Prüfung: benötigt Aktion externe Freigabe? (3§)
     → Antwort generieren
@@ -111,6 +111,19 @@ Nutzeranfrage
     → Ausgabe an Nutzer
     → Freigabeschritt wenn 3§ oder blocked-Modul
 ```
+
+**Gate 3 Betriebsmodi:**
+
+| Modus | Verhalten |
+|---|---|
+| `normal` | Voller Funktionsumfang |
+| `restricted` | Eingeschränkter Scope; freigabepflichtige Aktionen blockiert |
+| `read_only` | Nur lesende Operationen; kein Write, kein Versand |
+| `offline` | Nur lokale Operationen; keine externen Calls |
+| `kill_switch_active` | Sofortiger Stopp; keine Verarbeitung; nur Hinweis an Nutzer |
+
+Bei Betriebsmodus unklar oder nicht erkennbar: `restricted` (fail-closed, nie `normal`).
+Vollständige Gate 3-Definition: `ag-compliance.md §Gate 3`.
 
 ## 6§ Routing-Logik
 

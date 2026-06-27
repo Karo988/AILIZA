@@ -1,8 +1,9 @@
 ---
 name: core-readiness
-description: AILIZA Core-Readiness-Definition. Was "AILIZA Core ist fertig" bedeutet — Mindestanforderungen für Governance, Tests, Routing, Dokumentation und Audit. Basis für Reifegradbewertung.
+description: AILIZA Core-Readiness-Definition. Drei Ebenen — Prompt-ready, Spec-ready, Tech-ready. Aktueller Status: Basis v1.0 Spec-ready (Stand 2026-06-23).
 status: active
 updated: 2026-06-23
+version: 1.1
 ---
 
 # core-readiness — AILIZA Core-Readiness
@@ -11,146 +12,113 @@ Stand: 2026-06-23
 
 ---
 
-## Definition: AILIZA Core ist fertig
+## Drei-Ebenen-Modell
 
-AILIZA Core gilt als fertig, wenn alle folgenden Kriterien erfüllt sind.
+AILIZA Core-Readiness ist in drei unabhängig bewertbaren Ebenen definiert.
+Ein höheres Level setzt das vorherige voraus.
+
+| Ebene | Bedeutung | Aktueller Status |
+|---|---|---|
+| **Prompt-ready** | Alle Prompts, Regeln und Agenten-Definitionen vollständig und konsistent | ✅ erreicht |
+| **Spec-ready** | Alle Spezifikationsdokumente, Tests (definiert), Gap-Analyse, Lifecycle-Dokumente vollständig | ✅ erreicht |
+| **Tech-ready** | Technische Implementierung (Backend, Vault, Provider) live und Tests bestanden | ⏳ ausstehend |
+
+**Aktueller Gesamtstatus: Basis v1.0 Spec-ready (Stand: 2026-06-23)**
 
 ---
 
-## Kriterium 1: Governance vollständig
+## Ebene 1: Prompt-ready
+
+AILIZA Core ist Prompt-ready wenn alle Agenten-Definitionen vollständig, konsistent und widerspruchsfrei sind.
 
 | Anforderung | Datei | Status |
 |---|---|---|
-| Master-Governance definiert (Vorrangregeln, Autonomie, Freigabe, Datenschutz) | ag-master.md | ✅ |
-| Core-Agent definiert (Einstieg, erlaubte Aufgaben, Routing, Basisfluss) | ag-core.md | ✅ |
+| Master-Governance vollständig (Vorrangregeln, Autonomie, Freigabe, Memory, Datenschutz) | ag-master.md v1.1 | ✅ |
+| Core-Agent vollständig (Einstieg, Basisfluss, Routing, Gate 1–3, Datenschutzregeln) | ag-core.md v1.1 | ✅ |
+| Gate 3 Betriebsmodi vollständig (5 Modi inkl. kill_switch_active) | ag-core.md §5, ag-compliance.md Gate 3 | ✅ |
+| Allrounder ohne falsche Lernversprechen (keine API-Calls) | ag-allrounder.md v1.1 | ✅ |
+| Nutzeranpassung und Memory-Regeln definiert (Kurzzeit + dauerhaft + Nutzerkontrolle) | ag-master.md §13 | ✅ |
 | Identität und Leitprinzipien dokumentiert | ag-identity.md | ✅ |
+| Routing-Logik vollständig (alle 8 Module, Fallbacks) | ag-core.md §6, routing-spec.md | ✅ |
+| Freigabeformat zweistufig (Kurzfreigabe + Vollfreigabe) | ag-master.md §7 | ✅ |
+| Unveränderlichkeitsregel + Nachtragsprinzip | ag-master.md §10 | ✅ |
+| Blocked-Module im Verantwortungs- und Übergabemodus | ag-buchhaltung-blocked-review.md | ✅ |
+| Keine kritischen Widersprüche (Governance-Konsistenz-Check v1.1) | governance-index.md | ✅ |
+
+**Prompt-ready: ✅ vollständig**
+
+---
+
+## Ebene 2: Spec-ready
+
+AILIZA Core ist Spec-ready wenn alle Spezifikationsdokumente, Test-Specs und Lifecycle-Regeln vollständig sind.
+
+| Anforderung | Datei | Status |
+|---|---|---|
 | Capability-Register vollständig | capability-registry.md | ✅ |
 | Datenklassifizierung vollständig (6 Klassen) | data-classification.md | ✅ |
-| Module-Lifecycle definiert | module-lifecycle.md | ✅ |
+| Module-Lifecycle vollständig | module-lifecycle.md | ✅ |
 | Routing-Spezifikation vollständig | routing-spec.md | ✅ |
-| Audit-Vault-Mindestspezifikation | audit-vault-minimal-spec.md | ✅ |
+| Audit-Vault-Mindestspezifikation (JSONL-Schema, IDs, Append-only) | audit-vault-minimal-spec.md | ✅ |
+| VVT vollständig (VVT-01 bis VVT-10, inkl. Memory + Logs) | processing-activities-register.md | ✅ |
+| Smoke-Tests BS-01–BS-13 bestanden | basis-smoke-tests.md | ✅ |
+| Smoke-Tests BS-14–BS-18 vollständig spezifiziert (Memory/Nutzerkontrolle) | basis-smoke-tests.md | ✅ spezifiziert |
+| Core-Testcases TC-01–TC-05 bestanden | core-testcases.md | ✅ |
+| Gap-Analyse vollständig | core-gap-analysis.md | ✅ |
+| Kill-Switch-Querverweis konsistent (ag-core §5 ↔ ag-compliance Gate 3) | ag-core.md §5 | ✅ |
+| Keine kritischen offenen Befunde | core-gap-analysis.md | ✅ |
+
+**Spec-ready: ✅ vollständig**
 
 ---
 
-## Kriterium 2: Tests bestanden
+## Ebene 3: Tech-ready
 
-| Anforderung | Datei | Status |
+AILIZA Core ist Tech-ready wenn die technische Implementierung live ist und Tests gegen echte Systeme bestanden haben.
+
+| Anforderung | Status | Abhängigkeit |
 |---|---|---|
-| Smoke-Tests BS-01–BS-13 alle bestanden | basis-smoke-tests.md | ✅ |
-| Smoke-Tests BS-14–BS-18 definiert (Memory/Nutzerkontrolle) | basis-smoke-tests.md | ⏳ offen |
-| Core-Testcases TC-01–TC-05 alle bestanden | core-testcases.md | ✅ |
-| Routing für alle Ampel-Zustände getestet | basis-smoke-tests.md | ✅ |
-| Prompt-Injection-Test bestanden (BS-09) | basis-smoke-tests.md | ✅ |
-| Unveränderlichkeits-Test bestanden (BS-11) | basis-smoke-tests.md | ✅ |
-| Kurzfreigabe-Test bestanden (BS-12) | basis-smoke-tests.md | ✅ |
-| Keine falschen Versprechen (BS-13) | basis-smoke-tests.md | ✅ |
+| Audit-Vault Stufe 1 implementiert (`audit/vault.jsonl`, append-only) | ⏳ offen | Backend-Entwicklung |
+| BS-14–BS-18 gegen echtes Memory-Backend ausgeführt und bestanden | ⏳ offen | Memory-Backend aktiv |
+| Memory-Backend aktiviert (Session-übergreifende Präferenzen) | ⏳ offen | Backend-Entwicklung |
+| Provider-Profile vollständig (Region, AVV, Trainingsnutzung, Retention) | ⏳ offen | Provider-Entscheidung |
+| Kill-Switch-Aktivierungsprozedur definiert (wer darf aktivieren) | ⏳ offen | Organisationsentscheidung |
+
+**Tech-ready: ⏳ ausstehend**
 
 ---
 
-## Kriterium 3: Routing konsistent
+## Nicht-Ziele des Core (Scope-Ausschlüsse)
 
-| Anforderung | Status |
-|---|---|
-| Alle 8 Module haben definierten Routing-Status | ✅ |
-| Kein Modul ohne Routing-Eintrag | ✅ |
-| Kein Silent-Redirect für activatable-Module | ✅ |
-| Planned-Module haben sichere Alternative | ✅ |
-| Blocked-Module haben responsibility_handoff-Output | ✅ |
-| Hard-Block für EU AI Act Art. 5 definiert | ✅ |
+Core gilt als Spec-ready, auch wenn folgendes noch offen ist:
 
----
-
-## Kriterium 4: Dokumentationspflicht aktiv
-
-| Anforderung | Status |
-|---|---|
-| Unveränderlichkeitsregel definiert (ag-master §10) | ✅ |
-| 13 Pflichtfelder je Dokumentation definiert | ✅ |
-| 6 Pflichtfelder je Nachtrag definiert | ✅ |
-| Audit-Vault-Konzept beschrieben | ✅ |
-| JSONL-Schema definiert | ✅ |
-| Nachtragsprinzip (Append-only) definiert | ✅ |
-
----
-
-## Kriterium 5: Datenschutz aktiv
-
-| Anforderung | Status |
-|---|---|
-| 6 Datenklassen vollständig definiert | ✅ |
-| Sonderkorridor-Regel definiert (ag-master §7b) | ✅ |
-| Zweistufiges Freigabeformat aktiv (Kurz + Voll) | ✅ |
-| VVT vollständig (VVT-01 bis VVT-10) | ✅ |
-| Kein KI-Call ohne Datenklasse (Regel definiert) | ✅ |
-| Credentials-Block definiert | ✅ |
-
----
-
-## Kriterium 5b: Nutzeranpassung und Memory-Regeln
-
-| Anforderung | Status |
-|---|---|
-| Kurzzeit-Anpassung (Sitzungskontext) definiert | ✅ (ag-master §13.1) |
-| Dauerhafte Speicherung nur mit Zustimmung | ✅ (ag-master §13.2) |
-| Erlaubte/verbotene Speicherinhalte definiert | ✅ (ag-master §13.2) |
-| Dokumentationspflicht dauerhafter Speicherung | ✅ (ag-master §13.3) |
-| Nutzerkontrolle (6 Befehle) definiert | ✅ (ag-master §13.4) |
-| Unterschied Memory vs. Audit-Vault definiert | ✅ (ag-master §13.4) |
-| BS-14–BS-18 definiert | ✅ definiert |
-| BS-14–BS-18 bestanden | ⏳ offen (Aktivierung ausstehend) |
-
----
-
-## Kriterium 6: Keine kritischen offenen Befunde
-
-| Anforderung | Status |
-|---|---|
-| Governance-Konsistenz-Check bestanden | ✅ (2026-06-23, v1.1) |
-| UX-Check bestanden | ✅ (2026-06-23) |
-| Finalisierungscheck bestanden | ✅ (2026-06-23) |
-| Keine bekannten kritischen Widersprüche | ✅ |
-
----
-
-## Kriterium 7: Auditpflicht aktiv
-
-| Anforderung | Status |
-|---|---|
-| Auditpflichtige Ereignisse definiert | ✅ |
-| Verantwortliche Rollen je Event definiert | ✅ |
-| Audit-Stufen-Konzept beschrieben (Stufe 1–3) | ✅ |
-| Nachtragspflicht definiert | ✅ |
-
----
-
-## Nicht-Ziele des Core
-
-Core gilt als fertig, auch wenn folgendes noch offen ist:
-
-- AILIZA-Memory-Backend (geplant, nicht implementiert)
-- ag-recherche (planned, Tests ausstehend)
-- ag-buchhaltung (blocked, Voraussetzungen fehlen)
-- ag-hr (blocked, AVV + DPIA fehlen)
-- Modul-spezifische Vertiefungstests (nach Core-Freigabe)
+- AILIZA-Memory-Backend (geplant → Tech-ready)
+- ag-recherche Tests TR-01–TR-05 (geplant, Modul-Scope)
+- ag-buchhaltung Voraussetzungen (blocked, Fachmodul-Scope)
+- ag-hr Voraussetzungen (blocked, Fachmodul-Scope)
 - CRM, Marketing, Schulung (nicht im Core-Scope)
+- Modul-spezifische Vertiefungstests (nach Core-Freigabe, Modul-Scope)
 
 ---
 
-## Reifegradbewertung
+## Gesamtstatus
 
-Core-Reifegrad wird berechnet in: **core-gap-analysis** (separate Lieferung).
+```
+AILIZA Core — Basis v1.0
+Stand:         2026-06-23
+Prompt-ready:  ✅ vollständig
+Spec-ready:    ✅ vollständig
+Tech-ready:    ⏳ ausstehend (Memory-Backend, Audit-Vault Stufe 1, Provider-Profile)
 
-Basis: Prozentualer Erfüllungsgrad der 7 Kriterien oben × gewichtete Faktormatrix.
+Offizielle Bezeichnung: Basis v1.0 Spec-ready
+```
 
 ---
 
-## Core-Freigabe-Entscheidung
+## Freigabe-Kriterien je Ebene
 
-Core gilt als freigegeben wenn:
-- Alle 7 Kriterien: ✅
-- Keine offenen kritischen Befunde (rot)
-- Governance-Review abgeschlossen
-- Tests dokumentiert und bestanden
-
-**Aktueller Status: Core-Readiness erreicht (Stand: 2026-06-23)**
-Memory-Regeln und Nutzerkontrolle spezifiziert. BS-14–BS-18 offen bis Memory-Backend aktiviert.
+| Ebene | Freigabe durch |
+|---|---|
+| Prompt-ready | Governance-Review + Konsistenz-Check bestanden |
+| Spec-ready | Prompt-ready + alle Spezifikationsdokumente + Test-Specs vollständig + Gap-Analyse |
+| Tech-ready | Spec-ready + alle Tech-Tests bestanden + kein offener kritischer Befund |

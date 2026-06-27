@@ -49,7 +49,7 @@ Basis: Alle Dateien in `.claude/agents/` und `policies/governance/`
 | Provider-Profile | Vollständige Profile für alle LLM-Provider (Region, Subprozessoren, Retention) | Mittel | Governance-Erweiterung |
 | ag-buchhaltung Voraussetzungen | GoBD-Vault, skr-lookup, AVV | Niedrig | Fachmodul (blockiert) |
 | ag-hr Voraussetzungen | AVV + DPIA | Niedrig | Fachmodul (blockiert) |
-| Kill-Switch-Verfahren | Wer kann aktivieren, wie, mit welchem Effekt | Mittel | ag-core §5 erwähnt, nicht spezifiziert |
+| Kill-Switch-Verfahren | Wer kann aktivieren, mit welchem Effekt — vollständige Aktivierungsprozedur | Niedrig | ag-compliance.md Gate 3 + ag-core §5 decken Modi; Aktivierungsprozedur (wer darf) noch offen |
 | Restricted-Modus | Definition und Auslöser | Mittel | ag-core §5 erwähnt, nicht spezifiziert |
 
 ---
@@ -72,7 +72,7 @@ Basis: Alle Dateien in `.claude/agents/` und `policies/governance/`
 |---|---|---|---|
 | Audit-Vault nicht implementiert | Hoch | DSGVO Art. 5 Abs. 2 | ⚠️ Konzept ✅, Implementierung fehlt |
 | Memory-Backend versprochen aber nicht aktiv | Mittel | ag-allrounder | ✅ Mitigiert durch BS-13, klare "geplant"-Kommunikation |
-| Kill-Switch/Restricted-Modus nicht spezifiziert | Mittel | ag-core §5 | ⚠️ Erwähnt, nicht ausgearbeitet |
+| Kill-Switch/Restricted-Modus Querverweis fehlte | Niedrig | ag-core §5 | ✅ Behoben: ag-core §5 verweist nun auf ag-compliance.md Gate 3; Betriebsmodi vollständig in Basisfluss |
 | Provider-Profile unvollständig | Mittel | DSGVO Art. 28 | ⚠️ Anforderung definiert, Profile fehlen |
 | ag-recherche ohne Tests in Produktion | Niedrig | planned-Status | ✅ Mitigiert: Status planned, kein Aktivierungsweg |
 
@@ -97,7 +97,7 @@ Basis: Alle Dateien in `.claude/agents/` und `policies/governance/`
 ### Abzüge:
 
 - **Datenschutz (-1 Punkt):** Audit-Vault Stufe 1 noch nicht technisch implementiert — Konzept vollständig, aber DSGVO Art. 5 Abs. 2 Rechenschaftspflicht setzt Implementierung voraus.
-- **Dokumentationspflicht (-1,5 Punkte):** Kill-Switch und Restricted-Modus in ag-core §5 erwähnt, aber nicht spezifiziert. Audit-Vault nicht implementiert (Doppelpunkt mit Datenschutz, hier nur halb gewichtet).
+- **Dokumentationspflicht (-1 Punkt):** Audit-Vault nicht implementiert. Kill-Switch-Querverweis behoben (nicht mehr offen).
 
 ### Reifegrad: **78 / 100**
 
@@ -122,7 +122,7 @@ Begründung: Governance und Spezifikation sind produktionsreif. Die technische B
 | Sprint | Aufgabe | Priorität |
 |---|---|---|
 | Sprint 5 | Audit-Vault Stufe 1 implementieren (`audit/vault.jsonl`) | Hoch |
-| Sprint 5 | Kill-Switch und Restricted-Modus spezifizieren | Mittel |
+| Sprint 5 | Kill-Switch-Aktivierungsprozedur (wer darf aktivieren) spezifizieren | Niedrig |
 | Sprint 6 | Provider-Profile vervollständigen | Mittel |
 | Sprint 6 | ag-master §6 → Querverweis auf data-classification.md | Niedrig |
 | Sprint 7 | ag-recherche Tests TR-01–TR-05 | Mittel |

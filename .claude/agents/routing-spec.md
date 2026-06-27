@@ -22,7 +22,8 @@ Nutzeranfrage
     → Gate 2: Freigabe- und Sperr-Check
               (freigabepflichtig? blocked? planned? activatable?)
     → Gate 3: Betriebsmodus
-              (normal / restricted / kill_switch?)
+              (normal / restricted / read_only / offline / kill_switch_active?)
+              → bei Unklarheit: restricted (fail-closed)
     → Routing-Entscheidung
 ```
 
