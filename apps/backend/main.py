@@ -509,9 +509,31 @@ def debug_provider_test() -> dict[str, Any]:
     results["groq_model_resolved"] = groq_model_used
     results["groq_model_env_raw"] = os.getenv("GROQ_MODEL", "(not set)")
 
+    _KEY_ENV_TEST = {
+        "groq": "GROQ_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+
+    # Registry-Metadaten je Provider — zeigt health_status und enabled-Flag
+    def _reg_meta(pid: str) -> dict[str, Any]:
+        try:
+            from registry.registry_loader import get_registry
+            reg_entry = get_registry().get_provider(pid)
+            if reg_entry:
+                return {
+                    "registry_enabled": reg_entry.enabled,
+                    "registry_approved": reg_entry.admin_approved,
+                    "registry_health": reg_entry.health_status,
+                    "failover_priority": reg_entry.failover_priority,
+                }
+        except Exception:
+            pass
+        return {}
+
     for pid, provider in getattr(_orchestrator, "providers", {}).items():
-        key_env = {"groq": "GROQ_API_KEY", "openai": "OPENAI_API_KEY",
-                   "anthropic": "ANTHROPIC_API_KEY"}.get(pid, "")
+        key_env = _KEY_ENV_TEST.get(pid, "")
         configured = bool(os.getenv(key_env)) if key_env else True
         model_used = getattr(provider, "model", "unknown")
 
@@ -521,10 +543,11 @@ def debug_provider_test() -> dict[str, Any]:
             "status": "skipped",
             "error_type": None,
             "error_sanitized": None,
+            **_reg_meta(pid),
         }
 
         if not configured:
-            entry["error_sanitized"] = f"API-Key für '{pid}' nicht gesetzt"
+            entry["error_sanitized"] = f"API-Key für '{pid}' nicht gesetzt (Render-Env: {key_env})"
             results[pid] = entry
             continue
 

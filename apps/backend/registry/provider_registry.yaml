@@ -42,12 +42,14 @@ providers:
     fallback_models:
       - llama-3.3-70b-versatile
     failover_priority: 1
-    health_status: ok
+    health_status: down        # ⚠ HTTP 403 bei Models API — Key/Projekt-Berechtigungen prüfen
     logs_prompts: false
     used_for_training: false
     notes: >
       US-Provider via SCC. Nach Redaktion für PERSONAL_DATA/HR/LEGAL/FINANCIAL erlaubt.
       AVV/DPA noch zu unterzeichnen. Groq speichert keine Prompts (laut ToS Stand 2025).
+      health_status=down wegen persistentem HTTP 403 an /v1/models.
+      Render-Env: GROQ_API_KEY=gsk_... (Key muss im aktiven Groq-Projekt erstellt worden sein).
 
   openai:
     type: text_llm
@@ -133,6 +135,8 @@ providers:
       Aggregator-API: unterlagert wechselnde Sub-Provider.
       Subverarbeiter-Kette ungeklärt → DSGVO Art. 28 Abs. 4 nicht abgedeckt.
       Aktivierung erfordert: AVV, Subverarbeiter-Liste, Admin-Freigabe.
+      Render-Env (wenn freigegeben): OPENROUTER_API_KEY=sk-or-v1-... (openrouter.ai → Keys).
+      Optional: AILIZA_OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct (Default).
 
   local:
     type: text_llm
