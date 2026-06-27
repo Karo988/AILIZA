@@ -151,10 +151,30 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _diag_tavily = bool(os.getenv("TAVILY_API_KEY"))
     _diag_ext_env = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "(not set)")
     _diag_ext_allowed = _is_ext_enabled()
+    # ── Erweiterter Startup-Debug-Log (keine Keys, keine Secrets) ───────────────
+    try:
+        from .providers.provider_profiles import _PROFILES as _pp
+        _provider_debug = [
+            f"{pid}(active={p.active},admin_disabled={p.admin_disabled},"
+            f"transfer={p.transfer_basis.value})"
+            for pid, p in _pp.items()
+        ]
+    except Exception:
+        _provider_debug = ["(profile-load-error)"]
+    try:
+        from .registry.registry_loader import get_registry as _get_reg
+        _reg = _get_reg()
+        _reg_usable = [p.provider_id for p in _reg.get_usable_providers()]
+    except Exception:
+        _reg_usable = ["(registry-load-error)"]
+    _gate10_status = getattr(_integrity, "overall_status", "unknown")
     print(
         f"AILIZA PROVIDER STATUS | groq_key={_diag_groq} openai_key={_diag_openai} "
         f"anthropic_key={_diag_anthropic} tavily_key={_diag_tavily} "
-        f"AILIZA_EXTERNAL_LLM_ENABLED={_diag_ext_env} external_llm_allowed={_diag_ext_allowed}",
+        f"AILIZA_EXTERNAL_LLM_ENABLED={_diag_ext_env} external_llm_allowed={_diag_ext_allowed} "
+        f"gate10={_gate10_status} "
+        f"registry_usable={_reg_usable} "
+        f"provider_profiles={_provider_debug}",
         flush=True,
     )
     write_audit_entry(
