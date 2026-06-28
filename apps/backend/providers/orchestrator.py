@@ -68,9 +68,10 @@ _KEY_ENV: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
-# Standard-Reihenfolge: OpenAI zuerst (Groq aktuell unzuverlässig wegen 403).
-# Überschreibbar mit AILIZA_PROVIDER_ORDER=openai,openrouter,groq,anthropic,local
-_DEFAULT_PROVIDER_ORDER = "openai,openrouter,groq,anthropic,local"
+# Standard-Reihenfolge: Groq zuerst (kostenlos, niedrige Latenz).
+# Wenn Groq 401/403/429 → automatischer Fallback zu OpenAI, OpenRouter, Anthropic.
+# Überschreibbar mit AILIZA_PROVIDER_ORDER=openai,groq,anthropic,local
+_DEFAULT_PROVIDER_ORDER = "groq,openai,openrouter,anthropic,local"
 
 
 def _get_provider_order() -> list[str]:
@@ -83,7 +84,7 @@ class ProviderOrchestrator:
     def __init__(
         self,
         providers: dict[str, LLMProvider] | None = None,
-        default_provider: str = "openai",
+        default_provider: str = "groq",
     ) -> None:
         if providers is None:
             _p: dict[str, LLMProvider] = {
