@@ -12,7 +12,7 @@ services:
     region: frankfurt          # EU-Region fuer DSGVO-Konformitaet
     plan: free                 # Auf "starter" oder hoeher aendern fuer Prod
 
-    buildCommand: pip install -r apps/backend/requirements.txt
+    buildCommand: pip install --prefer-binary -r apps/backend/requirements.txt
 
     startCommand: >
       python -m uvicorn apps.backend.main:app
