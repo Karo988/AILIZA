@@ -1,8 +1,8 @@
 fastapi==0.115.12
 uvicorn==0.34.3
 sqlalchemy==2.0.41
-pydantic==2.11.7
-pydantic-core==2.33.2
+pydantic==2.7.4
+pydantic-core==2.18.4
 requests==2.32.3
 beautifulsoup4==4.12.3
 python-dotenv==1.0.1
