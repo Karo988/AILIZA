@@ -1,0 +1,167 @@
+# AILIZA Provider Registry
+# =========================
+# Definiert alle bekannten LLM-Provider.
+# Aktivierung neuer Provider IMMER über Admin-Freigabe (admin_approved: true).
+# Änderungen werden in pending_changes gespeichert und auditiert.
+#
+# Felder:
+#   type:             text_llm | multimodal_llm | embedding | image | audio
+#   status:           active | inactive | degraded | unknown
+#   enabled:          true = darf genutzt werden (nach Admin-Freigabe)
+#   admin_approved:   true = explizit durch Admin freigegeben
+#   region:           us | eu | asia | local
+#   transfer_basis:   scc | adequacy | bcr | eu_internal | none
+#   avv_signed:       true = Auftragsverarbeitungsvertrag vorhanden
+#   allowed_data:     Erlaubte Datenklassen (nach Redaktion)
+#   forbidden_data:   Niemals erlaubt, auch nach Redaktion nicht
+#   failover_priority: 1 = höchste Priorität
+#   health_status:    ok | degraded | down | unknown
+#   notes:            Kurze Erklärung, warum diese Konfiguration so ist
+
+providers:
+
+  groq:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false          # ⚠ DPA noch zu unterzeichnen
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data          # nur nach Redaktion
+      - financial              # nur nach Redaktion
+      - hr                     # nur nach Redaktion
+      - legal                  # nur nach Redaktion
+    forbidden_data:
+      - credentials
+      - special_category
+    default_model: llama-3.1-8b-instant
+    fallback_models:
+      - llama-3.3-70b-versatile
+    failover_priority: 1
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      US-Provider via SCC. Nach Redaktion für PERSONAL_DATA/HR/LEGAL/FINANCIAL erlaubt.
+      AVV/DPA noch zu unterzeichnen. Groq speichert keine Prompts (laut ToS Stand 2025).
+      Render-Env: GROQ_API_KEY=gsk_... (Key muss im aktiven Groq-Projekt erstellt worden sein).
+      Bei 403: Key unter console.groq.com im aktiven Projekt erstellen, nicht auf Top-Level.
+
+  openai:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false          # ⚠ DPA noch zu unterzeichnen
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data          # nur nach Redaktion
+      - financial              # nur nach Redaktion
+      - hr                     # nur nach Redaktion
+      - legal                  # nur nach Redaktion
+    forbidden_data:
+      - credentials
+      - special_category
+    default_model: gpt-4o-mini
+    fallback_models:
+      - gpt-3.5-turbo
+    failover_priority: 2
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      US-Provider via SCC. Fallback wenn Groq nicht verfügbar.
+      Nach Redaktion für PERSONAL_DATA/HR/LEGAL/FINANCIAL erlaubt.
+      AVV/DPA noch zu unterzeichnen.
+
+  anthropic:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false          # ⚠ Commercial API Terms prüfen
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data          # nur nach Redaktion
+      - financial              # nur nach Redaktion
+      - hr                     # nur nach Redaktion
+      - legal                  # nur nach Redaktion
+    forbidden_data:
+      - credentials
+      - special_category
+    default_model: claude-haiku-4-5-20251001
+    fallback_models: []
+    failover_priority: 3
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      US-Provider via SCC. Dritter Fallback.
+      AVV/DPA noch zu unterzeichnen.
+
+  openrouter:
+    type: text_llm
+    enabled: true              # Freigegeben für PUBLIC-Daten als Fallback (Admin-Entscheid 2026-06-27)
+    admin_approved: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false          # ⚠ AVV noch zu unterzeichnen
+    allowed_data:
+      - public                 # Nur PUBLIC — Subverarbeiter-Kette ungeklärt
+    forbidden_data:
+      - credentials
+      - special_category
+      - personal_data          # ⚠ Bis AVV + Subverarbeiter-Liste vorliegt
+      - financial
+      - hr
+      - legal
+    default_model: meta-llama/llama-3.1-8b-instruct
+    fallback_models: []
+    failover_priority: 4
+    health_status: unknown
+    logs_prompts: true         # ⚠ Kann Requests loggen
+    used_for_training: false
+    notes: >
+      Aggregator-API: unterlagert wechselnde Sub-Provider.
+      Subverarbeiter-Kette ungeklärt → nur PUBLIC-Daten erlaubt.
+      AVV/DPA noch zu unterzeichnen (DSGVO Art. 28).
+      Render-Env: OPENROUTER_API_KEY=sk-or-v1-... (openrouter.ai → Keys).
+      Optional: AILIZA_OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct (Default).
+
+  local:
+    type: text_llm
+    enabled: true
+    admin_approved: true
+    region: local
+    transfer_basis: eu_internal
+    avv_signed: true
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data
+      - financial
+      - hr
+      - legal
+      - credentials
+      - special_category
+    forbidden_data: []
+    default_model: fast-path
+    fallback_models: []
+    failover_priority: 0
+    health_status: ok
+    logs_prompts: false
+    used_for_training: false
+    notes: >
+      Lokale Verarbeitung ohne externen Datenabfluss.
+      Alle Datenklassen erlaubt. Kein AVV erforderlich.

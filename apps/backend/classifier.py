@@ -47,7 +47,7 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 _HIGH_RISK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("HR/Personalentscheidung", re.compile(
-        r"\b(k[üu]ndigung|entlassung|bewerbung|einstellung|gehaltsverhandlung|abmahnung|arbeitszeugnis)\b", re.I
+        r"\b(k[üu]ndigung|entlassung|bewerbung|einstellung|gehaltsverhandlung|abmahnung|abgemahnt|arbeitszeugnis|personalentscheidung)\b", re.I
     )),
     ("Rechtliche Wirkung", re.compile(
         r"\b(vertrag|klage|rechtsstreit|anwalt|gericht|vollmacht|testament|erbschaft|schadensersatz)\b", re.I

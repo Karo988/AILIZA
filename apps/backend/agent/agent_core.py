@@ -199,14 +199,21 @@ class AILIZAAgent:
         task_id: str,
     ) -> str:
         """
-        Haupt-Agent-Schleife (inspiriert von Hermes run_conversation).
-        Wird in Phase 2 mit Tool-Calling erweitert.
+        Haupt-Agent-Schleife.
+        Delegiert an die konsolidierte Implementierung in conversation_loop.
+        Externe LLM-Calls laufen ueber api_client -> (perspektivisch) Orchestrator.
         """
-        # Platzhalter — wird in Phase 2 implementiert
-        raise NotImplementedError(
-            "Agent Loop wird in Phase 2 implementiert. "
-            "Verwende zunächst chat() mit direktem API-Aufruf."
+        from .conversation_loop import _agent_loop
+
+        final_response, updated_messages = _agent_loop(
+            agent=self,
+            messages=messages,
+            system_message=system_message,
+            task_id=task_id,
+            stream_callback=self.stream_callback,
         )
+        self._messages = updated_messages
+        return final_response
 
     # ── Tool Registry ─────────────────────────────────────────────────────
 

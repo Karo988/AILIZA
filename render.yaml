@@ -1,0 +1,70 @@
+# AILIZA Render Deployment Configuration
+# =======================================
+# Docs: https://render.com/docs/render-yaml-ref
+#
+# WICHTIG: Secrets (API-Keys) NIEMALS hier eintragen.
+# Alle Keys werden im Render-Dashboard unter "Environment" gesetzt.
+
+services:
+  - type: web
+    name: ailiza-backend
+    runtime: python
+    region: frankfurt          # EU-Region fuer DSGVO-Konformitaet
+    plan: free                 # Auf "starter" oder hoeher aendern fuer Prod
+
+    buildCommand: pip install -r apps/backend/requirements.txt
+
+    startCommand: >
+      python -m uvicorn apps.backend.main:app
+      --host 0.0.0.0
+      --port $PORT
+
+    healthCheckPath: /health
+
+    # Automatisches Deploy bei Push auf main
+    autoDeploy: false          # Auf true setzen nach erfolgreichem erstem Deploy
+
+    envVars:
+      # ── Kill-Switch ──────────────────────────────────────────────────────
+      - key: AILIZA_EXTERNAL_LLM_ENABLED
+        value: "true"
+
+      # ── Provider-Reihenfolge ─────────────────────────────────────────────
+      - key: AILIZA_PROVIDER_ORDER
+        value: "groq,openai,openrouter,anthropic,local"
+
+      # ── Secrets (im Dashboard setzen, NICHT hier) ────────────────────────
+      # Die folgenden Keys werden als "sync: false" markiert —
+      # sie muessen manuell im Render-Dashboard eingetragen werden.
+      - key: GROQ_API_KEY
+        sync: false            # Im Render-Dashboard eintragen!
+
+      - key: OPENAI_API_KEY
+        sync: false            # Optional — Fallback wenn Groq nicht verfuegbar
+
+      - key: ANTHROPIC_API_KEY
+        sync: false            # Optional — dritter Fallback
+
+      - key: OPENROUTER_API_KEY
+        sync: false            # Optional — nur PUBLIC-Daten
+
+      - key: TAVILY_API_KEY
+        sync: false            # Optional — nur fuer Suchanfragen benoetigt
+
+      # ── CORS ─────────────────────────────────────────────────────────────
+      # Nach Frontend-Deploy: konkrete Render-URL eintragen
+      # z.B. https://ailiza-frontend.onrender.com
+      - key: AILIZA_CORS_ORIGINS
+        value: ""              # Leer = "*" (nur fuer Entwicklung)
+
+      # ── Server ───────────────────────────────────────────────────────────
+      - key: AILIZA_DEBUG
+        value: "false"
+
+      - key: AILIZA_DEFAULT_TENANT_ID
+        value: "default"
+
+      # ── Sicherheit ───────────────────────────────────────────────────────
+      - key: AILIZA_SECRET_KEY
+        sync: false            # Im Render-Dashboard eintragen!
+                               # Generieren: python -c "import secrets; print(secrets.token_hex(32))"

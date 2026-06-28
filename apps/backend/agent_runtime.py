@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import time
 from collections.abc import Iterator
@@ -10,27 +11,29 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 try:
-    from .classifier import InputRiskLevel, classify
+    from .classifier import classify, InputRiskLevel
+    from .redactor import redact
     from .database import (
         create_agent_run,
+        create_approval_request,
         get_approval_request,
         link_approval_to_run,
         update_agent_run,
         write_audit_entry,
     )
     from .gateway import execute_approved_tool, guarded_tool_call
-    from .redactor import redact
 except ImportError:
-    from classifier import InputRiskLevel, classify
+    from classifier import classify, InputRiskLevel
+    from redactor import redact
     from database import (
         create_agent_run,
+        create_approval_request,
         get_approval_request,
         link_approval_to_run,
         update_agent_run,
         write_audit_entry,
     )
     from gateway import execute_approved_tool, guarded_tool_call
-    from redactor import redact
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], dict[str, Any]]
@@ -39,6 +42,63 @@ AuditWriter = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 
 URL_PATTERN = re.compile(r"https?://[^\s<>\")]+")
 _UNSET = object()
+
+_MISSING_PROVIDER_DETAILS: frozenset[str] = frozenset({
+    "TAVILY_API_KEY is not configured",
+    "tavily-python is not installed",
+    "OPENAI_API_KEY is not configured",
+    "GROQ_API_KEY is not configured",
+    "ANTHROPIC_API_KEY is not configured",
+    "External LLM calls are disabled",
+})
+
+_RESEARCH_KEYWORDS: frozenset[str] = frozenset({
+    "recherch", "such", "aktuell", "neuest", "news", "preis", "wetter",
+    "kurse", "börse", "ergebnis", "statistik", "studie", "bericht",
+    "was ist", "wer ist", "wie viel", "wie hoch", "wann", "wo ist",
+})
+
+
+def _is_missing_provider_error(exc: HTTPException) -> bool:
+    return isinstance(exc.detail, str) and any(
+        marker in exc.detail for marker in _MISSING_PROVIDER_DETAILS
+    )
+
+
+def _is_research_task(task: str) -> bool:
+    lower = task.lower()
+    return any(kw in lower for kw in _RESEARCH_KEYWORDS)
+
+
+def _build_local_response(run_id: str, task: str) -> dict[str, Any]:
+    """Erzeugt eine nutzerfreundliche Antwort wenn kein externer Provider verfügbar ist."""
+    if _is_research_task(task):
+        message = (
+            "Für diese Rechercheanfrage benötige ich eine Internetverbindung, "
+            "die aktuell nicht konfiguriert ist.\n\n"
+            "Sobald ein Websuche-Dienst (z.B. Tavily) eingerichtet ist, "
+            "kann ich diese Frage beantworten.\n\n"
+            f'Rechercheplan fuer: "{task}"\n'
+            "1. Aktuelle Quellen zum Thema suchen\n"
+            "2. Ergebnisse zusammenfassen und auf Relevanz prüfen\n"
+            "3. Antwort strukturiert aufbereiten\n\n"
+            "Bitte wende dich an deinen Administrator, um die Websuche zu aktivieren."
+        )
+    else:
+        message = (
+            "AILIZA läuft im lokalen Modus — externe Dienste sind aktuell nicht konfiguriert. "
+            "Einfache Fragen, Dokumentenanalyse und Compliance-Prüfungen stehen weiterhin zur Verfügung."
+        )
+    return {
+        "run_id": run_id,
+        "status": "local_only",
+        "mode": "degraded",
+        "message": message,
+        "ai_response": message,
+        "steps": [],
+        "results": [],
+        "notice": "Externe Dienste nicht verfügbar. Kein Datenverlust — AILIZA arbeitet lokal weiter.",
+    }
 
 
 @dataclass(frozen=True)
@@ -95,13 +155,13 @@ class AgentRuntime:
 
         Governance-Grundregel:
         - BLOCKED: nur bei echten Rechtsverstößen (EU AI Act Art. 5) — stoppt den Flow.
-        - HIGH: Approval-Request anlegen, aber Flow läuft weiter — Ergebnis als Entwurf.
+        - HIGH: Approval-Request anlegen, Flow läuft weiter — Ergebnis als Entwurf.
         - MEDIUM/PII: redact, dann weiter.
         - LOW: direkt weiter.
 
-        Gibt None zurück wenn der Flow normal weiterlaufen soll.
-        Gibt ein Ergebnis-Dict zurück wenn der Flow gestoppt wird (nur bei BLOCKED).
-        Seiteneffekt: self._redacted_task, self._draft_approval_id, self._is_draft.
+        Gibt None zurück wenn Flow normal weiterläuft.
+        Gibt Dict zurück nur wenn BLOCKED.
+        Seiteneffekte: self._redacted_task, self._draft_approval_id, self._is_draft.
         """
         classification = classify(task)
         self.audit_writer(
@@ -116,17 +176,13 @@ class AgentRuntime:
             },
         )
 
-        # Nur echte Rechtsverstöße werden gestoppt
         if classification.blocked:
             self.update_run_record(
                 run_id,
                 status="blocked",
                 result={"reason": classification.reason, "user_message": classification.user_message},
             )
-            self.audit_writer(
-                "agent.input.blocked",
-                {"run_id": run_id, "reason": classification.reason},
-            )
+            self.audit_writer("agent.input.blocked", {"run_id": run_id, "reason": classification.reason})
             return {
                 "run_id": run_id,
                 "status": "blocked",
@@ -134,16 +190,11 @@ class AgentRuntime:
                 "reason": classification.reason,
             }
 
-        # HIGH-Risiko: Approval-Request anlegen, aber weiterverarbeiten als Entwurf
         self._draft_approval_id: int | None = None
         self._is_draft: bool = classification.requires_approval
 
         if classification.requires_approval:
             if self.persist_runs:
-                try:
-                    from .database import create_approval_request  # noqa: PLC0415
-                except ImportError:
-                    from database import create_approval_request  # noqa: PLC0415
                 approval = create_approval_request(
                     tool="agent_input",
                     input_params={"task": task[:500], "risk_categories": classification.detected_categories},
@@ -162,17 +213,12 @@ class AgentRuntime:
                 },
             )
 
-        # PII redact (auch bei HIGH, bevor der LLM-Call kommt)
         if classification.pii_detected:
             redaction = redact(task)
             self._redacted_task = redaction.redacted_text
             self.audit_writer(
                 "agent.input.redacted",
-                {
-                    "run_id": run_id,
-                    "redacted_count": redaction.redacted_count,
-                    "categories": redaction.redacted_categories,
-                },
+                {"run_id": run_id, "redacted_count": redaction.redacted_count, "categories": redaction.redacted_categories},
             )
         else:
             self._redacted_task = task
@@ -183,16 +229,13 @@ class AgentRuntime:
         run_id = str(uuid4())
         self._redacted_task: str = task
         self.create_run_record(run_id, task)
+        self.audit_writer("agent.run.started", {"run_id": run_id})
 
         early_result = self._precheck(task, run_id)
         if early_result is not None:
             return early_result
 
         plan = plan_tool_calls(self._redacted_task)
-        self.audit_writer(
-            "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan)},
-        )
 
         steps: list[dict[str, Any]] = []
         results: list[dict[str, Any]] = []
@@ -203,13 +246,32 @@ class AgentRuntime:
                     "run_id": run_id,
                     "step": index,
                     "tool": call.tool,
-                    "parameters": call.parameters,
+                    "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                 },
             )
 
             try:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
+                if _is_missing_provider_error(exc):
+                    local_result = _build_local_response(run_id, task)
+                    self.update_run_record(run_id, status="local_only", result=local_result)
+                    self.audit_writer(
+                        "agent.degraded_missing_provider",
+                        {
+                            "run_id": run_id,
+                            "tool": call.tool,
+                            "mode": "local_only",
+                            "reason": "provider_not_configured",
+                        },
+                    )
+                    print(
+                        f"AILIZA LOCAL_ONLY DECISION | reason=missing_provider "
+                        f"source=tool_executor tool={call.tool} "
+                        f"detail={getattr(exc, 'detail', str(exc))!r}",
+                        flush=True,
+                    )
+                    return local_result
                 status = "blocked" if exc.status_code == 403 else "failed"
                 self.update_run_record(
                     run_id,
@@ -240,7 +302,7 @@ class AgentRuntime:
                         "run_id": run_id,
                         "approval_id": approval_id,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                     },
                 )
                 return {
@@ -276,7 +338,19 @@ class AgentRuntime:
         }
         self.update_run_record(run_id, status=final_status, pending_approval_id=draft_approval_id if is_draft else None, result=final_response)
         event = "agent.run.draft" if is_draft else "agent.run.completed"
-        self.audit_writer(event, {"run_id": run_id, "steps": len(steps), "approval_id": draft_approval_id})
+        tools_used = [r.get("tool") for r in results]
+        providers_used = list({r.get("result", {}).get("provider") for r in results if r.get("result", {}).get("provider")})
+        models_used = list({r.get("result", {}).get("model") for r in results if r.get("result", {}).get("model")})
+        self.audit_writer(event, {
+            "run_id": run_id,
+            "steps": len(steps),
+            "approval_id": draft_approval_id,
+            "decision_type": final_status,
+            "web_search_used": "search" in tools_used,
+            "redaction_used": bool(getattr(self, "_redacted_task", task) != task),
+            "provider": providers_used[0] if len(providers_used) == 1 else (providers_used or None),
+            "model": models_used[0] if len(models_used) == 1 else (models_used or None),
+        })
         return final_response
 
     def continue_after_approval(self, approval_id: int) -> dict[str, Any]:
@@ -356,21 +430,11 @@ class AgentRuntime:
         approval_timeout: float = 300.0,
     ) -> Iterator[dict[str, Any]]:
         run_id = str(uuid4())
-        self._redacted_task: str = task
+        plan = plan_tool_calls(task)
         self.create_run_record(run_id, task, streaming=True)
-
-        early_result = self._precheck(task, run_id)
-        if early_result is not None:
-            yield stream_event(
-                "approval_required" if early_result["status"] == "pending_approval" else "blocked",
-                early_result,
-            )
-            return
-
-        plan = plan_tool_calls(self._redacted_task)
         self.audit_writer(
             "agent.run.started",
-            {"run_id": run_id, "task": task, "planned_steps": len(plan), "streaming": True},
+            {"run_id": run_id, "planned_steps": len(plan), "streaming": True},
         )
         yield stream_event(
             "run_started",
@@ -386,7 +450,7 @@ class AgentRuntime:
                     "run_id": run_id,
                     "step": index,
                     "tool": call.tool,
-                    "parameters": call.parameters,
+                    "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                     "streaming": True,
                 },
             )
@@ -412,6 +476,21 @@ class AgentRuntime:
             try:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
+                if _is_missing_provider_error(exc):
+                    local_result = _build_local_response(run_id, task)
+                    self.update_run_record(run_id, status="local_only", result=local_result)
+                    self.audit_writer(
+                        "agent.degraded_missing_provider",
+                        {
+                            "run_id": run_id,
+                            "tool": call.tool,
+                            "mode": "local_only",
+                            "reason": "provider_not_configured",
+                            "streaming": True,
+                        },
+                    )
+                    yield stream_event("local_only", local_result)
+                    return
                 status = "blocked" if exc.status_code == 403 else "failed"
                 event_name = "blocked" if exc.status_code == 403 else "error"
                 self.update_run_record(
@@ -425,9 +504,8 @@ class AgentRuntime:
                         "run_id": run_id,
                         "step": index,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                         "status_code": exc.status_code,
-                        "detail": exc.detail,
                     },
                 )
                 yield stream_event(
@@ -488,7 +566,7 @@ class AgentRuntime:
                         "run_id": run_id,
                         "approval_id": approval_id,
                         "tool": call.tool,
-                        "parameters": call.parameters,
+                        "parameters": {k: f"<{type(v).__name__}:{len(str(v))}>" for k, v in call.parameters.items()},
                         "streaming": True,
                     },
                 )
@@ -809,10 +887,58 @@ class AgentRuntime:
         yield stream_event("resume_completed", final_response)
 
 
+# Schreibaufgaben → kein Tool, direkter LLM-Call
+_WRITING_INTENT_PATTERN = re.compile(
+    r"\b(?:schreib(?:e|en)?|formulier(?:e|en)?|verfass(?:e|en)?"
+    r"|beantworte?|antworte?\s+auf"
+    r"|übersetze?|übersetz(?:e|en)?"
+    r"|erstell(?:e|en)?\s+(?:eine?[rn]?\s+)?(?:e[-\s]?mail|nachricht|brief|entwurf|bericht|text|zusammenfassung))\b",
+    re.I | re.UNICODE,
+)
+
+# Explizite Websuche / aktuelle Infos → immer search
+_SEARCH_INTENT_PATTERN = re.compile(
+    r"\b(?:such(?:e|en)?\s+(?:im\s+internet|online|im\s+web|nach)"
+    r"|recherchier(?:e|en)?"
+    r"|aktuell(?:e[rsnm]?)?\s+(?:news|nachrichten|preis|stand|kurs)"
+    r"|was\s+kostet\s+(?:aktuell|heute|gerade)"
+    r"|neuest(?:e[rsnm]?)?\s+(?:version|news|nachrichten)"
+    r"|wer\s+ist\s+(?:der|die|das)\s+(?:aktuell|neue))\b",
+    re.I | re.UNICODE,
+)
+
+# Allgemeine Wissens-/Erklärungsfragen → direkt LLM, kein Web-Search
+_KNOWLEDGE_INTENT_PATTERN = re.compile(
+    r"\b(?:erkl(?:är|aer)(?:e|en|st)?(?:\s+mir)?"
+    r"|was\s+(?:ist|sind|bedeutet|heißt|heisst)"
+    r"|wie\s+(?:funktioniert|geht|macht\s+man)"
+    r"|was\s+versteht\s+man\s+unter"
+    r"|definition\s+(?:von|des|der)?"
+    r"|was\s+muss\s+ich\s+(?:wissen|beachten)"
+    r"|was\s+sind\s+die\s+(?:regeln|anforderungen|pflichten|rechte)"
+    r"|kannst\s+du\s+(?:mir\s+)?erkl"
+    r"|fass(?:e|en)?\s+(?:zusammen|kurz)"
+    r"|gib\s+(?:mir\s+)?(?:eine?[rn]?)?\s+(?:überblick|zusammenfassung|kurze?\s+erkl))\b",
+    re.I | re.UNICODE,
+)
+
+
 def plan_tool_calls(task: str) -> list[PlannedToolCall]:
     urls = [clean_url(match.group(0)) for match in URL_PATTERN.finditer(task)]
     if urls:
         return [PlannedToolCall("fetch", {"url": url}) for url in urls]
+
+    # Explizite Websuche hat höchste Priorität
+    if _SEARCH_INTENT_PATTERN.search(task):
+        return [PlannedToolCall("search", {"query": task.strip()})]
+
+    # Schreibaufgaben → kein Tool, LLM direkt
+    if _WRITING_INTENT_PATTERN.search(task):
+        return []
+
+    # Allgemeine Wissens-/Erklärungsfragen → kein Tool, LLM direkt
+    if _KNOWLEDGE_INTENT_PATTERN.search(task):
+        return []
 
     return [PlannedToolCall("search", {"query": task.strip()})]
 

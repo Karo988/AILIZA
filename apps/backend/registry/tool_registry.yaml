@@ -1,0 +1,128 @@
+# AILIZA Tool Registry
+# ====================
+# Definiert externe Tools und Spezialisten.
+# Neues Tool → erst pending, dann Admin-Freigabe, dann eingeschränkt nutzen.
+#
+# Felder:
+#   type:                    search | presentation | diagram | image | document | communication
+#   enabled:                 true = darf genutzt werden (nach Admin-Freigabe)
+#   admin_approved:          true = durch Admin freigegeben
+#   runs_local:              true = kein externer Datenabfluss
+#   requires_user_approval:  true = Nutzer muss aktiv zustimmen
+#   allowed_data:            Erlaubte Datenklassen
+#   forbidden_data:          Nie erlaubt
+
+tools:
+
+  tavily_search:
+    type: search
+    enabled: true
+    admin_approved: true
+    runs_local: false
+    requires_user_approval: false
+    region: us
+    transfer_basis: scc
+    avv_signed: false
+    allowed_data:
+      - public
+      - internal
+    forbidden_data:
+      - credentials
+      - special_category
+      - personal_data
+      - financial
+      - hr
+      - legal
+    description: Websuche für öffentliche Informationen. Kein PII senden.
+    notes: >
+      Tavily ist ein US-Anbieter. Nur für PUBLIC/INTERNAL-Anfragen.
+      Kein personenbezogener Inhalt in der Suchanfrage.
+
+  web_fetch:
+    type: search
+    enabled: true
+    admin_approved: true
+    runs_local: false
+    requires_user_approval: false
+    region: us
+    transfer_basis: scc
+    avv_signed: false
+    allowed_data:
+      - public
+    forbidden_data:
+      - credentials
+      - special_category
+      - personal_data
+      - financial
+      - hr
+      - legal
+    description: Abruf öffentlicher URLs. Kein PII in URLs senden.
+    notes: Nur für public URLs — keine internen Systeme, keine Auth-URLs.
+
+  local_chart_engine:
+    type: diagram
+    enabled: true
+    admin_approved: true
+    runs_local: true
+    requires_user_approval: false
+    region: local
+    transfer_basis: eu_internal
+    avv_signed: true
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data
+      - financial
+      - hr
+      - legal
+    forbidden_data: []
+    description: Lokale Diagramm- und Chartgenerierung (Balken, Linien, Prozesse).
+    notes: Läuft lokal. Alle Datenklassen erlaubt.
+
+  canva:
+    type: presentation
+    enabled: false             # ⚠ Noch nicht freigegeben — DSGVO-Prüfung offen
+    admin_approved: false
+    runs_local: false
+    requires_user_approval: true
+    region: us
+    transfer_basis: none       # ⚠ Kein bekannter SCCs/AVV
+    avv_signed: false
+    allowed_data:
+      - public
+    forbidden_data:
+      - credentials
+      - special_category
+      - personal_data
+      - financial
+      - hr
+      - legal
+    description: Präsentationsdesign und visuelle Assets.
+    notes: >
+      US-Anbieter. Kein AVV bekannt. Aktivierung erfordert:
+      DSGVO-Prüfung, AVV, Admin-Freigabe, Nutzer-Zustimmung.
+
+  telegram_gateway:
+    type: communication
+    enabled: false             # ⚠ Opt-in — nur wenn explizit konfiguriert
+    admin_approved: false
+    runs_local: false
+    requires_user_approval: true
+    region: us
+    transfer_basis: scc
+    avv_signed: false
+    allowed_data:
+      - public
+      - internal
+    forbidden_data:
+      - credentials
+      - special_category
+      - personal_data
+      - financial
+      - hr
+      - legal
+    description: Telegram-Bot für Benachrichtigungen.
+    notes: >
+      Opt-in. Kein PII in Nachrichten. Nutzer muss explizit zustimmen.
+      Admin-Freigabe + AVV erforderlich.

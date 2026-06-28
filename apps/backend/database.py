@@ -1,15 +1,73 @@
 from __future__ import annotations
 
+import logging
 import os
-from datetime import datetime, timezone
+import warnings
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Integer, JSON, MetaData, String, Table, Text, create_engine, insert, select, update
+from sqlalchemy import Column, DateTime, Float, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
+logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("AILIZA_DATABASE_URL", "sqlite:///./audit_log.db")
+_RAW_DB_URL = os.getenv("AILIZA_DATABASE_URL", "")
+
+def _resolve_database_url(raw: str) -> str:
+    """
+    Wandelt den konfigurierten DB-URL in einen stabilen absoluten Pfad um.
+
+    Regeln:
+    - Kein AILIZA_DATABASE_URL gesetzt → relativer Fallback mit Warnung (Dev-Modus)
+    - Relativer sqlite-Pfad → zu absolutem Pfad aufgelöst, Warnung ausgegeben
+    - Absoluter Pfad → unverändert übernommen
+    - Anderer DB-Typ (postgres etc.) → unverändert
+    - Verzeichnis wird ggf. angelegt (nur bei sqlite)
+    """
+    if not raw:
+        # Dev-Fallback: relativ zum Repo-Root (apps/backend/../..)
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        fallback = repo_root / "data" / "ailiza_dev.db"
+        warnings.warn(
+            f"AILIZA_DATABASE_URL nicht gesetzt. Dev-Fallback: {fallback}. "
+            "In Produktion AILIZA_DATABASE_URL mit absolutem Pfad setzen.",
+            stacklevel=2,
+        )
+        raw = f"sqlite:///{fallback}"
+
+    if not raw.startswith("sqlite"):
+        return raw  # Postgres/MySQL etc. unverändert
+
+    # sqlite:///./pfad  oder  sqlite:///relativer/pfad
+    prefix = "sqlite:///"
+    path_str = raw[len(prefix):]
+
+    if path_str.startswith(":"):
+        return raw  # sqlite:///:memory:
+
+    p = Path(path_str)
+    if not p.is_absolute():
+        # Relativen Pfad zu absolutem Pfad auflösen (Repo-Root als Basis)
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        p = (repo_root / p).resolve()
+        warnings.warn(
+            f"AILIZA_DATABASE_URL enthält relativen Pfad — aufgelöst zu: {p}. "
+            "Empfehlung: absoluten Pfad setzen (4 Slashes: sqlite:////absolut/pfad.db).",
+            stacklevel=2,
+        )
+    else:
+        p = p.resolve()
+
+    # Verzeichnis anlegen falls nicht vorhanden
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    return f"sqlite:///{p}"
+
+
+DATABASE_URL = _resolve_database_url(_RAW_DB_URL)
+DEFAULT_TENANT_ID = os.getenv("AILIZA_DEFAULT_TENANT_ID", "default")
 
 engine_options: dict[str, Any] = {}
 if DATABASE_URL.startswith("sqlite"):
@@ -29,6 +87,10 @@ audit_logs = Table(
     Column("timestamp", DateTime(timezone=True), nullable=False),
     Column("action", String(255), nullable=False),
     Column("metadata", JSON, nullable=False, default=dict),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    # Audit-Vault Stufe 2: Hash-Chain (append-only Integritätssicherung)
+    Column("previous_hash", String(64), nullable=False, default="0" * 64),
+    Column("entry_hash", String(64), nullable=False, default=""),
 )
 
 approval_requests = Table(
@@ -41,9 +103,12 @@ approval_requests = Table(
     Column("input_params", JSON, nullable=False),
     Column("risk_level", String(32), nullable=False),
     Column("risk_reason", Text, nullable=False),
+    Column("required_approver_roles", JSON, nullable=True),
     Column("status", String(32), nullable=False, default="pending"),
     Column("resolved_at", DateTime(timezone=True), nullable=True),
     Column("note", Text, nullable=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
 )
 
 agent_runs = Table(
@@ -57,12 +122,181 @@ agent_runs = Table(
     Column("pending_approval_id", Integer, nullable=True),
     Column("result", JSON, nullable=True),
     Column("run_metadata", JSON, nullable=False, default=dict),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+)
+
+# ── Getrennte Logs (KEINE Inhalte, keine Prompts, keine Secrets) ─────────────
+security_logs = Table(
+    "security_logs",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("timestamp", DateTime(timezone=True), nullable=False),
+    Column("incident_type", String(64), nullable=False),
+    Column("severity", String(32), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+)
+
+performance_logs = Table(
+    "performance_logs",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("timestamp", DateTime(timezone=True), nullable=False),
+    Column("latency_ms", Integer, nullable=False),
+    Column("route", String(32), nullable=True),
+    Column("provider", String(64), nullable=True),
+    Column("error_type", String(64), nullable=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+)
+
+cost_logs = Table(
+    "cost_logs",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("timestamp", DateTime(timezone=True), nullable=False),
+    Column("tokens_in", Integer, nullable=False, default=0),
+    Column("tokens_out", Integer, nullable=False, default=0),
+    Column("provider", String(64), nullable=True),
+    Column("model", String(128), nullable=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("use_case", String(128), nullable=True),
+    Column("cost_estimate", Float, nullable=False, default=0.0),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+)
+
+reflection_facts = Table(
+    "reflection_facts",
+    metadata_obj,
+    Column("id", String(36), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("user_id", String(64), nullable=True),
+    Column("data_classes", JSON, nullable=True),
+    Column("content", Text, nullable=False),
+    Column("quality_score", Float, nullable=False, default=1.0),
+    Column("opt_in_confirmed", Integer, nullable=False, default=0),
+    Column("created_at", String(40), nullable=False),
+    Column("expires_at", String(40), nullable=False),
+    Column("source", String(64), nullable=True),
+    Column("purpose", String(128), nullable=True),
+    Column("pii_cleared", Integer, nullable=False, default=0),
+)
+
+feedback = Table(
+    "feedback",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("run_id", String(36), nullable=True),
+    Column("rating", String(32), nullable=False),
+    Column("reason", Text, nullable=True),
+    Column("quality_score_delta", Float, nullable=False, default=0.0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+routing_proposals = Table(
+    "routing_proposals",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("trigger_type", String(64), nullable=False),
+    Column("description", Text, nullable=True),
+    Column("previous_route", String(32), nullable=True),
+    Column("proposed_route", String(32), nullable=True),
+    Column("status", String(32), nullable=False, default="pending"),
+    Column("changed_by", String(64), nullable=True),
+    Column("reason", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("policy_version", String(32), nullable=True),
+)
+
+kill_switch_state = Table(
+    "kill_switch_state",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("enabled", Integer, nullable=True),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+users = Table(
+    "users",
+    metadata_obj,
+    Column("user_id", String(64), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("role", String(32), nullable=False, default="user"),
+    Column("hashed_password", String(256), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("active", Integer, nullable=False, default=1),
+    Column("failed_login_attempts", Integer, nullable=False, default=0),
+    Column("locked_until", DateTime(timezone=True), nullable=True),
+)
+
+
+messenger_bindings = Table(
+    "messenger_bindings",
+    metadata_obj,
+    Column("chat_id", String(64), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("telegram_username", String(128), nullable=True),
+    Column("opt_in_confirmed", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("opt_in_at", DateTime(timezone=True), nullable=True),
+)
+
+totp_secrets = Table(
+    "totp_secrets",
+    metadata_obj,
+    Column("user_id", String(64), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("secret_b32", String(64), nullable=False),
+    Column("confirmed", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("confirmed_at", DateTime(timezone=True), nullable=True),
+)
+
+totp_backup_codes = Table(
+    "totp_backup_codes",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(64), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("code_hash", String(64), nullable=False),
+    Column("used", Integer, nullable=False, default=0),
+    Column("used_at", DateTime(timezone=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+skills = Table(
+    "skills",
+    metadata_obj,
+    Column("skill_id", String(36), primary_key=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("name", String(128), nullable=False),
+    Column("description", String(512), nullable=True),
+    Column("steps_summary", Text, nullable=False),
+    Column("data_classes", JSON, nullable=True),
+    Column("risk_level", String(32), nullable=False, default="medium"),
+    Column("gdpr_purpose", String(256), nullable=True),
+    Column("source_run_id", String(36), nullable=True),
+    Column("proposed_by", String(64), nullable=True),
+    Column("status", String(32), nullable=False, default="pending"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("approved_at", DateTime(timezone=True), nullable=True),
+    Column("approved_by", String(64), nullable=True),
+    Column("rejection_reason", String(512), nullable=True),
 )
 
 
 def init_db() -> None:
     metadata_obj.create_all(engine)
     ensure_sqlite_schema()
+
+
+def _add_column_if_missing(connection, table: str, column: str, ddl_type: str) -> None:
+    cols = {row[1] for row in connection.exec_driver_sql(f"PRAGMA table_info({table})").all()}
+    if cols and column not in cols:
+        connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
 def ensure_sqlite_schema() -> None:
@@ -75,29 +309,185 @@ def ensure_sqlite_schema() -> None:
         }
         if approval_columns and "run_id" not in approval_columns:
             connection.exec_driver_sql("ALTER TABLE approval_requests ADD COLUMN run_id VARCHAR(36)")
+        # tenant_id Migration fuer Bestandstabellen
+        tenant_ddl = f"VARCHAR(64) DEFAULT '{DEFAULT_TENANT_ID}'"
+        for table in ("audit_logs", "approval_requests", "agent_runs"):
+            _add_column_if_missing(connection, table, "tenant_id", tenant_ddl)
+        # Account-Lockout-Felder fuer bestehende users-Tabellen
+        _add_column_if_missing(connection, "users", "failed_login_attempts", "INTEGER DEFAULT 0")
+        _add_column_if_missing(connection, "users", "locked_until", "DATETIME")
+        # TOTP-Felder (Tabellen werden durch metadata_obj.create_all angelegt)
 
 
-def write_audit_entry(action: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    entry = {
-        "timestamp": datetime.now(timezone.utc),
+def get_kill_switch_flag() -> bool | None:
+    """Liest optionales DB-Flag fuer den Kill-Switch. None = nicht gesetzt."""
+    try:
+        with engine.begin() as connection:
+            row = connection.execute(
+                select(kill_switch_state.c.enabled).order_by(kill_switch_state.c.id.desc()).limit(1)
+            ).first()
+    except Exception:
+        return None
+    if not row or row[0] is None:
+        return None
+    return bool(row[0])
+
+
+# ── Getrennte Log-Writer ─────────────────────────────────────────────────────
+def write_security_log(incident_type: str, severity: str, tenant_id: str = DEFAULT_TENANT_ID,
+                       expires_at: datetime | None = None) -> None:
+    with engine.begin() as connection:
+        connection.execute(insert(security_logs).values(
+            timestamp=datetime.now(timezone.utc), incident_type=incident_type,
+            severity=severity, tenant_id=tenant_id, expires_at=expires_at))
+
+
+def write_performance_log(latency_ms: int, route: str | None, provider: str | None,
+                          error_type: str | None, tenant_id: str = DEFAULT_TENANT_ID,
+                          expires_at: datetime | None = None) -> None:
+    with engine.begin() as connection:
+        connection.execute(insert(performance_logs).values(
+            timestamp=datetime.now(timezone.utc), latency_ms=latency_ms, route=route,
+            provider=provider, error_type=error_type, tenant_id=tenant_id, expires_at=expires_at))
+
+
+def write_cost_log(tokens_in: int, tokens_out: int, provider: str | None, model: str | None,
+                   tenant_id: str = DEFAULT_TENANT_ID, use_case: str | None = None,
+                   cost_estimate: float = 0.0, expires_at: datetime | None = None) -> None:
+    with engine.begin() as connection:
+        connection.execute(insert(cost_logs).values(
+            timestamp=datetime.now(timezone.utc), tokens_in=tokens_in, tokens_out=tokens_out,
+            provider=provider, model=model, tenant_id=tenant_id, use_case=use_case,
+            cost_estimate=cost_estimate, expires_at=expires_at))
+
+
+def list_performance_logs(tenant_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    query = select(performance_logs).order_by(performance_logs.c.timestamp.desc()).limit(limit)
+    if tenant_id is not None:
+        query = query.where(performance_logs.c.tenant_id == tenant_id)
+    with engine.begin() as connection:
+        return [dict(r) for r in connection.execute(query).mappings().all()]
+
+
+def _compute_audit_hash(entry_id: int, timestamp: str, action: str,
+                        tenant_id: str, previous_hash: str) -> str:
+    """SHA-256 Hash-Chain für Audit-Vault Stufe 2."""
+    import hashlib
+    raw = f"{entry_id}|{timestamp}|{action}|{tenant_id}|{previous_hash}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _get_latest_audit_hash(connection: Any) -> str:
+    """Liest den entry_hash des letzten Audit-Eintrags (für Hash-Chain)."""
+    row = connection.execute(
+        select(audit_logs.c.entry_hash)
+        .order_by(audit_logs.c.id.desc())
+        .limit(1)
+    ).fetchone()
+    if row is None or not row[0]:
+        return "0" * 64  # Genesis-Hash
+    return row[0]
+
+
+def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
+                      tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
+    ts = datetime.now(timezone.utc)
+    entry: dict[str, Any] = {
+        "timestamp": ts,
         "action": action,
         "metadata": metadata or {},
+        "tenant_id": tenant_id,
     }
 
     with engine.begin() as connection:
-        result = connection.execute(insert(audit_logs).values(**entry))
-        entry["id"] = result.inserted_primary_key[0]
+        previous_hash = _get_latest_audit_hash(connection)
+        entry["previous_hash"] = previous_hash
+        # Temporärer Hash ohne ID — wird nach Insert mit echter ID berechnet
+        result = connection.execute(
+            insert(audit_logs).values(**entry, entry_hash="pending")
+        )
+        entry_id = result.inserted_primary_key[0]
+        entry["id"] = entry_id
+        # Hash mit echter ID berechnen und zurückschreiben
+        ts_str = ts.isoformat()
+        entry_hash = _compute_audit_hash(entry_id, ts_str, action, tenant_id, previous_hash)
+        entry["entry_hash"] = entry_hash
+        from sqlalchemy import update as _update
+        connection.execute(
+            _update(audit_logs)
+            .where(audit_logs.c.id == entry_id)
+            .values(entry_hash=entry_hash)
+        )
 
     return entry
 
 
-def list_audit_entries(limit: int = 100) -> list[dict[str, Any]]:
+def list_audit_entries(limit: int = 100, tenant_id: str | None = None) -> list[dict[str, Any]]:
     query = select(audit_logs).order_by(audit_logs.c.timestamp.desc()).limit(limit)
+    if tenant_id is not None:
+        query = query.where(audit_logs.c.tenant_id == tenant_id)
 
     with engine.begin() as connection:
         rows = connection.execute(query).mappings().all()
 
     return [dict(row) for row in rows]
+
+
+def query_audit_events(
+    *,
+    action: str | None = None,
+    tenant_id: str | None = None,
+    timestamp_from: datetime | None = None,
+    timestamp_to: datetime | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Paginierte, gefilterte Audit-Abfrage für den Audit-Vault (read-only)."""
+    limit = min(max(1, limit), 1000)
+    offset = max(0, offset)
+
+    query = select(audit_logs).order_by(audit_logs.c.timestamp.desc())
+
+    if action:
+        query = query.where(audit_logs.c.action == action)
+    if tenant_id:
+        query = query.where(audit_logs.c.tenant_id == tenant_id)
+    if timestamp_from:
+        query = query.where(audit_logs.c.timestamp >= timestamp_from)
+    if timestamp_to:
+        query = query.where(audit_logs.c.timestamp <= timestamp_to)
+
+    query = query.offset(offset).limit(limit)
+
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+
+    return [dict(row) for row in rows]
+
+
+def count_audit_events(
+    *,
+    action: str | None = None,
+    tenant_id: str | None = None,
+    timestamp_from: datetime | None = None,
+    timestamp_to: datetime | None = None,
+) -> int:
+    """Zählt Audit-Einträge für Retention-Reports (kein DELETE)."""
+    from sqlalchemy import func
+
+    query = select(func.count()).select_from(audit_logs)
+
+    if action:
+        query = query.where(audit_logs.c.action == action)
+    if tenant_id:
+        query = query.where(audit_logs.c.tenant_id == tenant_id)
+    if timestamp_from:
+        query = query.where(audit_logs.c.timestamp >= timestamp_from)
+    if timestamp_to:
+        query = query.where(audit_logs.c.timestamp <= timestamp_to)
+
+    with engine.begin() as connection:
+        return connection.execute(query).scalar() or 0
 
 
 def create_approval_request(
@@ -106,17 +496,27 @@ def create_approval_request(
     risk_level: str,
     risk_reason: str,
     run_id: str | None = None,
+    tenant_id: str = DEFAULT_TENANT_ID,
+    required_approver_roles: list[str] | None = None,
 ) -> dict[str, Any]:
+    from .approval import APPROVAL_TIMEOUT_SECONDS, APPROVAL_ROLES  # type: ignore[attr-defined]
+    now = datetime.now(timezone.utc)
+    timeout_s = APPROVAL_TIMEOUT_SECONDS.get(risk_level, 1800)
+    expires = (now + timedelta(seconds=timeout_s)) if timeout_s > 0 else None
+    roles = required_approver_roles or APPROVAL_ROLES.get(risk_level, ["admin", "owner"])
     entry = {
-        "created_at": datetime.now(timezone.utc),
+        "created_at": now,
         "run_id": run_id,
         "tool": tool,
         "input_params": input_params,
         "risk_level": risk_level,
         "risk_reason": risk_reason,
+        "required_approver_roles": roles,
         "status": "pending",
         "resolved_at": None,
         "note": None,
+        "tenant_id": tenant_id,
+        "expires_at": expires,
     }
 
     with engine.begin() as connection:
@@ -131,6 +531,7 @@ def create_agent_run(
     task: str,
     status: str = "running",
     run_metadata: dict[str, Any] | None = None,
+    tenant_id: str = DEFAULT_TENANT_ID,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     entry = {
@@ -142,6 +543,7 @@ def create_agent_run(
         "pending_approval_id": None,
         "result": None,
         "run_metadata": run_metadata or {},
+        "tenant_id": tenant_id,
     }
 
     with engine.begin() as connection:
@@ -159,10 +561,13 @@ def get_agent_run(run_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def list_agent_runs(status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+def list_agent_runs(status: str | None = None, limit: int = 100,
+                    tenant_id: str | None = None) -> list[dict[str, Any]]:
     query = select(agent_runs).order_by(agent_runs.c.updated_at.desc()).limit(limit)
     if status:
         query = query.where(agent_runs.c.status == status)
+    if tenant_id is not None:
+        query = query.where(agent_runs.c.tenant_id == tenant_id)
 
     with engine.begin() as connection:
         rows = connection.execute(query).mappings().all()
@@ -245,3 +650,279 @@ def resolve_approval_request(approval_id: int, status: str, note: str = "") -> d
         return get_approval_request(approval_id)
 
     return get_approval_request(approval_id)
+
+
+# ── Reflection Facts ─────────────────────────────────────────────────────────
+def insert_reflection_fact(values: dict[str, Any]) -> None:
+    with engine.begin() as connection:
+        connection.execute(insert(reflection_facts).values(**values))
+
+
+def query_reflection_facts(tenant_id: str, purpose: str | None = None,
+                           limit: int = 5) -> list[dict[str, Any]]:
+    query = select(reflection_facts).where(reflection_facts.c.tenant_id == tenant_id)
+    if purpose:
+        query = query.where(reflection_facts.c.purpose == purpose)
+    query = query.order_by(reflection_facts.c.quality_score.desc()).limit(limit)
+    with engine.begin() as connection:
+        return [dict(r) for r in connection.execute(query).mappings().all()]
+
+
+def delete_reflection_fact(fact_id: str) -> int:
+    with engine.begin() as connection:
+        result = connection.execute(delete(reflection_facts).where(reflection_facts.c.id == fact_id))
+    return result.rowcount
+
+
+def delete_reflection_facts_for_tenant(tenant_id: str) -> int:
+    with engine.begin() as connection:
+        result = connection.execute(delete(reflection_facts).where(reflection_facts.c.tenant_id == tenant_id))
+    return result.rowcount
+
+
+def adjust_fact_quality_for_run(run_id: str, delta: float, tenant_id: str = DEFAULT_TENANT_ID) -> None:
+    # MVP: passt quality_score aller Facts des Tenants mit passender source an.
+    with engine.begin() as connection:
+        connection.execute(
+            update(reflection_facts)
+            .where(reflection_facts.c.tenant_id == tenant_id)
+            .where(reflection_facts.c.source == run_id)
+            .values(quality_score=reflection_facts.c.quality_score + delta)
+        )
+
+
+# ── Feedback ─────────────────────────────────────────────────────────────────
+def insert_feedback(tenant_id: str, run_id: str | None, rating: str,
+                    reason: str | None, quality_score_delta: float) -> dict[str, Any]:
+    entry = {
+        "tenant_id": tenant_id, "run_id": run_id, "rating": rating,
+        "reason": reason, "quality_score_delta": quality_score_delta,
+        "created_at": datetime.now(timezone.utc),
+    }
+    with engine.begin() as connection:
+        result = connection.execute(insert(feedback).values(**entry))
+        entry["id"] = result.inserted_primary_key[0]
+    return entry
+
+
+def count_negative_feedback(tenant_id: str, run_id: str | None) -> int:
+    query = select(feedback).where(feedback.c.tenant_id == tenant_id).where(
+        feedback.c.rating == "not_helpful")
+    if run_id is not None:
+        query = query.where(feedback.c.run_id == run_id)
+    with engine.begin() as connection:
+        return len(connection.execute(query).all())
+
+
+# ── Routing Proposals ────────────────────────────────────────────────────────
+def insert_routing_proposal(tenant_id: str, trigger_type: str, description: str,
+                            previous_route: str | None = None, proposed_route: str | None = None,
+                            reason: str | None = None) -> dict[str, Any]:
+    entry = {
+        "tenant_id": tenant_id, "trigger_type": trigger_type, "description": description,
+        "previous_route": previous_route, "proposed_route": proposed_route,
+        "status": "pending", "changed_by": None, "reason": reason,
+        "created_at": datetime.now(timezone.utc), "confirmed_at": None, "policy_version": None,
+    }
+    with engine.begin() as connection:
+        result = connection.execute(insert(routing_proposals).values(**entry))
+        entry["id"] = result.inserted_primary_key[0]
+    return entry
+
+
+def list_routing_proposals(tenant_id: str | None = None) -> list[dict[str, Any]]:
+    query = select(routing_proposals).order_by(routing_proposals.c.created_at.desc())
+    if tenant_id is not None:
+        query = query.where(routing_proposals.c.tenant_id == tenant_id)
+    with engine.begin() as connection:
+        return [dict(r) for r in connection.execute(query).mappings().all()]
+
+
+# ── Nutzer / Auth ─────────────────────────────────────────────────────────────
+def create_user(user_id: str, tenant_id: str, role: str, hashed_password: str) -> dict[str, Any]:
+    entry = {
+        "user_id": user_id, "tenant_id": tenant_id, "role": role,
+        "hashed_password": hashed_password,
+        "created_at": datetime.now(timezone.utc), "active": 1,
+    }
+    with engine.begin() as connection:
+        connection.execute(insert(users).values(**entry))
+    return {k: v for k, v in entry.items() if k != "hashed_password"}
+
+
+def get_user(user_id: str, tenant_id: str | None = None) -> dict[str, Any] | None:
+    query = select(users).where(users.c.user_id == user_id)
+    if tenant_id is not None:
+        query = query.where(users.c.tenant_id == tenant_id)
+    with engine.begin() as connection:
+        row = connection.execute(query).mappings().first()
+    return dict(row) if row else None
+
+
+def _max_attempts() -> int:
+    return int(os.getenv("AILIZA_MAX_LOGIN_ATTEMPTS", "5"))
+
+def _lockout_minutes() -> int:
+    return int(os.getenv("AILIZA_LOCKOUT_MINUTES", "15"))
+
+
+def authenticate_user(user_id: str, plain_password: str, tenant_id: str | None = None) -> dict[str, Any] | None:
+    """
+    Prueft Credentials. Sperrt Account nach _MAX_FAILED_ATTEMPTS Fehlversuchen
+    fuer _LOCKOUT_MINUTES Minuten. Gibt None zurueck bei Fehler (kein Hinweis auf Grund).
+    """
+    row = get_user(user_id, tenant_id)
+    if not row or not row.get("active"):
+        return None
+
+    # Lockout pruefen
+    locked_until = row.get("locked_until")
+    if locked_until is not None:
+        if isinstance(locked_until, str):
+            locked_until = datetime.fromisoformat(locked_until)
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < locked_until:
+            return None  # gesperrt — kein Unterschied zu falschen Credentials
+
+    try:
+        import bcrypt
+        pw_ok = bcrypt.checkpw(plain_password.encode(), row["hashed_password"].encode())
+    except ImportError:
+        return None
+
+    if not pw_ok:
+        _record_failed_login(user_id, tenant_id or row["tenant_id"])
+        return None
+
+    # Erfolg: Zähler zurücksetzen
+    _reset_failed_login(user_id, tenant_id or row["tenant_id"])
+    return {k: v for k, v in row.items() if k not in ("hashed_password",)}
+
+
+def _record_failed_login(user_id: str, tenant_id: str) -> None:
+    from datetime import timedelta
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(users.c.failed_login_attempts)
+            .where(users.c.user_id == user_id)
+            .where(users.c.tenant_id == tenant_id)
+        ).first()
+        attempts = (row[0] if row else 0) + 1
+        locked_until = None
+        if attempts >= _max_attempts():
+            locked_until = datetime.now(timezone.utc) + timedelta(minutes=_lockout_minutes())
+        conn.execute(
+            update(users)
+            .where(users.c.user_id == user_id)
+            .where(users.c.tenant_id == tenant_id)
+            .values(failed_login_attempts=attempts, locked_until=locked_until)
+        )
+
+
+def _reset_failed_login(user_id: str, tenant_id: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            update(users)
+            .where(users.c.user_id == user_id)
+            .where(users.c.tenant_id == tenant_id)
+            .values(failed_login_attempts=0, locked_until=None)
+        )
+
+
+# ── TOTP ──────────────────────────────────────────────────────────────────────
+def upsert_totp_secret(user_id: str, tenant_id: str, secret_b32: str) -> None:
+    """
+    Speichert (oder ersetzt) ein TOTP-Secret; confirmed=0 bis Erstbestätigung.
+
+    Beta-Betriebsauflage: Secret liegt im Klartext in der DB.
+    Schutz erfolgt durch DB-/Volume-Verschlüsselung und minimale DB-Rechte.
+    Production-Gate: AES-256-GCM oder KMS/Vault vor Produktiv-Einsatz erforderlich.
+    Keine selbstgebaute Kryptografie (XOR o.ä.) als Ersatz zulässig.
+    """
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(totp_secrets).where(totp_secrets.c.user_id == user_id)
+        ).first()
+        if existing:
+            conn.execute(
+                update(totp_secrets)
+                .where(totp_secrets.c.user_id == user_id)
+                .values(secret_b32=secret_b32, confirmed=0, confirmed_at=None,
+                        created_at=datetime.now(timezone.utc))
+            )
+        else:
+            conn.execute(insert(totp_secrets).values(
+                user_id=user_id, tenant_id=tenant_id, secret_b32=secret_b32,
+                confirmed=0, created_at=datetime.now(timezone.utc), confirmed_at=None,
+            ))
+
+
+def confirm_totp_secret(user_id: str) -> bool:
+    """Markiert TOTP-Secret als bestätigt. Gibt False zurück wenn kein Secret vorhanden."""
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(totp_secrets)
+            .where(totp_secrets.c.user_id == user_id)
+            .where(totp_secrets.c.confirmed == 0)
+            .values(confirmed=1, confirmed_at=datetime.now(timezone.utc))
+        )
+    return result.rowcount > 0
+
+
+def get_totp_record(user_id: str) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(totp_secrets).where(totp_secrets.c.user_id == user_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def delete_totp_secret(user_id: str) -> int:
+    with engine.begin() as conn:
+        r1 = conn.execute(delete(totp_secrets).where(totp_secrets.c.user_id == user_id))
+        conn.execute(delete(totp_backup_codes).where(totp_backup_codes.c.user_id == user_id))
+    return r1.rowcount
+
+
+def store_backup_codes(user_id: str, tenant_id: str, code_hashes: list[str]) -> None:
+    """Speichert gehashte Backup-Codes. Vorherige Codes werden gelöscht."""
+    with engine.begin() as conn:
+        conn.execute(delete(totp_backup_codes).where(totp_backup_codes.c.user_id == user_id))
+        now = datetime.now(timezone.utc)
+        for h in code_hashes:
+            conn.execute(insert(totp_backup_codes).values(
+                user_id=user_id, tenant_id=tenant_id, code_hash=h, used=0, created_at=now,
+            ))
+
+
+def consume_backup_code(user_id: str, plain_code: str) -> bool:
+    """
+    Prüft und verbraucht einen Backup-Code (HMAC+Pepper, constant-time).
+    Einmalig — nach Verwendung wird used=1 gesetzt.
+    """
+    from .auth.totp import verify_backup_code
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(totp_backup_codes)
+            .where(totp_backup_codes.c.user_id == user_id)
+            .where(totp_backup_codes.c.used == 0)
+        ).mappings().all()
+        for row in rows:
+            if verify_backup_code(plain_code, row["code_hash"]):
+                conn.execute(
+                    update(totp_backup_codes)
+                    .where(totp_backup_codes.c.id == row["id"])
+                    .values(used=1, used_at=datetime.now(timezone.utc))
+                )
+                return True
+    return False
+def init_db() -> None:
+    metadata_obj.create_all(bind=engine)
+
+
+try:
+    init_db()
+except Exception:
+    logger.exception("Database initialization failed")
+    raise

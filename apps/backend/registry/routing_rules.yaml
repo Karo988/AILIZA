@@ -1,0 +1,124 @@
+# AILIZA Routing Rules
+# ====================
+# Definiert für jeden Aufgabentyp: welche Provider/Tools erlaubt sind,
+# ob Web-Suche aktiv ist, ob Human Review nötig ist.
+# Diese Datei darf nur durch Admin geändert werden.
+# Änderungen werden auditiert.
+
+rules:
+
+  writing_task:
+    description: E-Mails, Briefe, Entwürfe, Übersetzungen, Zusammenfassungen
+    preferred_providers:
+      - groq
+      - openai
+      - local
+    preferred_tools: []
+    web_search: false
+    draft_only: false
+    human_review: false
+    allowed_data:
+      - public
+      - internal
+      - personal_data   # nach Redaktion
+    notes: Schreibaufgaben gehen direkt an LLM — keine Websuche.
+
+  research_task:
+    description: Recherche, Websuche, aktuelle Informationen
+    preferred_providers:
+      - groq
+      - openai
+    preferred_tools:
+      - tavily_search
+      - web_fetch
+    web_search: true
+    draft_only: false
+    human_review: false
+    allowed_data:
+      - public
+      - internal
+    notes: >
+      Kein PII in Suchanfragen. Nach Suche kann LLM zusammenfassen.
+
+  sensitive_hr_task:
+    description: HR, Personalentscheidungen, Disziplinarmaßnahmen
+    preferred_providers:
+      - local
+      - groq           # nur nach Redaktion
+      - openai         # nur nach Redaktion
+    preferred_tools: []
+    web_search: false
+    draft_only: true
+    human_review: true
+    allowed_data:
+      - hr             # nach Redaktion
+      - personal_data  # nach Redaktion
+    notes: >
+      Immer als Entwurf. Menschliche Überprüfung erforderlich (DSGVO Art. 22).
+      Redaktion vor jedem externen Call obligatorisch.
+
+  classification_task:
+    description: Klassifikation, Kategorisierung, Tagging
+    preferred_providers:
+      - groq
+      - openai
+      - local
+    preferred_tools: []
+    web_search: false
+    draft_only: false
+    human_review: false
+    allowed_data:
+      - public
+      - internal
+      - confidential
+    notes: Intern — kein PII, kein Nutzerinhalt senden.
+
+  diagram_task:
+    description: Diagramme, Charts, Visualisierungen
+    preferred_providers: []
+    preferred_tools:
+      - local_chart_engine
+    web_search: false
+    draft_only: false
+    human_review: false
+    allowed_data:
+      - public
+      - internal
+      - confidential
+      - personal_data
+      - financial
+    notes: >
+      Bevorzugt lokales Tool. Kein externer Provider nötig.
+
+  presentation_task:
+    description: Präsentationen, Slides, visuelle Designs
+    preferred_providers:
+      - groq
+      - openai
+    preferred_tools:
+      - local_chart_engine
+    web_search: false
+    draft_only: false
+    human_review: false
+    requires_approval: true
+    allowed_data:
+      - public
+      - internal
+    notes: >
+      Canva deaktiviert bis DSGVO-Prüfung abgeschlossen.
+      Nutzer-Zustimmung bei externem Tool erforderlich.
+
+  general_task:
+    description: Allgemeine Anfragen, Wissensfragen, Fallback
+    preferred_providers:
+      - groq
+      - openai
+      - local
+    preferred_tools: []
+    web_search: false
+    draft_only: false
+    human_review: false
+    allowed_data:
+      - public
+      - internal
+    notes: Standard-Fallback für nicht klassifizierte Anfragen.

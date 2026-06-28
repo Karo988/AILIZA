@@ -1,0 +1,54 @@
+{
+  "_comment": "AILIZA Provider Health — wird vom Watch-Agent aktualisiert (nur Vorschläge). Aktivierung nur nach Admin-Freigabe.",
+  "_last_updated": null,
+  "_updated_by": "system_init",
+  "providers": {
+    "groq": {
+      "health_status": "unknown",
+      "last_check": null,
+      "consecutive_errors": 0,
+      "last_error_code": null,
+      "last_error_time": null,
+      "avg_latency_ms": null,
+      "notes": ""
+    },
+    "openai": {
+      "health_status": "unknown",
+      "last_check": null,
+      "consecutive_errors": 0,
+      "last_error_code": null,
+      "last_error_time": null,
+      "avg_latency_ms": null,
+      "notes": ""
+    },
+    "anthropic": {
+      "health_status": "unknown",
+      "last_check": null,
+      "consecutive_errors": 0,
+      "last_error_code": null,
+      "last_error_time": null,
+      "avg_latency_ms": null,
+      "notes": ""
+    },
+    "openrouter": {
+      "health_status": "unknown",
+      "last_check": null,
+      "consecutive_errors": 0,
+      "last_error_code": null,
+      "last_error_time": null,
+      "avg_latency_ms": null,
+      "notes": ""
+    },
+    "local": {
+      "health_status": "ok",
+      "last_check": null,
+      "consecutive_errors": 0,
+      "last_error_code": null,
+      "last_error_time": null,
+      "avg_latency_ms": 0,
+      "notes": "Lokale Verarbeitung — immer verfügbar."
+    }
+  },
+  "pending_changes": [],
+  "last_watch_run": null
+}

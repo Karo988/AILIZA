@@ -1,182 +1,214 @@
 """
-AILIZA Audit-Vault
-==================
-EU AI Act Art. 12: Aufzeichnungspflichten
-DSGVO Art. 30: Verzeichnis von Verarbeitungstätigkeiten
+Audit-Vault Stufe 1 + 2
+========================
+Read-only, append-only Audit-Export-Service.
+Stufe 2: Hash-Chain-Verifikation (SHA-256, append-only Integritätsprüfung).
 
-Unterschied zu audit_logger.py:
-- audit_logger: operativer Log mit Details (bestehend, bleibt unverändert)
-- vault: manipulationssichere Hash-Kette für Entscheidungs- und Freigabemetadaten
+Regeln (DSGVO + EU AI Act):
+- Kein UPDATE, kein DELETE auf Audit-Einträge.
+- Keine Rohdaten / Prompts / Secrets in Exports.
+- Nur erlaubte Felder: id, timestamp, action, tenant_id, metadata (gefiltert).
+- Admin-only: Zugriff nur mit Role.ADMIN.
+- Retention-Report: reine Zählung, kein stilles Löschen.
 
-Vault-Prinzipien:
-- Kein content — nur event_type, actor_id, timestamp, previous_hash
-- Write-once: Einträge werden niemals editiert oder gelöscht
-- Hash-Kette: jeder Eintrag enthält den Hash des Vorgängers
-- Manipulationsprüfung: verify_chain() traversiert die gesamte Kette
+Verbotene Felder in metadata (werden herausgefiltert):
+  task_content, prompt, input_summary, credentials, secret, totp, backup_code, password
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import sqlite3
-import threading
-import time
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import List, Optional
+from typing import Any
+
+try:
+    from apps.backend.database import (
+        query_audit_events, count_audit_events,
+        audit_logs, engine, _compute_audit_hash,
+    )
+except ImportError:
+    from database import (  # type: ignore
+        query_audit_events, count_audit_events,
+        audit_logs, engine, _compute_audit_hash,
+    )
+
+from sqlalchemy import select as _select
+
+_METADATA_BLOCKED_KEYS: frozenset[str] = frozenset({
+    "task_content", "prompt", "input_summary", "credentials",
+    "secret", "totp", "backup_code", "password", "token",
+})
 
 
-_GENESIS_HASH = "0" * 64  # Startwert der Hash-Kette
+def _sanitize_metadata(raw: Any) -> dict[str, Any]:
+    """Entfernt verbotene Felder aus metadata — Rohdaten nie in Exports."""
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if k.lower() not in _METADATA_BLOCKED_KEYS}
 
 
-def _compute_hash(previous_hash: str, event_type: str, timestamp_iso: str, actor_id: str) -> str:
-    """SHA-256 über die vier unveränderlichen Felder eines Vault-Eintrags."""
-    payload = f"{previous_hash}|{event_type}|{timestamp_iso}|{actor_id}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _format_entry(row: dict[str, Any]) -> dict[str, Any]:
+    ts = row.get("timestamp")
+    if isinstance(ts, datetime):
+        ts_str = ts.isoformat()
+    else:
+        ts_str = str(ts) if ts is not None else None
+
+    return {
+        "id": row.get("id"),
+        "timestamp": ts_str,
+        "action": row.get("action"),
+        "tenant_id": row.get("tenant_id"),
+        "metadata": _sanitize_metadata(row.get("metadata", {})),
+    }
 
 
-class VaultEntry:
-    __slots__ = ("sequence", "event_type", "timestamp_iso", "actor_id", "previous_hash", "entry_hash")
+def query_vault_events(
+    *,
+    action: str | None = None,
+    tenant_id: str | None = None,
+    timestamp_from: datetime | None = None,
+    timestamp_to: datetime | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Liest Audit-Events paginiert aus der DB — read-only, sanitized."""
+    rows = query_audit_events(
+        action=action,
+        tenant_id=tenant_id,
+        timestamp_from=timestamp_from,
+        timestamp_to=timestamp_to,
+        limit=limit,
+        offset=offset,
+    )
+    return [_format_entry(r) for r in rows]
 
-    def __init__(
-        self,
-        sequence: int,
-        event_type: str,
-        timestamp_iso: str,
-        actor_id: str,
-        previous_hash: str,
-        entry_hash: str,
-    ) -> None:
-        self.sequence = sequence
-        self.event_type = event_type
-        self.timestamp_iso = timestamp_iso
-        self.actor_id = actor_id
-        self.previous_hash = previous_hash
-        self.entry_hash = entry_hash
 
-    def to_dict(self) -> dict:
+def export_audit_events(
+    *,
+    action: str | None = None,
+    tenant_id: str | None = None,
+    timestamp_from: datetime | None = None,
+    timestamp_to: datetime | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+    fmt: str = "json",
+) -> str:
+    """
+    Exportiert Audit-Events als JSON oder JSONL-String.
+    Maximal 1000 Einträge pro Export (Schutz vor Massenabfragen).
+    """
+    limit = min(limit, 1000)
+    events = query_vault_events(
+        action=action,
+        tenant_id=tenant_id,
+        timestamp_from=timestamp_from,
+        timestamp_to=timestamp_to,
+        limit=limit,
+        offset=offset,
+    )
+    if fmt == "jsonl":
+        return "\n".join(json.dumps(e, ensure_ascii=False, default=str) for e in events)
+    return json.dumps({"events": events, "count": len(events)}, ensure_ascii=False, default=str)
+
+
+def verify_audit_chain(
+    *,
+    tenant_id: str | None = None,
+    limit: int = 5000,
+) -> dict[str, Any]:
+    """
+    Prüft die SHA-256 Hash-Chain auf Manipulationen (Audit-Vault Stufe 2).
+
+    Liest bis zu `limit` Einträge chronologisch und berechnet jeden Hash neu.
+    Gibt bei Abweichung die erste fehlerhafte Eintrag-ID zurück.
+    Kein PII, keine Metadaten im Ergebnis.
+    """
+    limit = min(limit, 10_000)
+
+    with engine.connect() as conn:
+        query = (
+            _select(
+                audit_logs.c.id,
+                audit_logs.c.timestamp,
+                audit_logs.c.action,
+                audit_logs.c.tenant_id,
+                audit_logs.c.previous_hash,
+                audit_logs.c.entry_hash,
+            )
+            .order_by(audit_logs.c.id.asc())
+            .limit(limit)
+        )
+        if tenant_id is not None:
+            query = query.where(audit_logs.c.tenant_id == tenant_id)
+        rows = conn.execute(query).fetchall()
+
+    if not rows:
         return {
-            "sequence": self.sequence,
-            "event_type": self.event_type,
-            "timestamp_iso": self.timestamp_iso,
-            "actor_id": self.actor_id,
-            "previous_hash": self.previous_hash,
-            "entry_hash": self.entry_hash,
+            "ok": True,
+            "checked": 0,
+            "first_invalid_id": None,
+            "note": "Keine Einträge gefunden.",
         }
 
+    checked = 0
+    first_invalid: int | None = None
+    expected_previous = "0" * 64
 
-class AuditVault:
+    for row in rows:
+        entry_id, ts, action, tid, previous_hash, stored_hash = (
+            row[0], row[1], row[2], row[3], row[4], row[5]
+        )
+        ts_str = ts.isoformat() if isinstance(ts, datetime) else str(ts)
+        computed = _compute_audit_hash(entry_id, ts_str, action, tid, previous_hash)
+
+        chain_ok = (previous_hash == expected_previous) and (stored_hash == computed)
+        if not chain_ok and first_invalid is None:
+            first_invalid = entry_id
+
+        expected_previous = stored_hash
+        checked += 1
+
+    return {
+        "ok": first_invalid is None,
+        "checked": checked,
+        "first_invalid_id": first_invalid,
+        "note": (
+            "Hash-Chain integer." if first_invalid is None
+            else f"Manipulation erkannt ab Eintrag ID {first_invalid}."
+        ),
+    }
+
+
+def run_audit_retention_report(
+    retention_days: int,
+    *,
+    tenant_id: str | None = None,
+) -> dict[str, Any]:
     """
-    Manipulationssicherer Audit-Vault mit Hash-Kette.
+    Report-only Retention-Analyse — kein DELETE, kein stilles Ablaufen.
 
-    Nur Entscheidungs- und Freigabemetadaten — kein Inhalt.
+    Gibt zurück, wie viele Einträge älter als retention_days Tage sind.
+    Löschen erfordert expliziten Admin-Auftrag mit DSGVO-Dokumentation (nicht automatisch).
     """
+    from datetime import timedelta as _td
+    cutoff = datetime.now(timezone.utc) - _td(days=retention_days)
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
-        self._db_path = db_path or ":memory:"
-        self._lock = threading.Lock()
-        self._conn = self._init_db()
+    affected = count_audit_events(
+        tenant_id=tenant_id,
+        timestamp_to=cutoff,
+    )
+    total = count_audit_events(tenant_id=tenant_id)
 
-    def _init_db(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS vault (
-                sequence        INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_type      TEXT NOT NULL,
-                timestamp_iso   TEXT NOT NULL,
-                actor_id        TEXT NOT NULL,
-                previous_hash   TEXT NOT NULL,
-                entry_hash      TEXT NOT NULL
-            );
-        """)
-        conn.commit()
-        return conn
-
-    def _last_hash(self) -> str:
-        row = self._conn.execute(
-            "SELECT entry_hash FROM vault ORDER BY sequence DESC LIMIT 1"
-        ).fetchone()
-        return row["entry_hash"] if row else _GENESIS_HASH
-
-    # ── Schreiben (write-once) ────────────────────────────────────────────
-
-    def record(self, event_type: str, actor_id: str) -> VaultEntry:
-        """
-        Fügt einen neuen Vault-Eintrag an — write-once, keine Updates.
-
-        event_type: z.B. MEMORY_DEACTIVATED, CONSENT_GRANTED, APPROVAL_GIVEN
-        actor_id:   anonymisierte Nutzer- oder System-ID
-        """
-        with self._lock:
-            previous_hash = self._last_hash()
-            timestamp_iso = datetime.now(timezone.utc).isoformat()
-            entry_hash = _compute_hash(previous_hash, event_type, timestamp_iso, actor_id)
-
-            cursor = self._conn.execute(
-                """INSERT INTO vault (event_type, timestamp_iso, actor_id, previous_hash, entry_hash)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (event_type, timestamp_iso, actor_id, previous_hash, entry_hash),
-            )
-            self._conn.commit()
-            sequence = cursor.lastrowid
-
-        return VaultEntry(sequence, event_type, timestamp_iso, actor_id, previous_hash, entry_hash)
-
-    # ── Lesen ─────────────────────────────────────────────────────────────
-
-    def get_entries(self, limit: int = 100, offset: int = 0) -> List[VaultEntry]:
-        rows = self._conn.execute(
-            "SELECT * FROM vault ORDER BY sequence ASC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
-        return [VaultEntry(**dict(r)) for r in rows]
-
-    # ── Manipulationsprüfung ──────────────────────────────────────────────
-
-    def verify_chain(self) -> tuple[bool, Optional[int]]:
-        """
-        Traversiert die gesamte Hash-Kette.
-
-        Gibt (True, None) zurück wenn integer.
-        Gibt (False, sequence) zurück beim ersten defekten Eintrag.
-        """
-        rows = self._conn.execute(
-            "SELECT * FROM vault ORDER BY sequence ASC"
-        ).fetchall()
-
-        previous_hash = _GENESIS_HASH
-        for row in rows:
-            # Prüfung 1: gespeichertes previous_hash stimmt mit laufender Kette überein
-            if row["previous_hash"] != previous_hash:
-                return False, row["sequence"]
-
-            # Prüfung 2: entry_hash ist korrekt aus den vier Feldern berechnet
-            expected = _compute_hash(
-                previous_hash,
-                row["event_type"],
-                row["timestamp_iso"],
-                row["actor_id"],
-            )
-            if expected != row["entry_hash"]:
-                return False, row["sequence"]
-
-            previous_hash = row["entry_hash"]
-
-        return True, None
-
-    # ── Export ────────────────────────────────────────────────────────────
-
-    def export(self, limit: int = 1000) -> List[dict]:
-        """Export aller Vault-Einträge als JSON-serialisierbares Format."""
-        return [e.to_dict() for e in self.get_entries(limit=limit)]
-
-    def stats(self) -> dict:
-        row = self._conn.execute("SELECT COUNT(*) as n FROM vault").fetchone()
-        intact, defect_at = self.verify_chain()
-        return {
-            "total_entries": row["n"],
-            "chain_intact": intact,
-            "first_defect_at_sequence": defect_at,
-        }
+    return {
+        "report_mode": True,
+        "retention_days": retention_days,
+        "cutoff_before": cutoff.isoformat(),
+        "total_entries": total,
+        "entries_older_than_retention": affected,
+        "action_required": affected > 0,
+        "note": (
+            "Einträge werden NICHT automatisch gelöscht. "
+            "Löschung erfordert expliziten Admin-Auftrag mit DSGVO-Dokumentation."
+        ),
+    }

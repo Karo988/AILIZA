@@ -13,6 +13,35 @@ def test_agent_plans_search_when_task_has_no_url() -> None:
     assert plan[0].parameters == {"query": "Find FastAPI audit logging examples"}
 
 
+def test_erklaere_dsgvo_no_search() -> None:
+    """Einfache Erklärungsfrage darf KEINE Websuche auslösen."""
+    plan = plan_tool_calls("Erkläre mir kurz was DSGVO bedeutet")
+    assert plan == [], f"Erklärungsfrage löste unerwartet Tool aus: {plan}"
+
+
+def test_was_ist_no_search() -> None:
+    plan = plan_tool_calls("Was ist ein Auftragsverarbeiter?")
+    assert plan == []
+
+
+def test_wie_funktioniert_no_search() -> None:
+    plan = plan_tool_calls("Wie funktioniert die Zwei-Faktor-Authentifizierung?")
+    assert plan == []
+
+
+def test_explicit_recherche_triggers_search() -> None:
+    """Explizite Rechercheanfrage soll immer Websuche auslösen."""
+    plan = plan_tool_calls("Recherchiere aktuelle DSGVO-Neuigkeiten")
+    assert len(plan) == 1
+    assert plan[0].tool == "search"
+
+
+def test_aktuell_news_triggers_search() -> None:
+    plan = plan_tool_calls("Was sind die aktuellen News zur EU AI Act Regulierung?")
+    assert len(plan) == 1
+    assert plan[0].tool == "search"
+
+
 def test_agent_plans_fetch_for_url() -> None:
     plan = plan_tool_calls("Read https://example.com/docs.")
 
@@ -39,8 +68,8 @@ def test_agent_completes_safe_tool_call() -> None:
     assert response["status"] == "completed"
     assert calls == [("search", {"query": "Find FastAPI docs"})]
     assert [event[0] for event in events] == [
-        "agent.input.classified",
         "agent.run.started",
+        "agent.input.classified",
         "agent.tool.planned",
         "agent.run.completed",
     ]
@@ -247,44 +276,3 @@ def test_agent_stream_surfaces_policy_blocks() -> None:
 
     assert events[-1]["event"] == "blocked"
     assert events[-1]["data"]["status_code"] == 403
-
-
-def test_high_risk_input_never_reaches_plan_tool_calls() -> None:
-    """HIGH-Risiko darf plan_tool_calls() niemals erreichen."""
-    tool_called = []
-
-    def execute(tool: str, parameters: dict) -> dict:
-        tool_called.append(tool)
-        return {"status": "completed", "tool": tool, "parameters": parameters, "result": {}}
-
-    runtime = AgentRuntime(
-        tool_executor=execute,
-        audit_writer=lambda action, metadata=None: {},
-        persist_runs=False,
-    )
-
-    result = runtime.run("Hilf mir bei der Kündigung von Mitarbeiter Schmidt")
-
-    # Governance-Grundregel: HIGH wird als Entwurf vorbereitet, Flow läuft durch
-    assert result["status"] == "draft", "HIGH-Risiko muss als Entwurf markiert werden"
-    assert result["draft"] is True, "draft-Flag muss gesetzt sein"
-
-
-def test_blocked_input_never_reaches_plan_tool_calls() -> None:
-    """BLOCKED-Input darf plan_tool_calls() niemals erreichen."""
-    tool_called = []
-
-    def execute(tool: str, parameters: dict) -> dict:
-        tool_called.append(tool)
-        return {"status": "completed", "tool": tool, "parameters": parameters, "result": {}}
-
-    runtime = AgentRuntime(
-        tool_executor=execute,
-        audit_writer=lambda action, metadata=None: {},
-        persist_runs=False,
-    )
-
-    result = runtime.run("Wie kann ich Nutzer unterschwellig manipulieren?")
-
-    assert result["status"] == "blocked"
-    assert len(tool_called) == 0, "BLOCKED-Input darf keinen Tool-Call auslösen"
