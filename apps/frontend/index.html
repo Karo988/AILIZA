@@ -383,6 +383,7 @@ const SKILLS=[
   {ic:"⚖️",n:"EU AI Act",d:"KI-Compliance",p:"Prüfe EU AI Act für: "},
 ];
 let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
+let currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;
 let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
 let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
@@ -448,11 +449,26 @@ function renderRecent(){
   const chats=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
   const el=document.getElementById("recent-chats");
   if(!chats.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>';return}
-  el.innerHTML=chats.slice(-10).reverse().map(c=>`<div class="side-list-item" onclick="loadChat('${c.id}')"><span class="dot"></span><span class="side-list-text">${c.name}</span></div>`).join("");
+  el.innerHTML=chats.slice().reverse().slice(0,15).map(c=>`<div class="side-list-item${c.id===currentChatId?' active':''}" onclick="loadChat('${c.id}')"><span class="dot"></span><span class="side-list-text">${escapeHtml(c.name)}</span></div>`).join("");
 }
-function loadChat(id){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");const chat=list.find(c=>c.id===id);if(!chat)return;chatHistory=chat.messages||[];context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));showView('chat',document.querySelector('.side-section .side-item'));renderChat();renderPrivacyMemory()}
+function loadChat(id){
+  saveCurrentChat();
+  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const chat=list.find(c=>c.id===id);
+  if(!chat)return;
+  currentChatId=id;
+  localStorage.setItem("ailiza_current_chat_id",id);
+  chatHistory=chat.messages||[];
+  context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+  localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory));
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  renderChat();renderPrivacyMemory();renderRecent();
+}
 function newChat(){
   saveCurrentChat();
+  currentChatId=Date.now().toString();
+  localStorage.setItem("ailiza_current_chat_id",currentChatId);
   chatHistory=[];context=[];
   localStorage.setItem("ailiza_chat","[]");
   document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt(\'Schreibe eine E-Mail: \')">📧 E-Mail</div><div class="chip" onclick="quickPrompt(\'Übersetze: \')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt(\'Fasse zusammen: \')">📝 Zusammenfassen</div></div></div>';
@@ -465,9 +481,18 @@ function newChat(){
   document.getElementById("chat-input").value="";
   document.getElementById("chat-input").focus();
 }
-function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");renderChat();renderPrivacyMemory()}
+function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");if(currentChatId){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));renderRecent()}renderChat();renderPrivacyMemory()}
 function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n")],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ailiza-chat-"+Date.now()+".txt";a.click()}
-function saveCurrentChat(){if(!chatHistory.length)return;const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");const id=Date.now().toString();const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);list.push({id,name,messages:chatHistory});localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));renderRecent()}
+function saveCurrentChat(){
+  if(!chatHistory.length||!currentChatId)return;
+  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);
+  const idx=list.findIndex(c=>c.id===currentChatId);
+  if(idx>=0){list[idx]={id:currentChatId,name,messages:chatHistory}}
+  else{list.push({id:currentChatId,name,messages:chatHistory})}
+  localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
+  renderRecent();
+}
 function renderChat(){
   const inner=document.getElementById("chat-inner");
   if(!chatHistory.length){inner.innerHTML=`<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt('Schreibe eine E-Mail: ')">📧 E-Mail</div><div class="chip" onclick="quickPrompt('Übersetze: ')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt('Fasse zusammen: ')">📝 Zusammenfassen</div></div></div>`;return}
@@ -480,7 +505,12 @@ function renderMsg(m){
   const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
   return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
-function loadHistory(){if(!chatHistory.length)return;context=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));renderChat()}
+function loadHistory(){
+  if(!chatHistory.length)return;
+  if(!currentChatId){currentChatId=Date.now().toString();localStorage.setItem("ailiza_current_chat_id",currentChatId);}
+  context=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+  renderChat();
+}
 function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
 function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
 function hideTyping(){document.getElementById("typing")?.remove()}
@@ -514,7 +544,7 @@ async function runAgent(text){
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
   addAiMessage(answer.trim(),undefined,isDraft?draftHint:undefined);
 }
-function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
+function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));saveCurrentChat();document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
