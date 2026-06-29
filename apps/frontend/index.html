@@ -193,7 +193,7 @@ body{
 <div class="app">
   <div class="sidebar">
     <div class="side-section">
-      <div class="side-item active" onclick="showView('chat',this)"><span class="side-ic">💬</span><span>Neuer Chat</span></div>
+      <div class="side-item active" onclick="newChat();this.classList.add('active')"><span class="side-ic">💬</span><span>Neuer Chat</span></div>
       <div class="side-item" onclick="showView('projects',this)"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
       <div class="side-item" onclick="showView('skills',this)"><span class="side-ic">⚡</span><span>Skills</span></div>
       <div class="side-item" onclick="showView('status',this)"><span class="side-ic">🛡️</span><span>Compliance</span></div>
@@ -402,7 +402,7 @@ function renderRecent(){
   el.innerHTML=chats.slice(-10).reverse().map(c=>`<div class="side-list-item" onclick="loadChat('${c.id}')"><span class="dot"></span><span class="side-list-text">${c.name}</span></div>`).join("");
 }
 function loadChat(id){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");const chat=list.find(c=>c.id===id);if(!chat)return;chatHistory=chat.messages||[];context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));showView('chat',document.querySelector('.side-section .side-item'));renderChat();renderPrivacyMemory()}
-function newChat(){saveCurrentChat();chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");renderChat();renderPrivacyMemory();showView('chat',document.querySelector('.side-section .side-item'))}
+function newChat(){saveCurrentChat();chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt(\'Schreibe eine E-Mail: \')">✉️ E-Mail</div><div class="chip" onclick="quickPrompt(\'Übersetze: \')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt(\'Fasse zusammen: \')">📝 Zusammenfassen</div></div></div>';renderPrivacyMemory();document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");document.getElementById("chat-input").value="";document.getElementById("chat-input").focus()}
 function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");renderChat();renderPrivacyMemory()}
 function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n")],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ailiza-chat-"+Date.now()+".txt";a.click()}
 function saveCurrentChat(){if(!chatHistory.length)return;const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");const id=Date.now().toString();const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);list.push({id,name,messages:chatHistory});localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));renderRecent()}
