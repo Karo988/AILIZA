@@ -435,18 +435,19 @@ let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","R
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
 let context=[];
 const PRIVACY_RULES=[
-  {level:"high",label:"Gesundheit",placeholder:"[GESUNDHEITSDATEN]",pattern:/\b(?:diagnose|krankheit|patient|medikament|therapie|arzt|diabetes|depression|schwanger)\b/gi},
+  {level:"high",label:"Gesundheit",placeholder:"[Gesundheitsdaten]",pattern:/\b(?:diagnose|krankheit|patient|medikament|therapie|arzt|diabetes|depression|schwanger)\b/gi},
   {level:"high",label:"IBAN",placeholder:"[IBAN]",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
-  {level:"high",label:"Kreditkarte",placeholder:"[KARTENNUMMER]",pattern:/\b(?:\d{4}[ \-]){3}\d{4}\b/g},
-  {level:"normal",label:"E-Mail",placeholder:"[E-MAIL]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
-  {level:"normal",label:"Telefon",placeholder:"[TELEFON]",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
-  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/(?<=\b(?:von|an|durch|für|Absender|Empfänger|Zahlung von|erhalten von)[:\s]\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
-  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
-  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
-  {level:"normal",label:"Referenz",placeholder:"[REFERENZ-NR]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
-  {level:"normal",label:"Adresse",placeholder:"[ADRESSE]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer)\s+\d+[a-z]?/gi},
-  {level:"normal",label:"Betrag",placeholder:"[BETRAG]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
-  {level:"normal",label:"PayPal-Transaktion",placeholder:"[PAYPAL-TX]",pattern:/\b[A-Z0-9]{17}\b/g},
+  {level:"high",label:"Kreditkarte",placeholder:"[Kartennummer]",pattern:/\b(?:\d{4}[ \-]){3}\d{4}\b/g},
+  {level:"normal",label:"E-Mail",placeholder:"[E-Mail]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
+  {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:von|an|durch|für|Absender|Empfänger)[:\s]\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
+  {level:"normal",label:"Referenz",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
+  {level:"normal",label:"Adresse",placeholder:"[Adresse]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer)\s+\d+[a-z]?/gi},
+  {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
+  {level:"normal",label:"Datum",placeholder:"[Datum]",pattern:/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g},
+  {level:"normal",label:"PayPal-Transaktion",placeholder:"[Transaktions-Nr.]",pattern:/\b[A-Z0-9]{17}\b/g},
 ];
 // Schwärzt erkannte PII im Text — gibt {redacted, map} zurück
 function redactText(text){
