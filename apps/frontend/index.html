@@ -223,6 +223,7 @@ body{
       <div class="side-item" onclick="showView('projects',this)"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
       <div class="side-item" onclick="showView('skills',this)"><span class="side-ic">⚡</span><span>Skills</span></div>
       <div class="side-item" onclick="showView('status',this)"><span class="side-ic">🛡️</span><span>Compliance</span></div>
+      <div class="side-item" onclick="showView('impressum',this)"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
     </div>
     <div class="side-section">
       <div class="side-label">Letzte Chats</div>
@@ -336,6 +337,45 @@ body{
           <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Löscht alle Ihre Chat-Verläufe, Projekte und gespeicherten Daten — lokal und auf dem Server. Diese Aktion kann nicht rückgängig gemacht werden.</p>
           <button onclick="deleteMyData()" style="background:#8B2424;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Alle meine Daten unwiderruflich löschen</button>
           <div id="delete-data-msg" style="margin-top:8px;font-size:12px;display:none"></div>
+        </div>
+      </div>
+    </div>
+    <div class="view" id="view-impressum">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Impressum &amp; Datenschutz</div><div class="page-sub">Rechtliche Angaben gemäß § 5 TMG · DSGVO Art. 13</div></div></div>
+
+        <div class="card" style="margin-bottom:12px;background:#FFF9E6;border-color:#E8D9A0">
+          <div class="card-h" style="color:#7A6200">⚠ Beta-Version</div>
+          <p style="font-size:12px;color:#7A6200;margin-top:6px;line-height:1.6">AILIZA befindet sich derzeit in einer geschlossenen Testphase. Die Nutzung erfolgt ohne Gewähr. Funktionen, Verfügbarkeit und Datenhaltung können sich jederzeit ändern. Keine kommerzielle Nutzung ohne ausdrückliche Genehmigung.</p>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Impressum (§ 5 TMG)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:2">
+            <div><strong>Verantwortlich:</strong> Karola Fromm-Nasreldin</div>
+            <div><strong>Kontakt:</strong> <a href="mailto:Karofromm@gmail.com" style="color:var(--accent)">Karofromm@gmail.com</a></div>
+            <div style="color:var(--text-muted);font-size:11px;margin-top:8px">Telefon und vollständige Adresse werden nach Gründung der UG ergänzt.</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Datenschutzerklärung (DSGVO Art. 13)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.8">
+            <p style="margin-bottom:8px"><strong>Verantwortliche Stelle:</strong> Karola Fromm-Nasreldin, Karofromm@gmail.com</p>
+            <p style="margin-bottom:8px"><strong>Zweck der Verarbeitung:</strong> Ihre Eingaben werden ausschließlich zur Beantwortung Ihrer Anfragen durch das KI-System AILIZA verarbeitet. Es werden keine Klartextprompts dauerhaft gespeichert.</p>
+            <p style="margin-bottom:8px"><strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. a DSGVO (Einwilligung), erteilt beim ersten Aufruf.</p>
+            <p style="margin-bottom:8px"><strong>Empfänger:</strong> Zur KI-Verarbeitung werden Anfragen an externe Anbieter (Groq Inc., USA) weitergeleitet. Die Übermittlung erfolgt auf Basis von Standardvertragsklauseln (Art. 46 DSGVO).</p>
+            <p style="margin-bottom:8px"><strong>Speicherdauer:</strong> Audit-Logs werden nach 90 Tagen automatisch gelöscht. Chat-Verläufe werden ausschließlich lokal in Ihrem Browser gespeichert.</p>
+            <p style="margin-bottom:8px"><strong>Ihre Rechte (Art. 15–22 DSGVO):</strong> Auskunft, Berichtigung, Löschung (Art. 17 → Button im Compliance-Bereich), Einschränkung, Widerspruch, Datenportabilität sowie Widerruf der Einwilligung jederzeit möglich.</p>
+            <p style="margin-bottom:8px"><strong>Beschwerderecht:</strong> Sie haben das Recht, sich bei einer Datenschutzbehörde zu beschweren, z.B. beim Landesbeauftragten für Datenschutz und Informationsfreiheit Ihres Bundeslandes.</p>
+            <p><strong>KI-Kennzeichnung (EU AI Act Art. 52):</strong> AILIZA ist ein KI-System der Risikoklasse "Limited Risk". Antworten werden automatisch generiert und können Fehler enthalten.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">Einwilligung widerrufen</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Sie können Ihre Einwilligung jederzeit widerrufen. Dadurch werden Sie beim nächsten Besuch erneut um Zustimmung gebeten.</p>
+          <button onclick="logout()" style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);padding:8px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Einwilligung widerrufen &amp; Abmelden</button>
         </div>
       </div>
     </div>
