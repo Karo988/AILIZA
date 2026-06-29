@@ -180,6 +180,32 @@ body{
 .skill-ic{font-size:18px;margin-bottom:8px}
 .skill-n{font-size:13px;font-weight:600;margin-bottom:3px}
 .skill-d{font-size:11px;color:var(--text-muted);line-height:1.4}
+/* ── Login Screen ── */
+.login-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
+.login-overlay.hidden{display:none}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px 28px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.07)}
+.login-brand{text-align:center;margin-bottom:24px}
+.login-brand-name{font-size:22px;font-weight:700;letter-spacing:-.5px}
+.login-brand-name span{color:var(--accent)}
+.login-brand-sub{font-size:11px;color:var(--text-muted);margin-top:3px}
+.login-field{margin-bottom:12px}
+.login-field label{display:block;font-size:11px;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
+.login-field input{width:100%;border:1px solid var(--border);border-radius:7px;padding:9px 11px;font-size:13px;font-family:inherit;outline:none;background:var(--bg);color:var(--text);transition:border-color .15s}
+.login-field input:focus{border-color:var(--accent);background:var(--surface)}
+.login-check{display:flex;align-items:flex-start;gap:9px;font-size:12px;color:var(--text-soft);margin-bottom:10px;cursor:pointer}
+.login-check input[type=checkbox]{margin-top:2px;accent-color:var(--accent);flex-shrink:0}
+.privacy-collapse{font-size:11px;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:7px;padding:10px 12px;margin-bottom:10px;line-height:1.6;display:none}
+.privacy-toggle{font-size:11px;color:var(--accent);cursor:pointer;margin-bottom:10px;display:inline-block;text-decoration:underline}
+.ki-hinweis{background:var(--accent-soft);border:1px solid #B6D2BD;border-radius:7px;padding:9px 12px;font-size:11px;color:var(--accent);margin-bottom:16px;line-height:1.5}
+.login-btns{display:flex;gap:8px;margin-top:4px}
+.login-btns button{flex:1;padding:10px;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;border:none;transition:opacity .15s}
+.btn-login{background:var(--accent);color:#fff}
+.btn-login:hover{opacity:.88}
+.btn-register{background:var(--surface-2);color:var(--text);border:1px solid var(--border)!important}
+.btn-register:hover{background:var(--border)}
+.login-error{font-size:12px;color:var(--err);background:#FCE8E8;border:1px solid #D23B3B;border-radius:6px;padding:7px 10px;margin-bottom:12px;display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.login-spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px}
 </style>
 </head>
 <body>
@@ -214,7 +240,7 @@ body{
       <div class="side-add" onclick="addFolder()">＋ Ordner</div>
     </div>
     <div style="flex:1"></div>
-    <div class="side-footer">AILIZA · EU AI Act Art. 52<br><span style="color:var(--accent)">Limited Risk · DSGVO</span></div>
+    <div class="side-footer">AILIZA · EU AI Act Art. 52<br><span style="color:var(--accent)">Limited Risk · DSGVO</span><br><span style="cursor:pointer;color:var(--text-muted);text-decoration:underline" onclick="logout()">Abmelden</span></div>
   </div>
   <div class="main">
     <div class="view active" id="view-chat">
@@ -306,6 +332,37 @@ body{
         </div>
         <div class="card"><div class="card-h">Letzte Agent-Runs</div><div id="runs-list" style="margin-top:10px"><div class="empty">Lädt…</div></div></div>
       </div>
+    </div>
+  </div>
+</div>
+<!-- ── Login-Screen ── -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <div class="login-brand">
+      <div class="login-brand-name">AI<span>LIZA</span></div>
+      <div class="login-brand-sub">Ihr sicherer KI-Assistent · EU-konform · DSGVO</div>
+    </div>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-field">
+      <label>Benutzername</label>
+      <input type="text" id="l-user" autocomplete="username" placeholder="Ihr Benutzername" onkeydown="if(event.key==='Enter')loginAction('login')">
+    </div>
+    <div class="login-field">
+      <label>Passwort</label>
+      <input type="password" id="l-pass" autocomplete="current-password" placeholder="Passwort" onkeydown="if(event.key==='Enter')loginAction('login')">
+    </div>
+    <span class="privacy-toggle" onclick="document.getElementById('priv-text').style.display=document.getElementById('priv-text').style.display==='block'?'none':'block'">▸ Datenschutzhinweis lesen</span>
+    <div class="privacy-collapse" id="priv-text">
+      AILIZA verarbeitet Ihre Eingaben ausschließlich zur Beantwortung Ihrer Anfragen und speichert keine Klartextprompts.<br>
+      Ihre Daten verbleiben in der EU und werden nicht an Dritte weitergegeben (Art. 13 DSGVO).<br>
+      Sie können jederzeit Auskunft, Berichtigung oder Löschung Ihrer Daten verlangen (Art. 15–17 DSGVO).
+    </div>
+    <label class="login-check"><input type="checkbox" id="l-consent"> Ich habe den Datenschutzhinweis gelesen und stimme der Verarbeitung zu (DSGVO Art. 6 Abs. 1a).</label>
+    <label class="login-check"><input type="checkbox" id="l-age"> Ich bin mindestens 16 Jahre alt (Art. 8 DSGVO).</label>
+    <div class="ki-hinweis">🤖 <strong>KI-Hinweis (EU AI Act Art. 52):</strong> Sie interagieren mit einem KI-System. Antworten werden automatisch generiert und sollten bei wichtigen Entscheidungen durch einen Menschen geprüft werden.</div>
+    <div class="login-btns">
+      <button class="btn-login" id="btn-login" onclick="loginAction('login')">Anmelden</button>
+      <button class="btn-register" id="btn-register" onclick="loginAction('register')">Registrieren</button>
     </div>
   </div>
 </div>
@@ -453,7 +510,7 @@ async function sendMessage(){
 }
 async function runAgent(text){
   const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
-  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({task:text,history})});
+  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
   hideTyping();
   if(!r.ok){addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
   const data=await r.json();
@@ -474,10 +531,44 @@ function saveProject(){const name=document.getElementById("proj-name").value.tri
 function deleteProject(i){if(!confirm("Löschen?"))return;projects.splice(i,1);localStorage.setItem("ailiza_projects",JSON.stringify(projects));renderProjects();renderProjectList()}
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card"><div class="card-h">${p.name}</div><div class="card-desc">${p.desc||""}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${p.prio}</span><button class="meta-pill del" onclick="deleteProject(${i})">✕</button></div></div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${p.name}</span></div>`).join("")}
-async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
+async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{headers:authToken?{"Authorization":"Bearer "+authToken}:{},signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
-init();
+
+// ── Auth ──
+let authToken=localStorage.getItem("ailiza_token")||"";
+function authHeaders(){return authToken?{"Content-Type":"application/json","Authorization":"Bearer "+authToken}:{"Content-Type":"application/json"}}
+function showLoginError(msg){const el=document.getElementById("login-error");el.textContent=msg;el.style.display="block"}
+function hideLoginError(){document.getElementById("login-error").style.display="none"}
+async function loginAction(mode){
+  hideLoginError();
+  const user=document.getElementById("l-user").value.trim();
+  const pass=document.getElementById("l-pass").value;
+  const consent=document.getElementById("l-consent").checked;
+  const age=document.getElementById("l-age").checked;
+  if(!user||!pass){showLoginError("Bitte Benutzername und Passwort eingeben.");return}
+  if(!consent||!age){showLoginError("Bitte beide Einwilligungen bestätigen.");return}
+  const btn=document.getElementById(mode==="login"?"btn-login":"btn-register");
+  btn.disabled=true;btn.innerHTML='<span class="login-spinner"></span>'+(mode==="login"?"Anmelden…":"Registrieren…");
+  try{
+    const r=await fetch(`${API}/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:user,password:pass})});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok){showLoginError(data.detail||data.message||"Fehler beim "+(mode==="login"?"Anmelden":"Registrieren")+".");return}
+    authToken=data.access_token||data.token||"";
+    if(authToken)localStorage.setItem("ailiza_token",authToken);
+    document.getElementById("login-overlay").classList.add("hidden");
+    init();
+  }catch{showLoginError("Server nicht erreichbar. Bitte kurz warten und erneut versuchen.");}
+  finally{btn.disabled=false;btn.textContent=mode==="login"?"Anmelden":"Registrieren"}
+}
+function logout(){
+  authToken="";localStorage.removeItem("ailiza_token");
+  document.getElementById("login-overlay").classList.remove("hidden");
+  document.getElementById("l-pass").value="";hideLoginError();
+}
+// Zeige App nur wenn Token vorhanden — init() wird nur nach erfolgreichem Login oder sofort (wenn Token da) aufgerufen
+if(authToken){document.getElementById("login-overlay").classList.add("hidden");init();}
+// else: Login-Screen bleibt sichtbar; init() wird nach Login aufgerufen
 </script>
 </body>
 </html>
