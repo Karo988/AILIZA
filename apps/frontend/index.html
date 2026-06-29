@@ -185,6 +185,24 @@ body{
 .skill-ic{font-size:18px;margin-bottom:8px}
 .skill-n{font-size:13px;font-weight:600;margin-bottom:3px}
 .skill-d{font-size:11px;color:var(--text-muted);line-height:1.4}
+/* ── Nachrichten-Aktionen ── */
+.msg-actions{display:flex;gap:4px;margin-top:3px;opacity:0;transition:opacity .15s}
+.msg:hover .msg-actions{opacity:1}
+.user-actions{justify-content:flex-end}
+.ai-actions{justify-content:flex-start}
+.msg-act{background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer;color:var(--text-muted);transition:background .1s}
+.msg-act:hover{background:var(--surface-2);color:var(--text)}
+/* ── Wissensbibliothek ── */
+.wissen-cats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.wissen-cat-btn{padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);font-size:12px;cursor:pointer;color:var(--text-soft)}
+.wissen-cat-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.wissen-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.wissen-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s}
+.wissen-card:hover{border-color:var(--accent)}
+.wissen-card-ic{font-size:16px;margin-bottom:6px}
+.wissen-card-title{font-size:13px;font-weight:600;margin-bottom:3px}
+.wissen-card-desc{font-size:11px;color:var(--text-muted);line-height:1.4;margin-bottom:8px}
+.wissen-card-cat{font-size:10px;background:var(--surface-2);color:var(--text-muted);padding:2px 7px;border-radius:10px;font-weight:500;display:inline-block}
 /* ── Login Screen ── */
 .login-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
 .login-overlay.hidden{display:none}
@@ -229,6 +247,7 @@ body{
       <div class="side-item" onclick="showView('skills',this)"><span class="side-ic">⚡</span><span>Skills</span></div>
       <div class="side-item" onclick="showView('status',this)"><span class="side-ic">🛡️</span><span>Compliance</span></div>
       <div class="side-item" onclick="showView('impressum',this)"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
+      <div class="side-item" onclick="showView('wissen',this)"><span class="side-ic">📚</span><span>Wissensbibliothek</span></div>
       <div class="side-item" onclick="showView('agb',this)"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
     </div>
     <div class="side-section">
@@ -471,6 +490,14 @@ body{
       </div>
     </div>
 
+    <div class="view" id="view-wissen">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Wissensbibliothek</div><div class="page-sub">Fertige Vorlagen und Prompts für KMU — einfach anklicken und loslegen</div></div></div>
+        <div class="wissen-cats" id="wissen-cats"></div>
+        <div class="wissen-grid" id="wissen-grid"></div>
+      </div>
+    </div>
+
     <div class="view" id="view-agb">
       <div class="page-wrap">
         <div class="page-head"><div><div class="page-title">Nutzungsbedingungen</div><div class="page-sub">Allgemeine Geschäftsbedingungen (AGB) · Stand: Juni 2026</div></div></div>
@@ -643,6 +670,7 @@ function showView(name,el){
   if(name==="status")loadStatus();
   if(name==="projects")renderProjects();
   if(name==="skills")renderSkills();
+  if(name==="wissen")renderWissen();
 }
 function updateModels(){
   const p=document.getElementById("provider-sel").value;
@@ -738,14 +766,32 @@ function saveCurrentChat(){
 function renderChat(){
   const inner=document.getElementById("chat-inner");
   if(!chatHistory.length){inner.innerHTML=`<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt('Schreibe eine E-Mail: ')">📧 E-Mail</div><div class="chip" onclick="quickPrompt('Übersetze: ')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt('Fasse zusammen: ')">📝 Zusammenfassen</div></div></div>`;return}
-  inner.innerHTML=chatHistory.slice(-50).map(m=>renderMsg(m)).join("");scrollToBottom();
+  const offset=Math.max(0,chatHistory.length-50);
+  inner.innerHTML=chatHistory.slice(-50).map((m,i)=>renderMsg(m,offset+i)).join("");scrollToBottom();
 }
-function renderMsg(m){
+function renderMsg(m,idx){
   const text=(m.content||"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
-  if(m.role==="user")return`<div class="msg user"><div class="bubble user">${text}</div></div>`;
+  const i=idx!==undefined?idx:chatHistory.indexOf(m);
+  if(m.role==="user")return`<div class="msg user"><div class="bubble user">${text}</div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
   const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
   const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
-  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
+  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
+}
+function copyText(idx){
+  const m=chatHistory[idx];if(!m)return;
+  navigator.clipboard.writeText(m.content||"").then(()=>{
+    const btns=document.querySelectorAll(".msg-act");
+    // kurzes visuelles Feedback
+    const btn=[...btns].find(b=>b.onclick?.toString().includes(`copyText(${idx})`));
+    if(btn){const orig=btn.textContent;btn.textContent="✓";setTimeout(()=>btn.textContent=orig,1200);}
+  });
+}
+function editUserMsg(idx){
+  const m=chatHistory[idx];if(!m||m.role!=="user")return;
+  const inp=document.getElementById("chat-input");
+  inp.value=m.content||"";
+  autoResize(inp);inp.focus();
+  inp.selectionStart=inp.selectionEnd=inp.value.length;
 }
 function loadHistory(){
   if(!chatHistory.length)return;
@@ -825,6 +871,66 @@ async function checkStatus(){const b=document.getElementById("conn-status");try{
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 
+// ── Wissensbibliothek ──
+const WISSEN=[
+  // E-Mail & Kommunikation
+  {ic:"📧",cat:"E-Mail",title:"Professionelle Anfrage",desc:"Höfliche Anfrage an einen Lieferanten oder Partner",p:"Schreibe eine professionelle E-Mail-Anfrage an einen Lieferanten bezüglich: "},
+  {ic:"📧",cat:"E-Mail",title:"Angebot senden",desc:"Angebot an einen potenziellen Kunden",p:"Schreibe ein professionelles Angebot per E-Mail für folgende Leistung: "},
+  {ic:"📧",cat:"E-Mail",title:"Terminbestätigung",desc:"Bestätigung eines vereinbarten Termins",p:"Schreibe eine Terminbestätigungs-E-Mail für folgenden Termin: "},
+  {ic:"📧",cat:"E-Mail",title:"Absage höflich",desc:"Höfliche Absage eines Angebots oder Termins",p:"Schreibe eine höfliche Absage-E-Mail für: "},
+  {ic:"📧",cat:"E-Mail",title:"Reklamation",desc:"Reklamation bei einem Lieferanten einreichen",p:"Schreibe eine sachliche Reklamations-E-Mail wegen: "},
+  {ic:"📧",cat:"E-Mail",title:"Mahnung (1. Stufe)",desc:"Erste freundliche Zahlungserinnerung",p:"Schreibe eine erste freundliche Zahlungserinnerung für eine Rechnung über: "},
+  {ic:"📧",cat:"E-Mail",title:"Mahnung (2. Stufe)",desc:"Zweite Mahnung mit Fristsetzung",p:"Schreibe eine zweite Mahnung mit Fristsetzung für eine offene Rechnung über: "},
+  {ic:"📧",cat:"E-Mail",title:"Bewerbungsantwort",desc:"Antwort auf eine Bewerbung",p:"Schreibe eine Antwort auf eine Bewerbung — Einladung zum Vorstellungsgespräch für die Stelle: "},
+  // Verträge & Recht
+  {ic:"⚖️",cat:"Recht",title:"DSGVO-Check",desc:"Text auf Datenschutzkonformität prüfen",p:"Prüfe folgenden Text auf DSGVO-Konformität und liste konkrete Probleme auf: "},
+  {ic:"⚖️",cat:"Recht",title:"AGB-Klausel prüfen",desc:"AGB-Klausel auf Unwirksamkeit prüfen",p:"Prüfe folgende AGB-Klausel auf rechtliche Unwirksamkeit nach deutschem Recht: "},
+  {ic:"⚖️",cat:"Recht",title:"Kündigung Lieferant",desc:"Kündigung eines Lieferantenvertrags",p:"Schreibe eine formgerechte Kündigung eines Lieferantenvertrags. Begründung: "},
+  {ic:"⚖️",cat:"Recht",title:"EU AI Act Check",desc:"Prüfung ob KI-Einsatz konform ist",p:"Prüfe folgenden KI-Einsatz auf Konformität mit dem EU AI Act: "},
+  // Finanzen
+  {ic:"💶",cat:"Finanzen",title:"Rechnungstext",desc:"Professionellen Rechnungsbegleittext erstellen",p:"Schreibe einen professionellen Begleittext zu einer Rechnung für folgende Leistung: "},
+  {ic:"💶",cat:"Finanzen",title:"Preiserhöhung erklären",desc:"Preiserhöhung gegenüber Kunden kommunizieren",p:"Schreibe ein Anschreiben zur Ankündigung einer Preiserhöhung um X% ab dem Datum Y. Begründung: "},
+  {ic:"💶",cat:"Finanzen",title:"Kostenübersicht",desc:"Kosten und Nutzen einer Investition gegenüberstellen",p:"Erstelle eine strukturierte Kosten-Nutzen-Übersicht für folgende Investition: "},
+  {ic:"💶",cat:"Finanzen",title:"Zahlungsbedingungen",desc:"Zahlungsbedingungen für Angebote formulieren",p:"Formuliere klare Zahlungsbedingungen für mein Angebot. Rahmenbedingungen: "},
+  // Marketing
+  {ic:"📣",cat:"Marketing",title:"Social-Media-Post",desc:"Professioneller Post für LinkedIn oder Instagram",p:"Schreibe einen professionellen LinkedIn-Post über: "},
+  {ic:"📣",cat:"Marketing",title:"Produktbeschreibung",desc:"Überzeugende Produktbeschreibung",p:"Schreibe eine überzeugende Produktbeschreibung für: "},
+  {ic:"📣",cat:"Marketing",title:"Pressemitteilung",desc:"Einfache Pressemitteilung für lokale Medien",p:"Schreibe eine kurze Pressemitteilung über: "},
+  {ic:"📣",cat:"Marketing",title:"Newsletter-Text",desc:"Newsletter-Beitrag für Kunden",p:"Schreibe einen Newsletter-Beitrag für unsere Kunden über: "},
+  // Personal & HR
+  {ic:"👤",cat:"Personal",title:"Stellenausschreibung",desc:"Stellenausschreibung formulieren",p:"Schreibe eine ansprechende Stellenausschreibung für folgende Position: "},
+  {ic:"👤",cat:"Personal",title:"Arbeitszeugnis",desc:"Wohlwollendes Arbeitszeugnis erstellen",p:"Schreibe ein wohlwollendes Arbeitszeugnis für einen Mitarbeiter der folgenden Position: "},
+  {ic:"👤",cat:"Personal",title:"Abmahnung",desc:"Formgerechte Abmahnung erstellen",p:"Schreibe eine formgerechte Abmahnung wegen folgenden Sachverhalts: "},
+  {ic:"👤",cat:"Personal",title:"Einarbeitsplan",desc:"Einarbeitungsplan für neuen Mitarbeiter",p:"Erstelle einen strukturierten Einarbeitungsplan für eine neue Mitarbeiterin / einen neuen Mitarbeiter in der Rolle: "},
+  // Übersetzungen
+  {ic:"🌍",cat:"Übersetzen",title:"Deutsch → Englisch",desc:"Professionelle Übersetzung ins Englische",p:"Übersetze folgenden Text professionell ins Englische: "},
+  {ic:"🌍",cat:"Übersetzen",title:"Deutsch → Türkisch",desc:"Übersetzung ins Türkische",p:"Übersetze folgenden Text ins Türkische: "},
+  {ic:"🌍",cat:"Übersetzen",title:"Deutsch → Arabisch",desc:"Übersetzung ins Arabische",p:"Übersetze folgenden Text ins Arabische: "},
+  {ic:"🌍",cat:"Übersetzen",title:"Englisch → Deutsch",desc:"Englischen Text eingedeutscht",p:"Übersetze folgenden englischen Text ins Deutsche: "},
+  // Zusammenfassen
+  {ic:"📝",cat:"Zusammenfassen",title:"Meeting-Protokoll",desc:"Notizen in ein Protokoll umwandeln",p:"Erstelle ein strukturiertes Meeting-Protokoll aus folgenden Notizen: "},
+  {ic:"📝",cat:"Zusammenfassen",title:"Vertrag zusammenfassen",desc:"Vertrag auf das Wesentliche kürzen",p:"Fasse folgenden Vertrag auf die wichtigsten Punkte zusammen und hebe Risiken hervor: "},
+  {ic:"📝",cat:"Zusammenfassen",title:"E-Mail-Thread",desc:"Langen E-Mail-Verlauf zusammenfassen",p:"Fasse folgenden E-Mail-Verlauf kurz zusammen und nenne die wichtigsten Handlungspunkte: "},
+  {ic:"📝",cat:"Zusammenfassen",title:"Checkliste erstellen",desc:"Aufgaben als Checkliste strukturieren",p:"Erstelle eine strukturierte Checkliste für: "},
+];
+let wissenCat="Alle";
+function renderWissen(){
+  const cats=["Alle",...new Set(WISSEN.map(w=>w.cat))];
+  document.getElementById("wissen-cats").innerHTML=cats.map(c=>`<button class="wissen-cat-btn${c===wissenCat?" active":""}" onclick="setWissenCat('${c}')">${c}</button>`).join("");
+  const filtered=wissenCat==="Alle"?WISSEN:WISSEN.filter(w=>w.cat===wissenCat);
+  document.getElementById("wissen-grid").innerHTML=filtered.map(w=>`<div class="wissen-card" onclick="useWissen(${JSON.stringify(w.p).replace(/"/g,'&quot;')})"><div class="wissen-card-ic">${w.ic}</div><div class="wissen-card-title">${w.title}</div><div class="wissen-card-desc">${w.desc}</div><span class="wissen-card-cat">${w.cat}</span></div>`).join("");
+}
+function setWissenCat(cat){wissenCat=cat;renderWissen()}
+function useWissen(prompt){
+  // Wechsle zum Chat und füge Prompt ein
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
+  document.querySelector(".side-section .side-item").classList.add("active");
+  const inp=document.getElementById("chat-input");
+  inp.value=prompt;autoResize(inp);inp.focus();
+  inp.selectionStart=inp.selectionEnd=inp.value.length;
+}
 // ── DSGVO Art. 17 — Datenlöschung ──
 async function deleteMyData(){
   if(!confirm("Alle Ihre Daten werden unwiderruflich gelöscht — Chat-Verlauf, Projekte, Einstellungen und Serverdaten.\n\nFortfahren?"))return;
