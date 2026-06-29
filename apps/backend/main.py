@@ -632,7 +632,7 @@ def debug_groq_diagnosis() -> dict[str, Any]:  # noqa: C901
     # ── 1. Env-Status (ohne Secrets) ─────────────────────────────────────────
     raw_key = os.getenv("GROQ_API_KEY", "")
     groq_key_present = bool(raw_key)
-    groq_key_prefix = raw_key[:4] if raw_key else "(not set)"
+    groq_key_prefix = raw_key[:12] if raw_key else "(not set)"
     groq_key_fingerprint = (
         hashlib.sha256(raw_key.encode()).hexdigest()[:12] if raw_key else "(no key)"
     )
@@ -727,14 +727,11 @@ def debug_groq_diagnosis() -> dict[str, Any]:  # noqa: C901
         )
         return out
     if not models_api_ok and models_status == 403:
-        out["diagnosis"] = "groq_key_not_authorized_for_project"
-        out["next_action_de"] = (
-            "Der Key hat keinen Projekt-Zugriff (HTTP 403 an Models API). "
-            "Im Groq-Dashboard (console.groq.com) das aktive Projekt öffnen, dort einen "
-            "neuen API-Key erstellen (nicht in einem anderen Projekt!) und in Render ersetzen. "
-            "Auch Organisation/Billing-Limits und Projekt-Mitgliedschaft prüfen."
+        # Kein frühes Return — Chat Completions kann trotzdem klappen (Groq trennt Permissions)
+        out["models_api_403_warning"] = (
+            "Models API 403: Key hat keine Berechtigung um Modelle aufzulisten. "
+            "Chat Completions wird trotzdem getestet (kann andere Permissions haben)."
         )
-        return out
 
     # ── 3. Minimaler Groq Chat Test (direkt, ohne AILIZA-Routing) ────────────
     _TEST_MESSAGES = [{"role": "user", "content": "Reply exactly: AILIZA_GROQ_OK"}]
@@ -866,13 +863,25 @@ def debug_groq_diagnosis() -> dict[str, Any]:  # noqa: C901
             "Der API-Key ist ungültig (HTTP 401 an Models API). "
             "Neuen Key im Groq-Dashboard erstellen und in Render ersetzen."
         )
-    elif not models_api_ok and models_status == 403:
+    elif not models_api_ok and models_status == 403 and chat_ok:
+        # Models API: 403 — aber Chat Completions funktioniert! Key ist korrekt.
+        # AILIZA-Routing oder Provider-Stack hat ein Problem.
+        diagnosis = "groq_ok_but_routing_issue"
+        next_action_de = (
+            f"Groq Chat Completions funktioniert (model={groq_model_effective}). "
+            "Models API gibt 403 (andere Permission) — das ist OK. "
+            "Das Problem liegt im AILIZA-Provider-Stack, nicht beim Key. "
+            "Bitte den uvicorn-Log prüfen: Zeilen 'AILIZA GROQ CALL' und 'AILIZA REGISTRY CHECK'. "
+            "Wahrscheinliche Ursache: Registry oder Kill-Switch blockiert."
+        )
+    elif not models_api_ok and models_status == 403 and not chat_ok:
         diagnosis = "groq_key_not_authorized_for_project"
         next_action_de = (
-            "Der Key hat keinen Projekt-Zugriff (HTTP 403 an Models API). "
+            "Der Key hat keinen Projekt-Zugriff (HTTP 403 an Models API und Chat API). "
             "Im Groq-Dashboard das aktive Projekt öffnen, dort einen neuen API-Key "
             "erstellen (nicht in einem anderen Projekt!) und in Render ersetzen. "
-            "Auch Organisation/Billing-Limits prüfen."
+            "Auch Organisation/Billing-Limits prüfen. "
+            f"Key-Prefix der aktuell geladenen Keys: groq_key_prefix={groq_key_prefix}"
         )
     elif models_api_ok and not target_in_models:
         diagnosis = "groq_model_not_allowed_for_key"
