@@ -430,6 +430,7 @@ const SKILLS=[
 ];
 let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
 let currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;
+let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
 let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
 let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
@@ -440,6 +441,7 @@ const PRIVACY_RULES=[
   {level:"high",label:"Kreditkarte",placeholder:"[Kartennummer]",pattern:/\b(?:\d{4}[ \-]){3}\d{4}\b/g},
   {level:"normal",label:"E-Mail",placeholder:"[E-Mail]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
   {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
+  {level:"normal",label:"Firma",placeholder:"[Firma]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s&.,-]+(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|UG\s*\(haftungsbeschränkt\)|AG|KG|OHG|GbR|e\.V\.|SE|Ltd\.?|Inc\.?)/g},
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:von|an|durch|für|Absender|Empfänger)[:\s]\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
@@ -503,11 +505,18 @@ function detectPrivacyItems(inp=""){
 }
 function renderPrivacyMemory(inp=""){
   const note=document.getElementById("privacy-note");const list=document.getElementById("privacy-items");
+  // Wenn aktive Redaktionsdaten vorhanden: diese als Blasen anzeigen
+  const held=Object.entries(activeRedactionMap);
+  if(held.length){
+    note.textContent=`${held.length} Wert${held.length>1?"e":""} im DSGVO-Zwischenspeicher`;
+    list.innerHTML=held.map(([ph,val])=>`<span class="privacy-pill normal" title="${escapeHtml(ph)}">🔒 ${escapeHtml(val)}</span>`).join("");
+    return;
+  }
   const items=detectPrivacyItems(inp);
   if(!items.length){note.textContent="Keine sensiblen Daten erkannt";list.innerHTML='<span class="privacy-pill empty">Normal: leer</span>';return}
   const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
   note.textContent=`${h} hochsensibel, ${n} normal`;
-  list.innerHTML=items.map(i=>`<span class="privacy-pill ${i.level}">${i.level==="high"?"Hochsensibel":"Normal"}: ${escapeHtml(i.label)} — ${escapeHtml(i.value)}</span>`).join("");
+  list.innerHTML=items.map(i=>`<span class="privacy-pill ${i.level}">${escapeHtml(i.label)}: ${escapeHtml(i.value)}</span>`).join("");
 }
 function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
 function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
@@ -614,23 +623,32 @@ async function runAgent(text,redactionMap){
   if(data.message&&data.message!=="Agent run completed")answer=data.message;
   if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
   if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
+  // Platzhalter in der Antwort wieder durch Originalwerte ersetzen
+  let reinserted=answer.trim();
+  if(Object.keys(activeRedactionMap).length>0){
+    for(const [ph,val] of Object.entries(activeRedactionMap)){
+      reinserted=reinserted.split(ph).join(val);
+    }
+    // Blasen leeren nach Reinsertion
+    activeRedactionMap={};
+  }
   const isDraft=data.status==="draft"||data.draft===true;
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
-  const redactNote=redactionMap&&Object.keys(redactionMap).length>0
-    ?`🔒 DSGVO: ${Object.keys(redactionMap).join(", ")} wurden vor der Übertragung geschwärzt.`:"";
-  addAiMessage(answer.trim(),redactNote||undefined,isDraft?draftHint:undefined);
+  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined);
 }
 function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));saveCurrentChat();document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function handlePaste(e){
   e.preventDefault();
   const pasted=e.clipboardData.getData("text");
-  const {redacted}=redactText(pasted);
+  const {redacted,map}=redactText(pasted);
+  // Map mergen — mehrere Einfügungen sammeln
+  Object.assign(activeRedactionMap,map);
   const el=e.target;
   const start=el.selectionStart,end=el.selectionEnd;
   el.value=el.value.slice(0,start)+redacted+el.value.slice(end);
   el.selectionStart=el.selectionEnd=start+redacted.length;
-  autoResize(el);renderPrivacyMemory(el.value);
+  autoResize(el);renderPrivacyMemory();
 }
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
