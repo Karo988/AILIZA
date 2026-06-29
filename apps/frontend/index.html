@@ -272,7 +272,7 @@ body{
         </div>
         <div class="input-box">
           <div class="input-row">
-            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)"></textarea>
+            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)" onpaste="handlePaste(event)"></textarea>
             <button class="input-send" id="send-btn" onclick="sendMessage()">↑</button>
           </div>
           <div class="input-toolbar">
@@ -620,6 +620,16 @@ async function runAgent(text,redactionMap){
 }
 function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));saveCurrentChat();document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
+function handlePaste(e){
+  e.preventDefault();
+  const pasted=e.clipboardData.getData("text");
+  const {redacted}=redactText(pasted);
+  const el=e.target;
+  const start=el.selectionStart,end=el.selectionEnd;
+  el.value=el.value.slice(0,start)+redacted+el.value.slice(end);
+  el.selectionStart=el.selectionEnd=start+redacted.length;
+  autoResize(el);renderPrivacyMemory(el.value);
+}
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
 function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
