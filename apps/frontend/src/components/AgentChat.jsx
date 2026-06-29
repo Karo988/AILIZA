@@ -4,7 +4,6 @@ import { apiFetch } from "../api"
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8001"
 const DEBUG_ERRORS = import.meta.env.VITE_DEBUG_ERRORS === "true"
 
-// ── Technische Diagnose – nur wenn VITE_DEBUG_ERRORS=true ─────────────────────
 function DiagBlock({ err }) {
   if (!err || !DEBUG_ERRORS) return null
   return (
@@ -12,12 +11,8 @@ function DiagBlock({ err }) {
       <p className="diag-title">Technischer Fehler (Testmodus)</p>
       <table className="diag-table">
         <tbody>
-          {err.httpStatus && (
-            <tr><td>HTTP-Status</td><td><code>{err.httpStatus}</code></td></tr>
-          )}
-          {err.where && (
-            <tr><td>Ort im System</td><td><code>{err.where}</code></td></tr>
-          )}
+          {err.httpStatus && <tr><td>HTTP-Status</td><td><code>{err.httpStatus}</code></td></tr>}
+          {err.where && <tr><td>Ort im System</td><td><code>{err.where}</code></td></tr>}
           <tr><td>Fehlermeldung</td><td><code>{err.message}</code></td></tr>
           {err.detail && err.detail !== err.message && (
             <tr><td>Backend-Detail</td><td><code>{err.detail}</code></td></tr>
@@ -28,51 +23,6 @@ function DiagBlock({ err }) {
   )
 }
 
-// ── Antwort-Block ───────────────────────────────────────────────────────────────
-function ResultBlock({ result }) {
-  if (!result) return null
-
-  if (result.type === "local_only") {
-    return (
-      <div className="chat-result chat-result--local">
-        <div className="chat-result-icon">ℹ</div>
-        <div>
-          <p className="chat-result-label">Lokaler Modus</p>
-          <p className="chat-result-text">{result.message}</p>
-          {result.notice && <p className="chat-result-notice">{result.notice}</p>}
-        </div>
-      </div>
-    )
-  }
-
-  if (result.type === "error") {
-    return (
-      <>
-        <div className="chat-result chat-result--error">
-          <div className="chat-result-icon">!</div>
-          <div>
-            <p className="chat-result-label">Fehler</p>
-            <p className="chat-result-text">{result.userMsg}</p>
-          </div>
-        </div>
-        <DiagBlock err={result.diagErr} />
-      </>
-    )
-  }
-
-  return (
-    <div className="chat-result chat-result--ok">
-      <div className="chat-result-icon">✓</div>
-      <div>
-        <p className="chat-result-label">Antwort</p>
-        <p className="chat-result-text">{result.message}</p>
-        {result.notice && <p className="chat-result-notice">{result.notice}</p>}
-      </div>
-    </div>
-  )
-}
-
-// ── Datei-Scan-Ergebnis ────────────────────────────────────────────────────────
 function ScanResult({ scan }) {
   if (!scan) return null
   const ok = scan.allowed
@@ -98,32 +48,11 @@ function ScanResult({ scan }) {
   )
 }
 
-// ── Fehler für Anzeige aufbereiten ─────────────────────────────────────────────
-function buildError(err, where) {
-  const status = err?.httpStatus
-  const userMsgs = {
-    401: "Nicht authentifiziert – bitte neu anmelden.",
-    403: "Keine Berechtigung für diese Aktion.",
-    500: "Interner Serverfehler – Anfrage wurde nicht ausgeführt.",
-  }
-  return {
-    type: "error",
-    userMsg: userMsgs[status] || `Fehler (HTTP ${status ?? "unbekannt"})`,
-    diagErr: {
-      httpStatus: status,
-      where,
-      message: err?.message || String(err),
-      detail: err?.detail,
-    },
-  }
-}
-
-// ── Hauptkomponente ─────────────────────────────────────────────────────────────
 export default function AgentChat({ onRunComplete }) {
+  const [messages, setMessages] = useState([])
   const [input, setInput] = useState("")
   const [deepResearch, setDeepResearch] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState(null)
 
   const [uploadLoading, setUploadLoading] = useState(false)
   const [scanResult, setScanResult] = useState(null)
@@ -131,10 +60,11 @@ export default function AgentChat({ onRunComplete }) {
 
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
+  const bottomRef = useRef(null)
 
   useEffect(() => { textareaRef.current?.focus() }, [])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }) }, [messages, loading])
 
-  // ── Agent-Run ────────────────────────────────────────────────────────────────
   async function handleSend() {
     const raw = input.trim()
     if (!raw || loading) return
@@ -143,24 +73,38 @@ export default function AgentChat({ onRunComplete }) {
       ? `Führe eine tiefe Recherche durch und erstelle einen strukturierten Bericht: ${raw}`
       : raw
 
+    const userMsg = { role: "user", content: task, id: Date.now() }
+    const updatedMessages = [...messages, userMsg]
+    setMessages(updatedMessages)
+    setInput("")
     setLoading(true)
-    setResult(null)
+
+    // History: nur role+content, ohne interne Felder
+    const history = updatedMessages.map(m => ({ role: m.role === "error" ? "assistant" : m.role, content: m.content }))
 
     try {
-      const data = await apiFetch("/agent/run", { body: { task } })
-      if (!data) return  // 401 → apiFetch leitet weiter
+      const data = await apiFetch("/agent/run", { body: { task, history } })
+      if (!data) return
 
       const status = data?.status
-      const message = data?.message || data?.ai_response || "Keine Antwort erhalten."
+      const content = data?.ai_response || data?.message || "Keine Antwort erhalten."
+      const isError = status === "failed" || status === "blocked"
 
-      if (status === "local_only" || status === "degraded") {
-        setResult({ type: "local_only", message, notice: data?.notice })
-      } else {
-        setResult({ type: "ok", message, notice: data?.notice })
-      }
+      setMessages(prev => [...prev, {
+        role: isError ? "error" : "assistant",
+        content,
+        id: Date.now(),
+        notice: data?.notice,
+        governance_notice: data?.governance_notice,
+        draft: data?.draft,
+      }])
       onRunComplete?.()
     } catch (err) {
-      setResult(buildError(err, "POST /agent/run"))
+      setMessages(prev => [...prev, {
+        role: "error",
+        content: `Fehler (HTTP ${err?.httpStatus ?? "unbekannt"})`,
+        id: Date.now(),
+      }])
     } finally {
       setLoading(false)
     }
@@ -170,18 +114,14 @@ export default function AgentChat({ onRunComplete }) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handleSend()
   }
 
-  // ── Datei-Upload → /documents/scan ──────────────────────────────────────────
   async function handleFileChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
-
     setUploadLoading(true)
     setScanResult(null)
     setUploadError(null)
-
     const form = new FormData()
     form.append("file", file)
-
     try {
       const resp = await fetch(`${API_BASE}/documents/scan`, {
         method: "POST",
@@ -192,83 +132,93 @@ export default function AgentChat({ onRunComplete }) {
         const body = await resp.json().catch(() => ({}))
         const err = new Error(body.detail || body.message || `HTTP ${resp.status}`)
         err.httpStatus = resp.status
-        err.detail = body.detail
         throw err
       }
       setScanResult(await resp.json())
     } catch (err) {
-      setUploadError(buildError(err, "POST /documents/scan"))
+      setUploadError({ httpStatus: err.httpStatus, message: String(err) })
     } finally {
       setUploadLoading(false)
       e.target.value = ""
     }
   }
 
-  function resetAll() {
-    setResult(null)
-    setScanResult(null)
-    setUploadError(null)
-    setInput("")
-  }
-
-  const hasAnyResult = result || scanResult || uploadError
-
   return (
     <div className="agent-chat">
-      {/* ── Header ── */}
       <div className="agent-chat-header">
         <div>
-          <h2 className="agent-chat-title">Frage stellen</h2>
+          <h2 className="agent-chat-title">AILIZA</h2>
           <p className="agent-chat-hint">Strg+Enter zum Absenden.</p>
         </div>
         <label className="deep-research-toggle">
-          <input
-            type="checkbox"
-            checked={deepResearch}
-            onChange={(e) => setDeepResearch(e.target.checked)}
-          />
+          <input type="checkbox" checked={deepResearch} onChange={(e) => setDeepResearch(e.target.checked)} />
           <span>Tiefe Recherche</span>
         </label>
       </div>
 
-      {/* ── Eingabe ── */}
-      <textarea
-        ref={textareaRef}
-        className="agent-chat-input"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={
-          deepResearch
-            ? "Thema für tiefe Recherche …"
-            : "Beispiel: Was kannst du für mich tun?"
-        }
-        rows={4}
-        disabled={loading}
-        aria-label="Anfrage an AILIZA"
-      />
+      {/* ── Chat-Verlauf ── */}
+      <div className="chat-messages">
+        {messages.length === 0 && (
+          <div className="chat-empty">
+            <p>Wie kann ich Ihnen heute helfen?</p>
+            <div className="chat-suggestions">
+              {[
+                "Schreibe eine E-Mail an einen Lieferanten",
+                "Was sind meine DSGVO-Pflichten als KMU?",
+                "Fasse diesen Text zusammen:",
+                "Rechnung analysieren",
+              ].map((s) => (
+                <button key={s} className="suggestion-chip" onClick={() => {
+                  setInput(s)
+                  textareaRef.current?.focus()
+                }}>{s}</button>
+              ))}
+            </div>
+          </div>
+        )}
 
-      {/* ── Buttons ── */}
-      <div className="agent-chat-actions">
+        {messages.map((msg) => (
+          <div key={msg.id} className={`chat-msg ${msg.role}`}>
+            <div className="msg-bubble">
+              <pre className="msg-text">{msg.content}</pre>
+              {msg.notice && <p className="chat-result-notice">{msg.notice}</p>}
+              {msg.governance_notice && <p className="chat-result-notice">{msg.governance_notice}</p>}
+              {msg.draft && <p className="chat-result-notice">Entwurf — menschliche Prüfung erforderlich</p>}
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div className="chat-msg assistant">
+            <div className="msg-bubble loading">
+              <span className="dot" /><span className="dot" /><span className="dot" />
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* ── Eingabe ── */}
+      <div className="chat-input-row">
+        <textarea
+          ref={textareaRef}
+          className="agent-chat-input"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={deepResearch ? "Thema für tiefe Recherche …" : "Nachricht eingeben… (Strg+Enter zum Senden)"}
+          rows={2}
+          disabled={loading}
+        />
         <button
-          className="agent-chat-btn"
+          className="send-btn"
           onClick={handleSend}
           disabled={loading || !input.trim()}
           aria-busy={loading}
         >
-          {loading && <span className="agent-chat-spinner" aria-hidden="true" />}
-          {loading ? "AILIZA denkt …" : deepResearch ? "Recherche starten" : "Senden"}
+          {loading ? <span className="agent-chat-spinner" aria-hidden="true" /> : "➤"}
         </button>
-
-        {hasAnyResult && !loading && (
-          <button className="agent-chat-btn agent-chat-btn--ghost" onClick={resetAll}>
-            Neue Anfrage
-          </button>
-        )}
       </div>
-
-      {/* ── Agent-Antwort ── */}
-      <ResultBlock result={result} />
 
       {/* ── Datei-Upload ── */}
       <div className="upload-section">
@@ -283,13 +233,10 @@ export default function AgentChat({ onRunComplete }) {
             disabled={uploadLoading}
             hidden
           />
-          {uploadLoading
-            ? <><span className="agent-chat-spinner" aria-hidden="true" /> Wird geprüft …</>
-            : "Datei hochladen & scannen"
-          }
+          {uploadLoading ? <><span className="agent-chat-spinner" aria-hidden="true" /> Wird geprüft …</> : "Datei hochladen & scannen"}
         </label>
         <ScanResult scan={scanResult} />
-        {uploadError && <DiagBlock err={uploadError.diagErr} />}
+        {uploadError && <DiagBlock err={uploadError} />}
       </div>
     </div>
   )

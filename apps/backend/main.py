@@ -362,6 +362,7 @@ class ToolFetchRequest(BaseModel):
 
 class AgentRunRequest(BaseModel):
     task: str = Field(..., min_length=1)
+    history: list[dict[str, str]] | None = None
 
     @field_validator("task")
     @classmethod
@@ -1300,6 +1301,7 @@ def _ask_llm_directly(
     request_id: str = "",
     data_class: str = "public",
     task_type: str = "general_task",
+    history: list[dict[str, str]] | None = None,
 ) -> tuple[str | None, str | None, list[str]]:
     """
     Direkter LLM-Call ohne Suche.
@@ -1319,19 +1321,27 @@ def _ask_llm_directly(
         flush=True,
     )
 
+    system_prompt = (
+        "Du bist AILIZA, der KI-Assistent für kleine und mittelständische Unternehmen (KMU). "
+        "Du bist kompetent, direkt und praxisorientiert — kein generisches LLM, sondern ein erfahrener "
+        "Unternehmensberater der deutschen KMU-Praxis. "
+        "Du kennst den Kontext aus dem bisherigen Gespräch und nutzt ihn aktiv. "
+        "Bei Schreibaufgaben (E-Mail, Brief, Angebot, Entwurf) lieferst du sofort den fertigen Text — "
+        "kein Nachfragen, keine Platzhalter wie [NAME] oder [Inhalt]. "
+        "Namen leitest du aus E-Mail-Adressen ab (max.mueller@example.com → Max Müller). "
+        "Fehlende Details füllst du sinnvoll aus dem Kontext. "
+        "Antworte immer auf Deutsch, präzise und ohne unnötige Erklärungen."
+    )
+    safe_history = []
+    if history:
+        for msg in history[-10:]:  # max. 10 vorherige Nachrichten
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                safe_history.append({"role": role, "content": content[:2000]})
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. "
-                "Bei Schreibaufgaben (E-Mail, Brief, Entwurf, Übersetzung, Zusammenfassung) "
-                "lieferst du direkt den fertigen Text mit Betreff und Inhalt auf Deutsch. "
-                "WICHTIG: Verwende NIEMALS Platzhalter wie [NAME], [Punkt 1], [IHR_NAME] oder ähnliches. "
-                "Leite Namen aus E-Mail-Adressen ab (z.B. max.mueller@example.com → Max Müller). "
-                "Wenn Inhalt fehlt, schreibe eine sinnvolle, konkrete E-Mail basierend auf dem Kontext. "
-                "Bei Wissensfragen antwortest du kurz und direkt auf Deutsch."
-            ),
-        },
+        {"role": "system", "content": system_prompt},
+        *safe_history,
         {"role": "user", "content": task},
     ]
     try:
@@ -1412,7 +1422,7 @@ def run_agent(
             f"task_chars={len(effective_task)}",
             flush=True,
         )
-        answer, error_code, provider_errors = _ask_llm_directly(effective_task)
+        answer, error_code, provider_errors = _ask_llm_directly(effective_task, history=payload.history)
         print(
             f"AILIZA WRITING TASK | direct_llm_called=True "
             f"answer_chars={len(answer) if answer else 0} "
