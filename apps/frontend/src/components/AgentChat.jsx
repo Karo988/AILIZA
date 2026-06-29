@@ -48,8 +48,8 @@ function ScanResult({ scan }) {
   )
 }
 
-export default function AgentChat({ onRunComplete }) {
-  const [messages, setMessages] = useState([])
+export default function AgentChat({ onRunComplete, initialMessages = [], onMessagesChange }) {
+  const [messages, setMessages] = useState(initialMessages)
   const [input, setInput] = useState("")
   const [deepResearch, setDeepResearch] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -76,6 +76,7 @@ export default function AgentChat({ onRunComplete }) {
     const userMsg = { role: "user", content: task, id: Date.now() }
     const updatedMessages = [...messages, userMsg]
     setMessages(updatedMessages)
+    onMessagesChange?.(updatedMessages)
     setInput("")
     setLoading(true)
 
@@ -90,14 +91,19 @@ export default function AgentChat({ onRunComplete }) {
       const content = data?.ai_response || data?.message || "Keine Antwort erhalten."
       const isError = status === "failed" || status === "blocked"
 
-      setMessages(prev => [...prev, {
+      const assistantMsg = {
         role: isError ? "error" : "assistant",
         content,
         id: Date.now(),
         notice: data?.notice,
         governance_notice: data?.governance_notice,
         draft: data?.draft,
-      }])
+      }
+      setMessages(prev => {
+        const next = [...prev, assistantMsg]
+        onMessagesChange?.(next)
+        return next
+      })
       onRunComplete?.()
     } catch (err) {
       setMessages(prev => [...prev, {

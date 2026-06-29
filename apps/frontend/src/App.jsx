@@ -6,9 +6,29 @@ import AgentChat from "./components/AgentChat"
 import { getSession, logout, apiFetch } from "./api"
 
 function App() {
-  const [session, setSession] = useState(null)          // null = nicht geprüft, false = nicht eingeloggt
+  const [session, setSession] = useState(null)
   const [activePage, setActivePage] = useState("Dashboard")
   const [auditLogs, setAuditLogs] = useState([])
+  const [chatSessions, setChatSessions] = useState([{ id: Date.now(), title: "Neuer Chat", messages: [] }])
+  const [activeChatId, setActiveChatId] = useState(null)
+
+  const activeChat = chatSessions.find(s => s.id === activeChatId) || chatSessions[0]
+
+  function newChat() {
+    const id = Date.now()
+    setChatSessions(prev => [{ id, title: "Neuer Chat", messages: [] }, ...prev])
+    setActiveChatId(id)
+    setActivePage("Dashboard")
+  }
+
+  function updateChat(id, messages) {
+    setChatSessions(prev => prev.map(s => {
+      if (s.id !== id) return s
+      const firstUserMsg = messages.find(m => m.role === "user")
+      const title = firstUserMsg ? firstUserMsg.content.slice(0, 40) : "Neuer Chat"
+      return { ...s, messages, title }
+    }))
+  }
 
   // Session prüfen beim Start
   useEffect(() => {
@@ -80,11 +100,16 @@ function App() {
             <div className="kpi-card"><p className="kpi-label">Audit Logs</p><p className="kpi-value">{auditLogs.length}</p></div>
             <div className="kpi-card"><p className="kpi-label">Nutzer</p><p className="kpi-value">{session.user_id}</p></div>
           </div>
-          <AgentChat onRunComplete={() =>
-            apiFetch("/audit-logs?limit=20")
-              .then((d) => { if (Array.isArray(d)) setAuditLogs(d) })
-              .catch(() => {})
-          } />
+          <AgentChat
+            key={activeChat.id}
+            initialMessages={activeChat.messages}
+            onMessagesChange={(msgs) => updateChat(activeChat.id, msgs)}
+            onRunComplete={() =>
+              apiFetch("/audit-logs?limit=20")
+                .then((d) => { if (Array.isArray(d)) setAuditLogs(d) })
+                .catch(() => {})
+            }
+          />
           <div className="card-grid">
             {dashboardData.map((card) => (
               <DashboardCard key={card.title} {...card} />
@@ -183,7 +208,27 @@ function App() {
             <p>Governance AI</p>
           </div>
         </div>
-        <nav>
+
+        <button className="new-chat-btn" onClick={newChat}>+ Neuer Chat</button>
+
+        {/* Chat-Verlauf */}
+        {chatSessions.length > 0 && (
+          <div className="chat-session-list">
+            {chatSessions.map(s => (
+              <button
+                key={s.id}
+                className={`chat-session-item${s.id === activeChat.id && activePage === "Dashboard" ? " active" : ""}`}
+                onClick={() => { setActiveChatId(s.id); setActivePage("Dashboard") }}
+                title={s.title}
+              >
+                <span className="chat-session-icon">💬</span>
+                <span className="chat-session-title">{s.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <nav className="sidebar-nav">
           {pages.map((page) => (
             <button
               key={page}
