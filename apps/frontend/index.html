@@ -75,8 +75,8 @@ body{
 .side-list-item.active .dot{background:var(--accent)}
 .side-list-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .side-list-meta{font-size:10px;color:var(--text-muted);flex-shrink:0}
-.side-add{padding:6px 10px;font-size:11px;color:var(--text-muted);cursor:pointer;border-radius:6px}
-.side-add:hover{color:var(--text);background:var(--surface-2)}
+.side-add{padding:7px 10px;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;border-radius:6px;background:var(--accent-soft);margin:4px 8px;text-align:center}
+.side-add:hover{background:#d4e8d8;color:#234a31}
 .side-footer{border-top:1px solid var(--border);padding:10px 14px;font-size:10px;color:var(--text-muted);text-align:center}
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .view{display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden}
@@ -439,7 +439,8 @@ async function sendMessage(){
   document.getElementById("chat-input").focus();
 }
 async function runAgent(text){
-  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({task:text})});
+  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({task:text,history})});
   hideTyping();
   if(!r.ok){addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
   const data=await r.json();
@@ -447,7 +448,6 @@ async function runAgent(text){
   if(data.message&&data.message!=="Agent run completed")answer=data.message;
   if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
   if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
-  // Draft-Hinweis: bei status:draft oder draft:true klar anzeigen
   const isDraft=data.status==="draft"||data.draft===true;
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
   addAiMessage(answer.trim(),undefined,isDraft?draftHint:undefined);
