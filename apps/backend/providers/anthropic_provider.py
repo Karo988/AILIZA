@@ -23,7 +23,7 @@ class AnthropicProvider(LLMProvider):
     provider_profile_version = "1.0"
     provider_id = "anthropic"
 
-    def __init__(self, model: str = "claude-sonnet-4-6-20251001") -> None:
+    def __init__(self, model: str = "claude-haiku-4-5-20251001") -> None:
         self.model = model
 
     def _client(self):
