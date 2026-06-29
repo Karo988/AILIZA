@@ -2182,6 +2182,73 @@ def user_delete_data(request: Request) -> dict[str, str]:
         raise HTTPException(status_code=500, detail="Löschung fehlgeschlagen. Bitte kontaktieren Sie den Support.")
 
 
+@app.get("/legal/tom")
+def legal_tom() -> dict[str, Any]:
+    """Gibt die Technischen und Organisatorischen Maßnahmen (TOM) zurück (DSGVO Art. 32)."""
+    return {
+        "dokument": "Technische und Organisatorische Maßnahmen (TOM)",
+        "rechtsgrundlage": "DSGVO Art. 32",
+        "verantwortliche": "Karola Fromm-Nasreldin",
+        "kontakt": "Karofromm@gmail.com",
+        "stand": "2026-06-01",
+        "massnahmen": [
+            {"kategorie": "Pseudonymisierung", "beschreibung": "PII wird clientseitig vor jeder Übertragung durch Platzhalter ersetzt (Privacy by Design, Art. 25 DSGVO)."},
+            {"kategorie": "Verschlüsselung", "beschreibung": "Alle Verbindungen erfolgen über HTTPS/TLS 1.2+. Keine Daten im Klartext übertragen."},
+            {"kategorie": "Vertraulichkeit", "beschreibung": "Keine Klartextprompts auf dem Server gespeichert. Audit-Logs ohne Inhalte. 90-Tage-Retention."},
+            {"kategorie": "Integrität", "beschreibung": "Governance-Integrität wird bei jedem Start geprüft (Gate 10). Manipulationen werden erkannt und führen zum Fail-Closed."},
+            {"kategorie": "Verfügbarkeit", "beschreibung": "Rate-Limiting gegen Überlastangriffe. Kill-Switch für Notabschaltung."},
+            {"kategorie": "Zugriffskontrolle", "beschreibung": "Rollenbasierte Authentifizierung (JWT + TOTP für Admin). Least-Privilege-Prinzip."},
+            {"kategorie": "Datensparsamkeit", "beschreibung": "Nur technisch notwendige Daten werden verarbeitet. Keine Nutzungsprofile, keine Tracking-Cookies."},
+            {"kategorie": "Löschkonzept", "beschreibung": "Automatische Löschung von Audit-Logs nach 90 Tagen. Sofortige Löschung auf Nutzeranfrage (Art. 17 DSGVO)."},
+            {"kategorie": "Governance-Pipeline", "beschreibung": "Jeder externe Call durchläuft: Kill-Switch → Klassifizierung → Policy-Gateway → Redaktion → Provider-Orchestrator. Fail-Closed bei Unsicherheit."},
+        ],
+    }
+
+
+@app.get("/legal/verarbeitungsverzeichnis")
+def legal_verarbeitungsverzeichnis() -> dict[str, Any]:
+    """Gibt das Verarbeitungsverzeichnis zurück (DSGVO Art. 30)."""
+    return {
+        "dokument": "Verzeichnis der Verarbeitungstätigkeiten",
+        "rechtsgrundlage": "DSGVO Art. 30",
+        "verantwortliche": "Karola Fromm-Nasreldin",
+        "kontakt": "Karofromm@gmail.com",
+        "stand": "2026-06-01",
+        "verarbeitungstaetigkeiten": [
+            {
+                "bezeichnung": "KI-gestützte Chat-Assistenz",
+                "zweck": "Beantwortung von Nutzerfragen durch KI-Sprachmodelle",
+                "rechtsgrundlage": "Art. 6 Abs. 1 lit. a DSGVO (Einwilligung)",
+                "kategorien": ["Texteingaben (pseudonymisiert vor Übertragung)"],
+                "empfaenger": ["Groq Inc. (USA) — auf Basis EU-Standardvertragsklauseln Art. 46 DSGVO"],
+                "drittlandtransfer": True,
+                "schutzmassnahmen": "EU-Standardvertragsklauseln, clientseitige Pseudonymisierung",
+                "loeschfrist": "Keine Serverspeicherung. Lokal im Browser bis zur Löschung durch Nutzer.",
+            },
+            {
+                "bezeichnung": "Sicherheits-Audit-Logs",
+                "zweck": "Sicherheitsprotokollierung und Compliance-Nachweis",
+                "rechtsgrundlage": "Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse)",
+                "kategorien": ["Technische Metadaten (keine Inhalte, keine PII)"],
+                "empfaenger": ["Keine (intern)"],
+                "drittlandtransfer": False,
+                "schutzmassnahmen": "Inhaltsfreie Logs, automatische Löschung",
+                "loeschfrist": "90 Tage",
+            },
+            {
+                "bezeichnung": "Einwilligungsnachweis",
+                "zweck": "Nachweis der erteilten DSGVO-Einwilligung (Art. 7 Abs. 1)",
+                "rechtsgrundlage": "Art. 7 Abs. 1 DSGVO",
+                "kategorien": ["Zeitstempel der Einwilligung (kein Name, nur Zeitpunkt)"],
+                "empfaenger": ["Keine (lokal im Browser)"],
+                "drittlandtransfer": False,
+                "schutzmassnahmen": "Ausschließlich lokale Speicherung",
+                "loeschfrist": "Bis zum Widerruf",
+            },
+        ],
+    }
+
+
 @app.get("/admin/provider-profiles")
 def list_provider_profiles(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> list[dict[str, Any]]:
     """Gibt alle konfigurierten ProviderProfile zurück (ohne API-Keys)."""

@@ -229,6 +229,7 @@ body{
       <div class="side-item" onclick="showView('skills',this)"><span class="side-ic">⚡</span><span>Skills</span></div>
       <div class="side-item" onclick="showView('status',this)"><span class="side-ic">🛡️</span><span>Compliance</span></div>
       <div class="side-item" onclick="showView('impressum',this)"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
+      <div class="side-item" onclick="showView('agb',this)"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
     </div>
     <div class="side-section">
       <div class="side-label">Letzte Chats</div>
@@ -359,7 +360,8 @@ body{
           <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:2">
             <div><strong>Verantwortlich:</strong> Karola Fromm-Nasreldin</div>
             <div><strong>Kontakt:</strong> <a href="mailto:Karofromm@gmail.com" style="color:var(--accent)">Karofromm@gmail.com</a></div>
-            <div style="color:var(--text-muted);font-size:11px;margin-top:8px">Telefon und vollständige Adresse werden nach Gründung der UG ergänzt.</div>
+            <div><strong>Plattform der EU-Kommission zur Online-Streitbeilegung (ODR):</strong> <span style="color:var(--text-muted)">https://ec.europa.eu/consumers/odr</span></div>
+            <div style="color:var(--text-muted);font-size:11px;margin-top:8px">Telefon und vollständige Adresse werden nach Gründung der UG ergänzt. Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.</div>
           </div>
         </div>
 
@@ -367,20 +369,157 @@ body{
           <div class="card-h">Datenschutzerklärung (DSGVO Art. 13)</div>
           <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.8">
             <p style="margin-bottom:8px"><strong>Verantwortliche Stelle:</strong> Karola Fromm-Nasreldin, Karofromm@gmail.com</p>
-            <p style="margin-bottom:8px"><strong>Zweck der Verarbeitung:</strong> Ihre Eingaben werden ausschließlich zur Beantwortung Ihrer Anfragen durch das KI-System AILIZA verarbeitet. Es werden keine Klartextprompts dauerhaft gespeichert.</p>
-            <p style="margin-bottom:8px"><strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. a DSGVO (Einwilligung), erteilt beim ersten Aufruf.</p>
-            <p style="margin-bottom:8px"><strong>Empfänger:</strong> Zur KI-Verarbeitung werden Anfragen an externe Anbieter (Groq Inc., USA) weitergeleitet. Die Übermittlung erfolgt auf Basis von Standardvertragsklauseln (Art. 46 DSGVO).</p>
-            <p style="margin-bottom:8px"><strong>Speicherdauer:</strong> Audit-Logs werden nach 90 Tagen automatisch gelöscht. Chat-Verläufe werden ausschließlich lokal in Ihrem Browser gespeichert.</p>
-            <p style="margin-bottom:8px"><strong>Ihre Rechte (Art. 15–22 DSGVO):</strong> Auskunft, Berichtigung, Löschung (Art. 17 → Button im Compliance-Bereich), Einschränkung, Widerspruch, Datenportabilität sowie Widerruf der Einwilligung jederzeit möglich.</p>
-            <p style="margin-bottom:8px"><strong>Beschwerderecht:</strong> Sie haben das Recht, sich bei einer Datenschutzbehörde zu beschweren, z.B. beim Landesbeauftragten für Datenschutz und Informationsfreiheit Ihres Bundeslandes.</p>
-            <p><strong>KI-Kennzeichnung (EU AI Act Art. 52):</strong> AILIZA ist ein KI-System der Risikoklasse "Limited Risk". Antworten werden automatisch generiert und können Fehler enthalten.</p>
+            <p style="margin-bottom:8px"><strong>Zweck der Verarbeitung:</strong> Ihre Eingaben werden ausschließlich zur Beantwortung Ihrer Anfragen durch das KI-System AILIZA verarbeitet. Personenbezogene Daten werden vor der Übertragung automatisch erkannt und lokal durch Platzhalter ersetzt (Privacy by Design, DSGVO Art. 25). Es werden keine Klartextprompts dauerhaft gespeichert.</p>
+            <p style="margin-bottom:8px"><strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. a DSGVO (Einwilligung), erteilt beim ersten Aufruf. Mindestalter: 16 Jahre (Art. 8 DSGVO).</p>
+            <p style="margin-bottom:8px"><strong>Lokale Datenspeicherung:</strong> Chat-Verläufe, Projekte und Einstellungen werden ausschließlich lokal in Ihrem Browser (localStorage) gespeichert. Diese Daten verlassen Ihr Gerät nicht, sofern Sie sie nicht aktiv im Chat eingeben. Es werden keine Cookies gesetzt.</p>
+            <p style="margin-bottom:8px"><strong>Empfänger / Drittlandübermittlung:</strong> Zur KI-Verarbeitung können Anfragen an externe Anbieter (z.B. Groq Inc., USA) weitergeleitet werden. Die Übermittlung erfolgt auf Basis von EU-Standardvertragsklauseln gemäß Art. 46 Abs. 2 lit. c DSGVO. Vor jeder Übertragung werden personenbezogene Daten lokal pseudonymisiert.</p>
+            <p style="margin-bottom:8px"><strong>Speicherdauer:</strong> Audit-Logs (ohne Inhalte) werden nach 90 Tagen automatisch gelöscht. Chat-Verläufe verbleiben ausschließlich lokal in Ihrem Browser und können jederzeit gelöscht werden.</p>
+            <p style="margin-bottom:8px"><strong>Ihre Rechte (Art. 15–22 DSGVO):</strong></p>
+            <ul style="margin:0 0 8px 16px;line-height:2">
+              <li>Auskunft (Art. 15) — auf Anfrage per E-Mail</li>
+              <li>Berichtigung (Art. 16) — auf Anfrage per E-Mail</li>
+              <li>Löschung (Art. 17) — sofort über den Button im Compliance-Bereich</li>
+              <li>Einschränkung der Verarbeitung (Art. 18) — auf Anfrage per E-Mail</li>
+              <li>Datenübertragbarkeit (Art. 20) — Export über den Chat-Export-Button</li>
+              <li>Widerspruch (Art. 21) — auf Anfrage per E-Mail</li>
+              <li>Widerruf der Einwilligung (Art. 7 Abs. 3) — jederzeit über den Button unten</li>
+            </ul>
+            <p style="margin-bottom:8px"><strong>Beschwerderecht (Art. 77 DSGVO):</strong> Sie haben das Recht, sich bei einer Datenschutz-Aufsichtsbehörde zu beschweren. Zuständig ist der Landesbeauftragte für Datenschutz und Informationsfreiheit Ihres Bundeslandes.</p>
+            <p><strong>KI-Kennzeichnung (EU AI Act Art. 52):</strong> AILIZA ist ein KI-System der Risikoklasse "Limited Risk". Antworten werden automatisch generiert und können Fehler enthalten. Bei wichtigen Entscheidungen ist eine menschliche Prüfung erforderlich.</p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Verarbeitungsverzeichnis (DSGVO Art. 30)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.8;overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:11px">
+              <thead><tr style="background:var(--surface-2)">
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Tätigkeit</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Zweck</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Rechtsgrundlage</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Kategorien</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Empfänger</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Löschfrist</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Chat-Anfragen (pseudonymisiert)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">KI-gestützte Beantwortung von Nutzerfragen</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Art. 6 Abs. 1a DSGVO (Einwilligung)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Keine personenbezogenen Daten nach Pseudonymisierung</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Groq Inc. (USA, SCC)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Sofort (kein serverseitiges Speichern)</td>
+                </tr>
+                <tr style="background:var(--surface-2)">
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Audit-Logs</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Sicherheitsprotokollierung, Compliance-Nachweis</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Art. 6 Abs. 1f DSGVO (berechtigtes Interesse)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Technische Metadaten (keine Inhalte, keine PII)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Keiner (intern)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">90 Tage</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Einwilligungsnachweis</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Nachweis der DSGVO-Einwilligung</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Art. 7 Abs. 1 DSGVO</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Zeitstempel (lokal, kein Name)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Keiner (lokal im Browser)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Bis Widerruf</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Technische und Organisatorische Maßnahmen (TOM, DSGVO Art. 32)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.8">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Pseudonymisierung</strong><br>
+                PII wird clientseitig vor jeder Übertragung durch Platzhalter ersetzt (Privacy by Design, Art. 25 DSGVO).
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Verschlüsselung</strong><br>
+                Alle Verbindungen erfolgen über HTTPS/TLS. Keine Daten im Klartext übertragen.
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Kill-Switch</strong><br>
+                Globaler Notausschalter deaktiviert alle externen LLM-Calls sofort (Fail-Closed).
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Minimale Datenspeicherung</strong><br>
+                Keine Klartextprompts im Server. Audit-Logs ohne Inhalte. 90-Tage-Retention.
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Governance-Pipeline</strong><br>
+                Jeder externe Call durchläuft: Klassifizierung → Policy-Check → Redaktion → Orchestrierung.
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Zugriffskontrolle</strong><br>
+                Rollenbasierte Authentifizierung (JWT + TOTP). Rate-Limiting gegen Missbrauch.
+              </div>
+            </div>
           </div>
         </div>
 
         <div class="card">
           <div class="card-h">Einwilligung widerrufen</div>
-          <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Sie können Ihre Einwilligung jederzeit widerrufen. Dadurch werden Sie beim nächsten Besuch erneut um Zustimmung gebeten.</p>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Sie können Ihre Einwilligung jederzeit widerrufen (Art. 7 Abs. 3 DSGVO). Dies hat keine Auswirkung auf die Rechtmäßigkeit der bisherigen Verarbeitung. Nach dem Widerruf werden Sie beim nächsten Besuch erneut um Zustimmung gebeten.</p>
           <button onclick="logout()" style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);padding:8px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Einwilligung widerrufen &amp; Abmelden</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="view-agb">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Nutzungsbedingungen</div><div class="page-sub">Allgemeine Geschäftsbedingungen (AGB) · Stand: Juni 2026</div></div></div>
+
+        <div class="card" style="margin-bottom:12px;background:#FFF9E6;border-color:#E8D9A0">
+          <div class="card-h" style="color:#7A6200">⚠ Beta-Version — Vorläufige Nutzungsbedingungen</div>
+          <p style="font-size:12px;color:#7A6200;margin-top:6px;line-height:1.6">AILIZA befindet sich in einer geschlossenen Testphase. Diese Nutzungsbedingungen gelten für die Testphase und werden nach Gründung der UG aktualisiert.</p>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--text-soft);line-height:1.9">
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 1 Anbieter und Geltungsbereich</p>
+            <p style="margin-bottom:12px">Anbieter des KI-Assistenten AILIZA ist Karola Fromm-Nasreldin (nachfolgend „Anbieter"), erreichbar unter Karofromm@gmail.com. Diese Nutzungsbedingungen gelten für alle Nutzerinnen und Nutzer, die AILIZA im Rahmen der Testphase verwenden.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 2 Leistungsbeschreibung</p>
+            <p style="margin-bottom:12px">AILIZA ist ein KI-gestützter Assistent für kleine und mittelständische Unternehmen (KMU). Das System unterstützt bei Aufgaben wie E-Mail-Entwürfen, Textzusammenfassungen, Übersetzungen und Recherchen. AILIZA nutzt externe KI-Sprachmodelle (Large Language Models). Die Nutzung erfolgt in der Testphase kostenlos und ohne Gewähr.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 3 Pflichten der Nutzerinnen und Nutzer</p>
+            <p style="margin-bottom:4px">Die Nutzung von AILIZA ist ausschließlich für legale Zwecke zulässig. Verboten ist insbesondere:</p>
+            <ul style="margin:0 0 12px 16px;line-height:2">
+              <li>Die Eingabe von sensiblen Personendaten Dritter ohne deren ausdrückliche Einwilligung</li>
+              <li>Die Nutzung zur Erstellung von irreführenden, täuschenden oder rechtswidrigen Inhalten</li>
+              <li>Die Umgehung technischer Schutzmaßnahmen (Kill-Switch, Rate-Limiting, Governance-Pipeline)</li>
+              <li>Die kommerzielle Weiterverwendung von AILIZA-Ausgaben ohne schriftliche Genehmigung des Anbieters</li>
+              <li>Die Nutzung durch Personen unter 16 Jahren</li>
+            </ul>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 4 KI-Transparenz (EU AI Act Art. 52)</p>
+            <p style="margin-bottom:12px">AILIZA ist ein KI-System der Risikoklasse „Limited Risk" gemäß EU AI Act. Alle Antworten werden automatisch durch ein KI-Sprachmodell generiert. Antworten können Fehler, Auslassungen oder Ungenauigkeiten enthalten. Sie sind <strong>nicht</strong> als Rechts-, Steuer- oder Medizinberatung zu verstehen. Bei wichtigen Entscheidungen ist stets eine menschliche Prüfung durch qualifizierte Fachkräfte erforderlich. Der KI-Charakter des Systems wird immer offengelegt (Art. 52 EU AI Act).</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 5 Haftungsausschluss</p>
+            <p style="margin-bottom:12px">Der Anbieter übernimmt keine Haftung für die Richtigkeit, Vollständigkeit oder Aktualität der von AILIZA generierten Inhalte. Die Nutzung erfolgt auf eigenes Risiko. Der Anbieter haftet nicht für Schäden, die durch die Verwendung von AILIZA-Ausgaben entstehen, sofern diese nicht auf grober Fahrlässigkeit oder Vorsatz des Anbieters beruhen. In der Testphase wird keine Verfügbarkeit oder Datenpersistenz garantiert.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 6 Datenschutz</p>
+            <p style="margin-bottom:12px">Die Verarbeitung personenbezogener Daten erfolgt gemäß der Datenschutzerklärung (siehe Impressum &amp; Datenschutz) und der DSGVO. Personenbezogene Daten werden vor der Übermittlung an externe KI-Anbieter automatisch pseudonymisiert.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 7 Änderungen der Nutzungsbedingungen</p>
+            <p style="margin-bottom:12px">Der Anbieter behält sich vor, diese Nutzungsbedingungen jederzeit zu ändern. Änderungen werden durch Aktualisierung auf dieser Seite bekanntgemacht. Die fortgesetzte Nutzung nach Änderungen gilt als Zustimmung.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 8 Anwendbares Recht und Gerichtsstand</p>
+            <p style="margin-bottom:0">Es gilt deutsches Recht unter Ausschluss des UN-Kaufrechts. Gerichtsstand ist der Sitz des Anbieters (wird nach UG-Gründung ergänzt).</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">Kontakt für Rechtsfragen</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0">Für Anfragen zu Datenschutz, Nutzungsrechten oder rechtlichen Fragen:</p>
+          <a href="mailto:Karofromm@gmail.com" style="color:var(--accent);font-size:13px;font-weight:600">Karofromm@gmail.com</a>
         </div>
       </div>
     </div>
@@ -397,11 +536,14 @@ body{
     <div class="login-error" id="login-error"></div>
     <span class="privacy-toggle" onclick="const t=document.getElementById('priv-text');t.style.display=t.style.display==='block'?'none':'block'">▸ Datenschutzhinweis lesen (Art. 13 DSGVO)</span>
     <div class="privacy-collapse" id="priv-text">
-      AILIZA verarbeitet Ihre Eingaben ausschließlich zur Beantwortung Ihrer Anfragen und speichert keine Klartextprompts.<br>
-      Ihre Daten verbleiben in der EU und werden nicht an Dritte weitergegeben (Art. 13 DSGVO).<br>
-      Sie können jederzeit Auskunft, Berichtigung oder Löschung Ihrer Daten verlangen (Art. 15–17 DSGVO).
+      <strong>Verantwortliche Stelle:</strong> Karola Fromm-Nasreldin, Karofromm@gmail.com<br><br>
+      <strong>Was verarbeitet wird:</strong> Ihre Texteingaben werden ausschließlich zur Beantwortung Ihrer Anfragen verarbeitet. Personenbezogene Daten werden <em>vor</em> der Übertragung automatisch erkannt und lokal durch Platzhalter ersetzt (Privacy by Design, Art. 25 DSGVO).<br><br>
+      <strong>Lokale Speicherung:</strong> Chat-Verläufe und Einstellungen werden nur lokal in Ihrem Browser gespeichert (localStorage). Es werden <em>keine Cookies</em> gesetzt.<br><br>
+      <strong>Drittlandübermittlung:</strong> Anfragen können an externe KI-Anbieter (z.B. Groq Inc., USA) weitergeleitet werden — ausschließlich nach Pseudonymisierung und auf Basis von EU-Standardvertragsklauseln (Art. 46 DSGVO).<br><br>
+      <strong>Ihre Rechte:</strong> Auskunft, Berichtigung, Löschung (Art. 15–17 DSGVO), Widerruf jederzeit über Impressum &amp; Datenschutz. Beschwerderecht bei Ihrer Datenschutzbehörde (Art. 77 DSGVO).<br><br>
+      Vollständige Datenschutzerklärung und Nutzungsbedingungen im Menü.
     </div>
-    <label class="login-check"><input type="checkbox" id="l-consent"> Ich habe den Datenschutzhinweis gelesen und stimme der Verarbeitung zu (DSGVO Art. 6 Abs. 1a).</label>
+    <label class="login-check"><input type="checkbox" id="l-consent"> Ich habe den Datenschutzhinweis gelesen und stimme der Verarbeitung meiner Eingaben gemäß Art. 6 Abs. 1 lit. a DSGVO zu. Ich akzeptiere die Nutzungsbedingungen.</label>
     <label class="login-check"><input type="checkbox" id="l-age"> Ich bin mindestens 16 Jahre alt (Art. 8 DSGVO).</label>
     <div class="ki-hinweis">🤖 <strong>KI-Hinweis (EU AI Act Art. 52):</strong> Sie interagieren mit einem KI-System. Antworten werden automatisch generiert und sollten bei wichtigen Entscheidungen durch einen Menschen geprüft werden.</div>
     <div class="login-btns">
