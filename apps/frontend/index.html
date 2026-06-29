@@ -331,6 +331,12 @@ body{
           </div>
         </div>
         <div class="card"><div class="card-h">Letzte Agent-Runs</div><div id="runs-list" style="margin-top:10px"><div class="empty">Lädt…</div></div></div>
+        <div class="card" style="margin-top:12px;border-color:#D23B3B">
+          <div class="card-h" style="color:var(--err)">🗑 Meine Daten löschen (DSGVO Art. 17)</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Löscht alle Ihre Chat-Verläufe, Projekte und gespeicherten Daten — lokal und auf dem Server. Diese Aktion kann nicht rückgängig gemacht werden.</p>
+          <button onclick="deleteMyData()" style="background:#8B2424;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Alle meine Daten unwiderruflich löschen</button>
+          <div id="delete-data-msg" style="margin-top:8px;font-size:12px;display:none"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -557,6 +563,24 @@ async function checkStatus(){const b=document.getElementById("conn-status");try{
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 
+// ── DSGVO Art. 17 — Datenlöschung ──
+async function deleteMyData(){
+  if(!confirm("Alle Ihre Daten werden unwiderruflich gelöscht — Chat-Verlauf, Projekte, Einstellungen und Serverdaten.\n\nFortfahren?"))return;
+  const msg=document.getElementById("delete-data-msg");
+  msg.style.display="block";msg.style.color="var(--text-muted)";msg.textContent="Wird gelöscht…";
+  // Lokale Daten löschen
+  ["ailiza_chat","ailiza_chat_list","ailiza_current_chat_id","ailiza_projects","ailiza_folders","ailiza_tools","ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
+  chatHistory=[];context=[];currentChatId=null;projects=[];
+  // Server-Daten löschen
+  try{
+    const r=await fetch(`${API}/user/delete-data`,{method:"POST",headers:{"Content-Type":"application/json"}});
+    const data=await r.json().catch(()=>({}));
+    if(r.ok){msg.style.color="var(--ok)";msg.textContent="✓ "+( data.message||"Alle Daten wurden gelöscht.");}
+    else{msg.style.color="var(--warn)";msg.textContent="Lokale Daten gelöscht. Serverfehler: "+(data.detail||r.status);}
+  }catch{msg.style.color="var(--warn)";msg.textContent="Lokale Daten gelöscht. Server nicht erreichbar.";}
+  // Consent zurücksetzen → Consent-Screen erscheint neu
+  setTimeout(()=>{document.getElementById("login-overlay").classList.remove("hidden");},2000);
+}
 // ── Consent (einmalig, keine Registrierung nötig) ──
 function authHeaders(){return{"Content-Type":"application/json"}}
 function showLoginError(msg){const el=document.getElementById("login-error");el.textContent=msg;el.style.display="block"}

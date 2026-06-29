@@ -2155,6 +2155,33 @@ def admin_cleanup(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> dict
     return result
 
 
+@app.post("/user/delete-data")
+def user_delete_data(request: Request) -> dict[str, str]:
+    """DSGVO Art. 17 — Recht auf Löschung.
+    Löscht alle Agenten-Runs und Audit-Logs des aktuellen Mandanten
+    und dokumentiert die Löschanfrage im Audit-Trail.
+    Kein Login erforderlich (anonyme Nutzung).
+    """
+    try:
+        from sqlalchemy import delete as sql_delete
+        with engine.begin() as conn:
+            runs_deleted = conn.execute(
+                sql_delete(agent_runs).where(agent_runs.c.tenant_id == DEFAULT_TENANT_ID)
+            ).rowcount
+        write_audit_entry(
+            action="dsgvo.art17.delete_request",
+            metadata={
+                "runs_deleted": runs_deleted,
+                "note": "Nutzeranfrage gem. DSGVO Art. 17 — alle Runs gelöscht",
+                "ip": request.client.host if request.client else "unbekannt",
+            },
+            tenant_id=DEFAULT_TENANT_ID,
+        )
+        return {"status": "deleted", "message": "Ihre Daten wurden gelöscht (DSGVO Art. 17)."}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Löschung fehlgeschlagen. Bitte kontaktieren Sie den Support.")
+
+
 @app.get("/admin/provider-profiles")
 def list_provider_profiles(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> list[dict[str, Any]]:
     """Gibt alle konfigurierten ProviderProfile zurück (ohne API-Keys)."""
