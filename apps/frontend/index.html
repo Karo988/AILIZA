@@ -435,15 +435,33 @@ let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","R
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
 let context=[];
 const PRIVACY_RULES=[
-  {level:"high",label:"Gesundheit",pattern:/\b(?:diagnose|krankheit|patient|medikament|therapie|arzt|diabetes|depression|schwanger)\b/gi},
-  {level:"high",label:"IBAN",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
-  {level:"normal",label:"E-Mail",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
-  {level:"normal",label:"Telefon",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
-  {level:"normal",label:"Person",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin|Bewerber(?:in)?|Kandidat(?:in)?)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
-  {level:"normal",label:"Referenz",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
-  {level:"normal",label:"Name",pattern:/\b(?:mein name ist|ich heiße)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+/g},
-  {level:"normal",label:"Adresse",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|weg|platz)\s+\d+/gi},
+  {level:"high",label:"Gesundheit",placeholder:"[GESUNDHEITSDATEN]",pattern:/\b(?:diagnose|krankheit|patient|medikament|therapie|arzt|diabetes|depression|schwanger)\b/gi},
+  {level:"high",label:"IBAN",placeholder:"[IBAN]",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
+  {level:"normal",label:"E-Mail",placeholder:"[E-MAIL]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
+  {level:"normal",label:"Telefon",placeholder:"[TELEFON]",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
+  {level:"normal",label:"Person",placeholder:"[NAME]",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin|Bewerber(?:in)?|Kandidat(?:in)?)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
+  {level:"normal",label:"Referenz",placeholder:"[REFERENZ-NR]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
+  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/\b(?:mein name ist|ich heiße)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+/g},
+  {level:"normal",label:"Adresse",placeholder:"[ADRESSE]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|weg|platz)\s+\d+/gi},
 ];
+// Schwärzt erkannte PII im Text — gibt {redacted, map} zurück
+function redactText(text){
+  let out=text;
+  const map={}; // placeholder → original
+  for(const rule of PRIVACY_RULES){
+    rule.pattern.lastIndex=0;
+    out=out.replace(rule.pattern,(match)=>{
+      const key=rule.placeholder;
+      // Mehrere Treffer für denselben Typ durchnummerieren
+      const existing=Object.entries(map).filter(([k])=>k===key||k.startsWith(key.slice(0,-1)+"_"));
+      const numbered=existing.length>0?rule.placeholder.slice(0,-1)+"_"+(existing.length+1)+"]":key;
+      map[numbered]=match;
+      return numbered;
+    });
+    rule.pattern.lastIndex=0;
+  }
+  return {redacted:out,map};
+}
 function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
@@ -566,18 +584,23 @@ async function sendMessage(){
   inp.value="";autoResize(inp);
   document.getElementById("send-btn").disabled=true;
   if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
+  // Original lokal speichern und anzeigen
   chatHistory.push({role:"user",content:text,time:new Date().toISOString()});
   document.getElementById("chat-inner").innerHTML+=renderMsg({role:"user",content:text});
   renderPrivacyMemory();scrollToBottom();
   showTyping();
+  // PII schwärzen bevor es den Browser verlässt
+  const {redacted,map}=redactText(text);
+  const hasRedactions=Object.keys(map).length>0;
   try{
-    await runAgent(text);
+    await runAgent(redacted,hasRedactions?map:null);
   }catch(e){hideTyping();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
 }
-async function runAgent(text){
-  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+async function runAgent(text,redactionMap){
+  // History ebenfalls schwärzen
+  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:redactText(m.content).redacted}));
   const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
   hideTyping();
   if(!r.ok){addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
@@ -588,7 +611,9 @@ async function runAgent(text){
   if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
   const isDraft=data.status==="draft"||data.draft===true;
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
-  addAiMessage(answer.trim(),undefined,isDraft?draftHint:undefined);
+  const redactNote=redactionMap&&Object.keys(redactionMap).length>0
+    ?`🔒 DSGVO: ${Object.keys(redactionMap).join(", ")} wurden vor der Übertragung geschwärzt.`:"";
+  addAiMessage(answer.trim(),redactNote||undefined,isDraft?draftHint:undefined);
 }
 function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));saveCurrentChat();document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
