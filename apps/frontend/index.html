@@ -115,15 +115,20 @@ body{
 .typing span:nth-child(3){animation-delay:.3s}
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
 .input-wrap{padding:14px 20px 18px;background:var(--bg);flex-shrink:0}
-.privacy-panel{max-width:720px;margin:0 auto 8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 11px;font-size:11px}
-.privacy-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px}
-.privacy-title{font-weight:700;color:var(--text)}
-.privacy-note{color:var(--text-muted)}
-.privacy-items{display:flex;flex-wrap:wrap;gap:6px}
+.privacy-panel{max-width:720px;margin:0 auto 8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:11px}
+.privacy-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.privacy-title{font-weight:700;color:var(--text);font-size:12px}
+.privacy-note{color:var(--text-muted);font-size:11px}
+.privacy-items{display:flex;flex-wrap:wrap;gap:8px}
 .privacy-pill{border:1px solid var(--border);border-radius:999px;padding:3px 9px;line-height:1.4;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.privacy-pill.high{background:#FCE8E8;border-color:#D23B3B;color:#8B2424;font-weight:800}
-.privacy-pill.normal{background:#E8F0EA;border-color:#B6D2BD;color:#2D5F3F;font-weight:600}
 .privacy-pill.empty{background:#E8F0EA;border-color:#B6D2BD;color:#2D5F3F}
+/* Gehaltene Datenblasen — groß und sichtbar */
+.dsgvo-bubble{background:#E8F0EA;border:2px solid #2D5F3F;border-radius:12px;padding:8px 14px;display:flex;flex-direction:column;gap:2px;animation:bubbleIn .25s ease;min-width:100px}
+.dsgvo-bubble.high{background:#FCE8E8;border-color:#D23B3B}
+.dsgvo-bubble-label{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.dsgvo-bubble-value{font-size:13px;font-weight:600;color:#1A3D28;word-break:break-all}
+.dsgvo-bubble.high .dsgvo-bubble-value{color:#8B2424}
+@keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
 .input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
 .input-box:focus-within{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(45,95,63,.06)}
 .input-row{display:flex;align-items:flex-end;gap:8px}
@@ -504,19 +509,25 @@ function detectPrivacyItems(inp=""){
   return items;
 }
 function renderPrivacyMemory(inp=""){
-  const note=document.getElementById("privacy-note");const list=document.getElementById("privacy-items");
-  // Wenn aktive Redaktionsdaten vorhanden: diese als Blasen anzeigen
+  const note=document.getElementById("privacy-note");
+  const list=document.getElementById("privacy-items");
+  // Gehaltene Werte im Zwischenspeicher → große Blasen
   const held=Object.entries(activeRedactionMap);
   if(held.length){
-    note.textContent=`${held.length} Wert${held.length>1?"e":""} im DSGVO-Zwischenspeicher`;
-    list.innerHTML=held.map(([ph,val])=>`<span class="privacy-pill normal" title="${escapeHtml(ph)}">🔒 ${escapeHtml(val)}</span>`).join("");
+    note.textContent=`🔒 ${held.length} Wert${held.length>1?"e":""} gesichert — werden nach Antwort wieder eingefügt`;
+    list.innerHTML=held.map(([ph,val])=>{
+      const label=ph.replace(/^\[|\]$/g,"");
+      const isHigh=["IBAN","Kartennummer","Gesundheitsdaten"].includes(label);
+      return`<div class="dsgvo-bubble${isHigh?" high":""}"><span class="dsgvo-bubble-label">${escapeHtml(label)}</span><span class="dsgvo-bubble-value">${escapeHtml(val)}</span></div>`;
+    }).join("");
     return;
   }
+  // Kein aktiver Zwischenspeicher → Erkennung im Eingabefeld zeigen
   const items=detectPrivacyItems(inp);
   if(!items.length){note.textContent="Keine sensiblen Daten erkannt";list.innerHTML='<span class="privacy-pill empty">Normal: leer</span>';return}
   const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
-  note.textContent=`${h} hochsensibel, ${n} normal`;
-  list.innerHTML=items.map(i=>`<span class="privacy-pill ${i.level}">${escapeHtml(i.label)}: ${escapeHtml(i.value)}</span>`).join("");
+  note.textContent=`${h} hochsensibel, ${n} normal — beim Einfügen (Strg+V) werden sie gesichert`;
+  list.innerHTML=items.map(i=>`<div class="dsgvo-bubble${i.level==="high"?" high":""}"><span class="dsgvo-bubble-label">${escapeHtml(i.label)}</span><span class="dsgvo-bubble-value">${escapeHtml(i.value)}</span></div>`).join("");
 }
 function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
 function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
