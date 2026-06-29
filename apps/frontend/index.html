@@ -440,11 +440,12 @@ const PRIVACY_RULES=[
   {level:"high",label:"Kreditkarte",placeholder:"[KARTENNUMMER]",pattern:/\b(?:\d{4}[ \-]){3}\d{4}\b/g},
   {level:"normal",label:"E-Mail",placeholder:"[E-MAIL]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
   {level:"normal",label:"Telefon",placeholder:"[TELEFON]",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
-  {level:"normal",label:"Person",placeholder:"[NAME]",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin|Bewerber(?:in)?|Kandidat(?:in)?)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
+  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/(?<=\b(?:von|an|durch|für|Absender|Empfänger|Zahlung von|erhalten von)[:\s]\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
+  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/\b(?:Herr(?:n)?|Frau|Mitarbeiter(?:in)?|Kollege|Kollegin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
+  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
   {level:"normal",label:"Referenz",placeholder:"[REFERENZ-NR]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
-  {level:"normal",label:"Name",placeholder:"[NAME]",pattern:/\b(?:mein name ist|ich heiße)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+/g},
-  {level:"normal",label:"Adresse",placeholder:"[ADRESSE]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|weg|platz)\s+\d+/gi},
-  {level:"normal",label:"Betrag",placeholder:"[BETRAG]",pattern:/(?:€|EUR|USD|\$)\s*\d+(?:[.,]\d{1,2})?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR|USD|\$)/g},
+  {level:"normal",label:"Adresse",placeholder:"[ADRESSE]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer)\s+\d+[a-z]?/gi},
+  {level:"normal",label:"Betrag",placeholder:"[BETRAG]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
   {level:"normal",label:"PayPal-Transaktion",placeholder:"[PAYPAL-TX]",pattern:/\b[A-Z0-9]{17}\b/g},
 ];
 // Schwärzt erkannte PII im Text — gibt {redacted, map} zurück
