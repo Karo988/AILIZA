@@ -256,7 +256,7 @@ body{
           <div class="welcome-h">Was kann ich für Sie tun?</div>
           <div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div>
           <div class="welcome-chips">
-            <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">✉️ E-Mail schreiben</div>
+            <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">📧 E-Mail schreiben</div>
             <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
             <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
             <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
@@ -373,7 +373,7 @@ const API = window.AILIZA_API || "https://ailiza.onrender.com";
 
 const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
 const SKILLS=[
-  {ic:"✉️",n:"E-Mail verfassen",d:"Professionelle E-Mail",p:"Schreibe eine professionelle E-Mail: "},
+  {ic:"📧",n:"E-Mail verfassen",d:"Professionelle E-Mail",p:"Schreibe eine professionelle E-Mail: "},
   {ic:"📝",n:"Zusammenfassen",d:"Text zusammenfassen",p:"Fasse zusammen: "},
   {ic:"🌍",n:"Übersetzen",d:"DE/EN/FR/ES/IT",p:"Übersetze ins Englische: "},
   {ic:"✅",n:"Checkliste",d:"Strukturierte Liste",p:"Erstelle eine Checkliste für: "},
@@ -455,7 +455,7 @@ function newChat(){
   saveCurrentChat();
   chatHistory=[];context=[];
   localStorage.setItem("ailiza_chat","[]");
-  document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt(\'Schreibe eine E-Mail: \')">✉️ E-Mail</div><div class="chip" onclick="quickPrompt(\'Übersetze: \')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt(\'Fasse zusammen: \')">📝 Zusammenfassen</div></div></div>';
+  document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt(\'Schreibe eine E-Mail: \')">📧 E-Mail</div><div class="chip" onclick="quickPrompt(\'Übersetze: \')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt(\'Fasse zusammen: \')">📝 Zusammenfassen</div></div></div>';
   renderPrivacyMemory();
   renderRecent();
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
@@ -470,7 +470,7 @@ function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.cont
 function saveCurrentChat(){if(!chatHistory.length)return;const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");const id=Date.now().toString();const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);list.push({id,name,messages:chatHistory});localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));renderRecent()}
 function renderChat(){
   const inner=document.getElementById("chat-inner");
-  if(!chatHistory.length){inner.innerHTML=`<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt('Schreibe eine E-Mail: ')">✉️ E-Mail</div><div class="chip" onclick="quickPrompt('Übersetze: ')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt('Fasse zusammen: ')">📝 Zusammenfassen</div></div></div>`;return}
+  if(!chatHistory.length){inner.innerHTML=`<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt('Schreibe eine E-Mail: ')">📧 E-Mail</div><div class="chip" onclick="quickPrompt('Übersetze: ')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt('Fasse zusammen: ')">📝 Zusammenfassen</div></div></div>`;return}
   inner.innerHTML=chatHistory.slice(-50).map(m=>renderMsg(m)).join("");scrollToBottom();
 }
 function renderMsg(m){
