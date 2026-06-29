@@ -335,23 +335,16 @@ body{
     </div>
   </div>
 </div>
-<!-- ── Login-Screen ── -->
+<!-- ── Consent-Screen (einmalig beim ersten Besuch) ── -->
 <div class="login-overlay" id="login-overlay">
   <div class="login-box">
     <div class="login-brand">
       <div class="login-brand-name">AI<span>LIZA</span></div>
-      <div class="login-brand-sub">Ihr sicherer KI-Assistent · EU-konform · DSGVO</div>
+      <div class="login-brand-sub">Ihr KI-Assistent · EU-konform · DSGVO</div>
     </div>
+    <p style="font-size:13px;color:var(--text-soft);margin-bottom:16px;line-height:1.6">Bevor Sie starten, bestätigen Sie bitte kurz die folgenden Hinweise — einmalig, keine Registrierung nötig.</p>
     <div class="login-error" id="login-error"></div>
-    <div class="login-field">
-      <label>Benutzername</label>
-      <input type="text" id="l-user" autocomplete="username" placeholder="Ihr Benutzername" onkeydown="if(event.key==='Enter')loginAction('login')">
-    </div>
-    <div class="login-field">
-      <label>Passwort</label>
-      <input type="password" id="l-pass" autocomplete="current-password" placeholder="Passwort" onkeydown="if(event.key==='Enter')loginAction('login')">
-    </div>
-    <span class="privacy-toggle" onclick="document.getElementById('priv-text').style.display=document.getElementById('priv-text').style.display==='block'?'none':'block'">▸ Datenschutzhinweis lesen</span>
+    <span class="privacy-toggle" onclick="const t=document.getElementById('priv-text');t.style.display=t.style.display==='block'?'none':'block'">▸ Datenschutzhinweis lesen (Art. 13 DSGVO)</span>
     <div class="privacy-collapse" id="priv-text">
       AILIZA verarbeitet Ihre Eingaben ausschließlich zur Beantwortung Ihrer Anfragen und speichert keine Klartextprompts.<br>
       Ihre Daten verbleiben in der EU und werden nicht an Dritte weitergegeben (Art. 13 DSGVO).<br>
@@ -361,8 +354,7 @@ body{
     <label class="login-check"><input type="checkbox" id="l-age"> Ich bin mindestens 16 Jahre alt (Art. 8 DSGVO).</label>
     <div class="ki-hinweis">🤖 <strong>KI-Hinweis (EU AI Act Art. 52):</strong> Sie interagieren mit einem KI-System. Antworten werden automatisch generiert und sollten bei wichtigen Entscheidungen durch einen Menschen geprüft werden.</div>
     <div class="login-btns">
-      <button class="btn-login" id="btn-login" onclick="loginAction('login')">Anmelden</button>
-      <button class="btn-register" id="btn-register" onclick="loginAction('register')">Registrieren</button>
+      <button class="btn-login" id="btn-login" onclick="giveConsent()">Zustimmen &amp; starten</button>
     </div>
   </div>
 </div>
@@ -535,40 +527,23 @@ async function checkStatus(){const b=document.getElementById("conn-status");try{
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 
-// ── Auth ──
-let authToken=localStorage.getItem("ailiza_token")||"";
-function authHeaders(){return authToken?{"Content-Type":"application/json","Authorization":"Bearer "+authToken}:{"Content-Type":"application/json"}}
+// ── Consent (einmalig, keine Registrierung nötig) ──
+function authHeaders(){return{"Content-Type":"application/json"}}
 function showLoginError(msg){const el=document.getElementById("login-error");el.textContent=msg;el.style.display="block"}
-function hideLoginError(){document.getElementById("login-error").style.display="none"}
-async function loginAction(mode){
-  hideLoginError();
-  const user=document.getElementById("l-user").value.trim();
-  const pass=document.getElementById("l-pass").value;
-  const consent=document.getElementById("l-consent").checked;
-  const age=document.getElementById("l-age").checked;
-  if(!user||!pass){showLoginError("Bitte Benutzername und Passwort eingeben.");return}
-  if(!consent||!age){showLoginError("Bitte beide Einwilligungen bestätigen.");return}
-  const btn=document.getElementById(mode==="login"?"btn-login":"btn-register");
-  btn.disabled=true;btn.innerHTML='<span class="login-spinner"></span>'+(mode==="login"?"Anmelden…":"Registrieren…");
-  try{
-    const r=await fetch(`${API}/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:user,password:pass})});
-    const data=await r.json().catch(()=>({}));
-    if(!r.ok){showLoginError(data.detail||data.message||"Fehler beim "+(mode==="login"?"Anmelden":"Registrieren")+".");return}
-    authToken=data.access_token||data.token||"";
-    if(authToken)localStorage.setItem("ailiza_token",authToken);
-    document.getElementById("login-overlay").classList.add("hidden");
-    init();
-  }catch{showLoginError("Server nicht erreichbar. Bitte kurz warten und erneut versuchen.");}
-  finally{btn.disabled=false;btn.textContent=mode==="login"?"Anmelden":"Registrieren"}
+function giveConsent(){
+  if(!document.getElementById("l-consent").checked||!document.getElementById("l-age").checked){showLoginError("Bitte beide Einwilligungen bestätigen.");return}
+  localStorage.setItem("ailiza_consent","1");
+  localStorage.setItem("ailiza_consent_ts",new Date().toISOString());
+  document.getElementById("login-overlay").classList.add("hidden");
+  init();
 }
 function logout(){
-  authToken="";localStorage.removeItem("ailiza_token");
+  localStorage.removeItem("ailiza_consent");
   document.getElementById("login-overlay").classList.remove("hidden");
-  document.getElementById("l-pass").value="";hideLoginError();
 }
-// Zeige App nur wenn Token vorhanden — init() wird nur nach erfolgreichem Login oder sofort (wenn Token da) aufgerufen
-if(authToken){document.getElementById("login-overlay").classList.add("hidden");init();}
-// else: Login-Screen bleibt sichtbar; init() wird nach Login aufgerufen
+// Consent bereits erteilt? → direkt zur App
+if(localStorage.getItem("ailiza_consent")==="1"){document.getElementById("login-overlay").classList.add("hidden");init();}
+// else: Consent-Screen bleibt sichtbar
 </script>
 </body>
 </html>
