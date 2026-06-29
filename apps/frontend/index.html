@@ -772,19 +772,27 @@ function renderChat(){
 function renderMsg(m,idx){
   const text=(m.content||"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
   const i=idx!==undefined?idx:chatHistory.indexOf(m);
-  if(m.role==="user")return`<div class="msg user"><div class="bubble user">${text}</div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
+  if(m.role==="user")return`<div class="msg user"><div class="bubble user">${text}</div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
   const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
   const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
-  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
+  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
 function copyText(idx){
   const m=chatHistory[idx];if(!m)return;
-  navigator.clipboard.writeText(m.content||"").then(()=>{
-    const btns=document.querySelectorAll(".msg-act");
-    // kurzes visuelles Feedback
-    const btn=[...btns].find(b=>b.onclick?.toString().includes(`copyText(${idx})`));
-    if(btn){const orig=btn.textContent;btn.textContent="✓";setTimeout(()=>btn.textContent=orig,1200);}
-  });
+  const txt=m.content||"";
+  const flash=()=>{
+    document.querySelectorAll(`.msg-act[data-copy="${idx}"]`).forEach(btn=>{
+      const orig=btn.textContent;btn.textContent="✓";setTimeout(()=>btn.textContent=orig,1200);
+    });
+  };
+  if(navigator.clipboard&&window.isSecureContext){
+    navigator.clipboard.writeText(txt).then(flash);
+  }else{
+    // Fallback für HTTP
+    const ta=document.createElement("textarea");ta.value=txt;
+    ta.style.cssText="position:fixed;opacity:0";document.body.appendChild(ta);
+    ta.select();document.execCommand("copy");document.body.removeChild(ta);flash();
+  }
 }
 function editUserMsg(idx){
   const m=chatHistory[idx];if(!m||m.role!=="user")return;
@@ -810,7 +818,7 @@ async function sendMessage(){
   if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
   // Original lokal speichern und anzeigen
   chatHistory.push({role:"user",content:text,time:new Date().toISOString()});
-  document.getElementById("chat-inner").innerHTML+=renderMsg({role:"user",content:text});
+  document.getElementById("chat-inner").innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
   renderPrivacyMemory();scrollToBottom();
   showTyping();
   // PII schwärzen bevor es den Browser verlässt
@@ -846,7 +854,7 @@ async function runAgent(text,redactionMap){
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
   addAiMessage(reinserted,undefined,isDraft?draftHint:undefined);
 }
-function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));saveCurrentChat();document.getElementById("chat-inner").innerHTML+=renderMsg(msg);renderPrivacyMemory();scrollToBottom()}
+function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));saveCurrentChat();document.getElementById("chat-inner").innerHTML+=renderMsg(msg,chatHistory.length-1);renderPrivacyMemory();scrollToBottom()}
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function handlePaste(e){
   e.preventDefault();
