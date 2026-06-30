@@ -59,7 +59,8 @@ body{
 .deadline-pill{background:var(--warn-soft);color:var(--warn);padding:3px 9px;border-radius:20px;font-weight:500}
 .app{flex:1;display:flex;min-height:0}
 .sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
-.dsgvo-sidebar{width:220px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;padding:14px 12px;gap:8px}
+.dsgvo-sidebar{width:200px;background:var(--surface);border-left:1px solid var(--border);display:none;flex-direction:column;flex-shrink:0;overflow-y:auto;padding:12px 10px;gap:6px}
+.dsgvo-sidebar.visible{display:flex}
 .dsgvo-sidebar-title{font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
 .dsgvo-sidebar-empty{font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;line-height:1.6}
 .dsgvo-sidebar .dsgvo-bubble{min-width:unset;width:100%;box-sizing:border-box}
@@ -775,9 +776,11 @@ function detectPrivacyItems(inp=""){
 function renderPrivacyMemory(inp=""){
   const note=document.getElementById("privacy-note");
   const list=document.getElementById("privacy-items");
+  const sidebar=document.getElementById("dsgvo-sidebar");
   // Gehaltene Werte im Zwischenspeicher → große Blasen
   const held=Object.entries(activeRedactionMap);
   if(held.length){
+    sidebar&&sidebar.classList.add("visible");
     note.textContent=`🔒 ${held.length} Wert${held.length>1?"e":""} gesichert — werden nach Antwort wieder eingefügt`;
     list.innerHTML=held.map(([ph,val])=>{
       const label=ph.replace(/^\[|\]$/g,"");
@@ -790,7 +793,11 @@ function renderPrivacyMemory(inp=""){
   }
   // Kein aktiver Zwischenspeicher → Erkennung im Eingabefeld zeigen
   const items=detectPrivacyItems(inp);
-  if(!items.length){note.textContent="Keine sensiblen Daten erkannt";list.innerHTML='<span class="privacy-pill empty">Normal: leer</span>';return}
+  if(!items.length){
+    sidebar&&sidebar.classList.remove("visible");
+    note.textContent="";list.innerHTML='<div class="dsgvo-sidebar-empty">Keine Daten erkannt</div>';return;
+  }
+  sidebar&&sidebar.classList.add("visible");
   const s=items.filter(i=>i.level==="secret").length;const f=items.filter(i=>i.level==="forbidden").length;const c=items.filter(i=>i.level==="confidential").length;const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
   const parts=[];if(s)parts.push(`${s} ⚫ niemals senden`);if(f)parts.push(`${f} 🔴 Art.9/10`);if(c)parts.push(`${c} 🟠 vertraulich`);if(h)parts.push(`${h} 🟡 kritisch`);if(n)parts.push(`${n} 🟢 sensibel`);
   note.textContent=parts.join(" · ")+" — beim Einfügen (Strg+V) gesichert";
