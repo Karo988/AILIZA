@@ -1175,7 +1175,6 @@ async function doRegister(){
   }catch{showLoginError("Server nicht erreichbar.");btn.disabled=false;btn.textContent="Konto erstellen & starten";}
 }
 async function giveConsent(){
-  if(!document.getElementById("l-consent").checked||!document.getElementById("l-age").checked){showLoginError("Bitte beide Einwilligungen bestätigen.");return}
   const user=document.getElementById("l-user").value.trim();
   const pass=document.getElementById("l-pass").value;
   if(!user||!pass){showLoginError("Nutzername und Passwort eingeben.");return}
