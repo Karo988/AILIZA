@@ -650,8 +650,8 @@ const PRIVACY_RULES=[
   {level:"normal",label:"E-Mail",placeholder:"[E-Mail]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
   // Telefon: mind. 7 Ziffern, kein reines Jahr-Format (z.B. 001/2024 ist kein Telefon)
   {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/\b(?:\+49[ .-]?|0)[1-9][0-9]{3,}[ ()\/.-]*[0-9]{2,}(?!\/20\d{2})\b/g},
-  // Firma: nur direkt vor der Rechtsform, kein Grußwort davor
-  {level:"normal",label:"Firma",placeholder:"[Firma]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß]*(?:\s+(?:best\s+of|[A-Za-zÄÖÜäöüß&.,-]+)){0,5}\s+(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|UG(?:\s*\(haftungsbeschränkt\))?|AG|KG|OHG|GbR|e\.V\.|SE)\b/g},
+  // Firma: jedes Wort vor der Rechtsform muss mit Großbuchstaben beginnen (verhindert Satzfragmente)
+  {level:"normal",label:"Firma",placeholder:"[Firma]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+(?:&|best\s+of|[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)){0,3}\s+(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|UG(?:\s*\(haftungsbeschränkt\))?|AG|KG|OHG|GbR|e\.V\.|SE)\b/g},
   // Adresse inkl. PLZ + Stadt
   {level:"normal",label:"Adresse",placeholder:"[Adresse]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer)\s+\d+[a-z]?/gi},
   {level:"normal",label:"PLZ+Stadt",placeholder:"[Ort]",pattern:/\b\d{5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s-]{2,30}/g},
@@ -705,7 +705,6 @@ function init(){
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
-  if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
 function showView(name,el){
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
