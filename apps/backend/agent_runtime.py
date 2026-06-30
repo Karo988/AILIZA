@@ -237,6 +237,23 @@ class AgentRuntime:
 
         plan = plan_tool_calls(self._redacted_task)
 
+        # Wenn kein Tool geplant, trotzdem prüfen ob der Executor verfügbar ist.
+        if not plan:
+            try:
+                self.tool_executor("_health_probe", {})
+            except HTTPException as _probe_exc:
+                if _is_missing_provider_error(_probe_exc):
+                    local_result = _build_local_response(run_id, task)
+                    self.update_run_record(run_id, status="local_only", result=local_result)
+                    self.audit_writer(
+                        "agent.degraded_missing_provider",
+                        {"run_id": run_id, "tool": "_health_probe", "mode": "local_only",
+                         "reason": "provider_not_configured"},
+                    )
+                    return local_result
+            except Exception:
+                pass  # Andere Fehler beim Probe ignorieren — kein Provider-Problem
+
         steps: list[dict[str, Any]] = []
         results: list[dict[str, Any]] = []
         for index, call in enumerate(plan, start=1):
@@ -440,6 +457,21 @@ class AgentRuntime:
             "run_started",
             {"run_id": run_id, "status": "running", "task": task, "planned_steps": len(plan)},
         )
+
+        if not plan:
+            try:
+                self.tool_executor("_health_probe", {})
+            except HTTPException as _probe_exc:
+                if _is_missing_provider_error(_probe_exc):
+                    local_result = _build_local_response(run_id, task)
+                    self.update_run_record(run_id, status="local_only", result=local_result)
+                    self.audit_writer("agent.degraded_missing_provider",
+                                      {"run_id": run_id, "tool": "_health_probe",
+                                       "mode": "local_only", "reason": "provider_not_configured"})
+                    yield stream_event("local_only", local_result)
+                    return
+            except Exception:
+                pass
 
         steps: list[dict[str, Any]] = []
         results: list[dict[str, Any]] = []

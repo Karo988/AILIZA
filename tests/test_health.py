@@ -25,11 +25,11 @@ def test_api_health_returns_200():
 
 
 def test_api_health_response_body():
-    """Antwort muss status=ok, service=ailiza, api=online enthalten."""
+    """Antwort muss status=ok, service=ailiza-backend, api=online enthalten."""
     resp = client.get("/api/health")
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["service"] == "ailiza"
+    assert data["service"] == "ailiza-backend"
     assert data["api"] == "online"
 
 

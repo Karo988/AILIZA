@@ -88,7 +88,9 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
       if (!data) return
 
       const status = data?.status
-      const content = data?.ai_response || data?.message || "Keine Antwort erhalten."
+      const content = status === "local_only"
+        ? (data?.message || "AILIZA läuft im lokalen Modus.")
+        : (data?.ai_response || data?.message || "Keine Antwort erhalten.")
       const isError = status === "failed" || status === "blocked"
 
       const assistantMsg = {
@@ -106,9 +108,15 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
       })
       onRunComplete?.()
     } catch (err) {
+      const status = err?.httpStatus
+      const userMsg =
+        status === 401 ? "Nicht authentifiziert — bitte neu anmelden." :
+        status === 403 ? "Keine Berechtigung für diese Aktion." :
+        status === 500 ? "Interner Serverfehler — bitte später erneut versuchen." :
+        `Fehler (HTTP ${status ?? "unbekannt"})`
       setMessages(prev => [...prev, {
         role: "error",
-        content: `Fehler (HTTP ${err?.httpStatus ?? "unbekannt"})`,
+        content: userMsg,
         id: Date.now(),
       }])
     } finally {

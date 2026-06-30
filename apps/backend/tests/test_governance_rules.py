@@ -97,14 +97,15 @@ class TestProviderProfiles:
         allowed, reason = check_provider_policy("groq", [DataClass.PUBLIC])
         assert allowed, reason
 
-    def test_groq_allows_personal_data(self):
-        """Nach Redaction muss Groq PERSONAL_DATA akzeptieren."""
+    def test_groq_blocks_personal_data_without_avv(self):
+        """Ohne unterzeichneten AVV muss Groq PERSONAL_DATA ablehnen (DSGVO Art. 28)."""
         allowed, reason = check_provider_policy("groq", [DataClass.PERSONAL_DATA])
-        assert allowed, reason
+        assert not allowed
+        assert "avv" in reason.lower() or "nicht erlaubt" in reason.lower() or "verboten" in reason.lower()
 
-    def test_groq_allows_hr(self):
+    def test_groq_blocks_hr_without_avv(self):
         allowed, reason = check_provider_policy("groq", [DataClass.HR])
-        assert allowed, reason
+        assert not allowed
 
     def test_groq_blocks_credentials(self):
         allowed, _ = check_provider_policy("groq", [DataClass.CREDENTIALS])
@@ -114,9 +115,10 @@ class TestProviderProfiles:
         allowed, _ = check_provider_policy("groq", [DataClass.SPECIAL_CATEGORY])
         assert not allowed
 
-    def test_anthropic_allows_personal_data(self):
+    def test_anthropic_blocks_personal_data_without_avv(self):
+        """Ohne AVV auch Anthropic blockt PERSONAL_DATA (DSGVO Art. 28)."""
         allowed, reason = check_provider_policy("anthropic", [DataClass.PERSONAL_DATA])
-        assert allowed, reason
+        assert not allowed
 
     def test_local_allows_all(self):
         for dc in DataClass:
@@ -139,9 +141,10 @@ class TestProviderProfiles:
         allowed, reason = check_provider_policy("openai", [DataClass.PUBLIC], use_case="text_generation")
         assert allowed, reason
 
-    def test_openai_allows_personal_data(self):
+    def test_openai_blocks_personal_data_without_avv(self):
+        """Ohne AVV blockt OpenAI ebenfalls PERSONAL_DATA (DSGVO Art. 28)."""
         allowed, reason = check_provider_policy("openai", [DataClass.PERSONAL_DATA])
-        assert allowed, reason
+        assert not allowed
 
     def test_openai_failover_priority_lower_than_groq(self):
         from apps.backend.providers.provider_profiles import get_profile
