@@ -851,6 +851,11 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
 _orchestrator = ProviderOrchestrator()
 
 
+def _is_redacted(text: str) -> bool:
+    """Checkt, ob Text bereits Platzhalter enthält — dann wurde Frontend-Schwärzung angewendet."""
+    import re
+    return bool(re.search(r'\[[^\]]+\]', text))
+
 def _governance_pre_check(
     task: str,
     tenant_id: str,
@@ -886,10 +891,13 @@ def _governance_pre_check(
     _provider_ok, _ = check_provider_policy("groq", data_classes)
     provider_profile_active = _provider_ok
 
+    # Wenn Frontend schon redaktiert hat (Platzhalter sichtbar), dann redaction_applied=True
+    already_redacted = _is_redacted(task)
+
     decision = check_data_target(
         data_classes=data_classes,
         target=DataTarget.EXTERNAL_LLM,
-        redaction_applied=False,
+        redaction_applied=already_redacted,
         approval_given=False,
         provider_profile_active=provider_profile_active,
     )
