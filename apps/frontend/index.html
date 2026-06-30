@@ -100,17 +100,37 @@ body{
 .msg.ai{align-items:flex-start}
 /* ── Basis-Blase ── */
 .bubble{padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.6;word-wrap:break-word;white-space:pre-wrap}
-/* ── Nutzer-Blase: rechts, klappt nach 3s ein ── */
+/* ── Nutzer-Blase: rechts, bleibt vollständig sichtbar ── */
 .bubble.user{
   background:var(--accent);color:#fff;border-bottom-right-radius:4px;
-  max-width:88%;cursor:pointer;
-  transition:max-width .35s ease,padding .25s ease,opacity .25s ease;
+  max-width:88%;
   animation:slideInRight .25s ease;
 }
-.bubble.user.collapsed{max-width:60px;padding:6px 12px;opacity:.7;overflow:hidden;white-space:nowrap;text-overflow:clip}
-.bubble.user.collapsed::after{content:"💬 …";font-size:12px}
-.bubble.user.collapsed .bubble-text{display:none}
 @keyframes slideInRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+/* ── PII-Daten: schieben sich nach rechts raus (Fun-Effekt) ── */
+.dsgvo-bubble{
+  display:inline-flex;align-items:center;gap:5px;
+  background:var(--surface-2);border:1px solid var(--border);
+  border-radius:20px;padding:3px 10px;font-size:11px;color:var(--text-soft);
+  transition:transform .6s cubic-bezier(.4,0,.2,1),max-width .5s ease,opacity .4s ease,padding .4s ease;
+  overflow:hidden;white-space:nowrap;max-width:300px;cursor:default;
+}
+.dsgvo-bubble.high{background:var(--warn-soft);border-color:#E8D5A0;color:var(--warn)}
+.dsgvo-bubble-label{font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+.dsgvo-bubble-value{color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.dsgvo-bubble.fly-out{transform:translateX(120px);opacity:0;max-width:36px;padding:3px 6px}
+.dsgvo-bubble.minimized{transform:none;opacity:.7;max-width:36px;padding:3px 6px;font-size:9px;color:transparent}
+.dsgvo-bubble.minimized::before{content:"🔒";font-size:12px;color:var(--accent);display:block}
+/* ── Login-Button Topbar ── */
+.topbar-login{background:var(--accent);color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin-left:8px}
+.topbar-login:hover{opacity:.88}
+.topbar-user{font-size:11px;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);padding:4px 10px;border-radius:20px;cursor:pointer}
+/* ── PII-Einverständnis-Banner ── */
+.pii-consent{background:#FFF9E6;border:1px solid #E8D9A0;border-radius:8px;padding:10px 14px;margin:0 0 8px;font-size:12px;color:#7A6200;display:none;align-items:flex-start;gap:10px}
+.pii-consent.show{display:flex}
+.pii-consent-text{flex:1;line-height:1.5}
+.pii-consent-btn{background:var(--accent);color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.pii-consent-deny{background:none;color:var(--text-muted);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px}
 /* ── AILIZA-Blase: links, öffnet sich wie ein Mund ── */
 .bubble.ai{
   background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px;
@@ -300,6 +320,7 @@ body{
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
+    <span id="topbar-auth-area"><button class="topbar-login" id="topbar-login-btn" onclick="showLoginOverlay()">Anmelden</button></span>
   </div>
 </div>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -355,8 +376,13 @@ body{
         </div>
       </div></div>
       <div class="input-wrap">
+        <div class="pii-consent" id="pii-consent">
+          <div class="pii-consent-text">🔒 <strong>Sensible Daten erkannt.</strong> Vor dem Senden werden Name, Adresse, Telefon usw. automatisch durch Platzhalter ersetzt. Die KI sieht keine echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span></div>
+          <button class="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
+          <button class="pii-consent-deny" onclick="denyPiiConsent()">Abbrechen</button>
+        </div>
         <div class="privacy-panel" id="privacy-panel">
-          <div class="privacy-head"><span class="privacy-title">DSGVO-Zwischenspeicher</span><span class="privacy-note" id="privacy-note">Keine sensiblen Daten erkannt</span></div>
+          <div class="privacy-head"><span class="privacy-title">DSGVO-Schutz aktiv</span><span class="privacy-note" id="privacy-note">Keine sensiblen Daten erkannt</span></div>
           <div class="privacy-items" id="privacy-items"><span class="privacy-pill empty">Normal: leer</span></div>
         </div>
         <div class="input-box">
@@ -847,21 +873,24 @@ function renderChat(){
   inner.innerHTML=chatHistory.slice(-50).map((m,i)=>renderMsg(m,offset+i)).join("");
   // Alle AI-Blasen sofort öffnen (History, kein Streaming)
   inner.querySelectorAll(".bubble.ai").forEach(b=>b.classList.add("open"));
-  // Nutzer-Blasen in History sofort einklappen
-  inner.querySelectorAll(".bubble.user").forEach(b=>b.classList.add("collapsed"));
   scrollToBottom();
 }
 function renderMsg(m,idx){
   const text=(m.content||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
   const i=idx!==undefined?idx:chatHistory.indexOf(m);
-  if(m.role==="user")return`<div class="msg user"><div class="bubble user" onclick="this.classList.toggle('collapsed')" title="Klicken zum Ein-/Ausklappen"><span class="bubble-text">${text}</span></div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
+  if(m.role==="user")return`<div class="msg user"><div class="bubble user"><span class="bubble-text">${text}</span></div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
   const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
   const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
   return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
-function animateUserBubble(el){
-  // Nach 3s einklappen, Klick klappt aus
-  setTimeout(()=>{if(el)el.classList.add("collapsed")},3000);
+function flyOutPiiBubbles(){
+  // PII-Blasen aus dem Panel nach rechts rausflöiegen lassen → bleiben als 🔒 Mini-Blase
+  document.querySelectorAll("#privacy-items .dsgvo-bubble").forEach((b,i)=>{
+    setTimeout(()=>{
+      b.classList.add("fly-out");
+      setTimeout(()=>{b.classList.remove("fly-out");b.classList.add("minimized");},600);
+    },i*80);
+  });
 }
 function streamAiBubble(el,text){
   // Blase aufgehen lassen
@@ -913,28 +942,47 @@ function loadHistory(){
 function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
 function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
 function hideTyping(){document.getElementById("typing")?.remove()}
+let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Vor dem Absenden nochmals PII prüfen (wegen manuell geänderter Daten)
+  // Vor dem Absenden nochmals PII prüfen
   const {redacted,map}=redactText(text);
-  // Blase zeigt geschwärzten Text (Platzhalter) — Nutzer sieht dass Daten raus sind
-  // LLM bekommt ebenfalls geschwärzten Text
-  // Antwort: Platzhalter werden durch Originalwerte ersetzt
+  const hasPii=Object.keys(map).length>0;
+  if(hasPii&&!localStorage.getItem("ailiza_pii_consent")){
+    // Einverständnis einholen — mit Zeitstempel und Ort
+    _pendingSendText=redacted;_pendingMap=map;
+    const ts=new Date().toLocaleString("de-DE");
+    document.getElementById("pii-consent-ts").textContent=`${ts}`;
+    if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{document.getElementById("pii-consent-ts").textContent=`${ts} · ${p.coords.latitude.toFixed(3)}°N ${p.coords.longitude.toFixed(3)}°E`;},()=>{});
+    document.getElementById("pii-consent").classList.add("show");
+    return;
+  }
   await _doSend(redacted,map);
 }
-async function _doSend(displayText,sendText,map){
+async function approvePiiConsent(){
+  localStorage.setItem("ailiza_pii_consent","1");
+  localStorage.setItem("ailiza_pii_consent_ts",new Date().toISOString());
+  document.getElementById("pii-consent").classList.remove("show");
+  flyOutPiiBubbles();
+  await _doSend(_pendingSendText,_pendingMap);
+  _pendingSendText="";_pendingMap={};
+}
+function denyPiiConsent(){
+  document.getElementById("pii-consent").classList.remove("show");
+  _pendingSendText="";_pendingMap={};
+}
+async function _doSend(sendText,map){
   const inp=document.getElementById("chat-input");
   inp.value="";autoResize(inp);
   document.getElementById("send-btn").disabled=true;
   if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
-  chatHistory.push({role:"user",content:displayText,time:new Date().toISOString()});
+  // Blase zeigt den geschwärzten Text — Nutzer sieht Platzhalter statt echter Daten
+  chatHistory.push({role:"user",content:sendText,time:new Date().toISOString()});
+  Object.assign(activeRedactionMap,map);
   const inner=document.getElementById("chat-inner");
   inner.innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
-  // Nutzer-Blase nach 3s einklappen
-  const userBubbles=inner.querySelectorAll(".bubble.user");
-  const lastUser=userBubbles[userBubbles.length-1];
-  if(lastUser)animateUserBubble(lastUser);
+  flyOutPiiBubbles();
   renderPrivacyMemory();scrollToBottom();
   showTyping();
   try{
@@ -1100,19 +1148,31 @@ async function giveConsent(){
     const data=await r.json();
     if(!r.ok){showLoginError(data.detail||"Anmeldung fehlgeschlagen.");btn.disabled=false;btn.textContent="Zustimmen & anmelden";return}
     localStorage.setItem("ailiza_jwt",data.access_token);
+    localStorage.setItem("ailiza_user",user);
     localStorage.setItem("ailiza_consent","1");
     localStorage.setItem("ailiza_consent_ts",new Date().toISOString());
     document.getElementById("login-overlay").classList.add("hidden");
-    init();
+    updateTopbarAuth();init();
   }catch{showLoginError("Server nicht erreichbar.");btn.disabled=false;btn.textContent="Zustimmen & anmelden";}
+}
+function showLoginOverlay(){document.getElementById("login-overlay").classList.remove("hidden")}
+function updateTopbarAuth(){
+  const area=document.getElementById("topbar-auth-area");
+  const user=localStorage.getItem("ailiza_jwt")?localStorage.getItem("ailiza_user")||"Nutzer":null;
+  if(user)area.innerHTML=`<span class="topbar-user" onclick="logout()" title="Abmelden">👤 ${user}</span>`;
+  else area.innerHTML=`<button class="topbar-login" onclick="showLoginOverlay()">Anmelden</button>`;
 }
 function logout(){
   localStorage.removeItem("ailiza_consent");
   localStorage.removeItem("ailiza_jwt");
+  localStorage.removeItem("ailiza_user");
+  localStorage.removeItem("ailiza_pii_consent");
+  updateTopbarAuth();
   document.getElementById("login-overlay").classList.remove("hidden");
 }
 // Gespeicherter Token vorhanden? → direkt zur App
-if(localStorage.getItem("ailiza_consent")==="1"&&localStorage.getItem("ailiza_jwt")){document.getElementById("login-overlay").classList.add("hidden");init();}
+if(localStorage.getItem("ailiza_consent")==="1"&&localStorage.getItem("ailiza_jwt")){document.getElementById("login-overlay").classList.add("hidden");updateTopbarAuth();init();}
+else{updateTopbarAuth();}
 // else: Consent-Screen bleibt sichtbar
 </script>
 </body>
