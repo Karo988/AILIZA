@@ -625,10 +625,10 @@ const PRIVACY_RULES=[
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:von|an|durch|für|Absender|Empfänger)[:\s]\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
   // Namen mit Titel
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:Herr(?:n)?|Frau|Dr\.|Prof\.)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
-  // Namen in Anrede: "Lieber Steffen", "Hallo Maria", "Guten Morgen Klaus"
-  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:Lieber?|Hallo|Guten\s+(?:Morgen|Tag|Abend))\s)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+/g},
-  // Vorname Nachname am Zeilenanfang — Grußformeln und häufige Phrasen ausgeschlossen
-  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/^(?!(?:Viele\s+Grüße|Mit\s+freundlichen|Beste\s+Grüße|Herzliche\s+Grüße|Mit\s+besten|Liebe\s+Grüße|Schöne\s+Grüße|Guten\s+Morgen|Guten\s+Tag|Guten\s+Abend|Vielen\s+Dank|Lieber?\s+\w|Betreff|Datum|Summe|Zwischensumme|Verkäuferschutz|Versand(?:details)?|Copyright)\b)[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+$/gm},
+  // Namen in Anrede: "Lieber Steffen", "Hallo Maria" — kein "Liebe Grüße", kein "Hallo zusammen"
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:Lieber?|Hallo)\s)(?!(?:Grüße|zusammen|alle|Team|Welt)\b)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]{2,}/g},
+  // Vorname Nachname am Zeilenanfang — braucht ZWEI Wörter, Grußformeln ausgeschlossen
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/^(?!(?:Viele\s+Grüße|Mit\s+freundlichen|Beste\s+Grüße|Herzliche\s+Grüße|Mit\s+besten|Liebe\s+Grüße|Schöne\s+Grüße|Guten\s+Morgen|Guten\s+Tag|Guten\s+Abend|Vielen\s+Dank|Lieber?\s+|Betreff|Datum|Summe|Zwischensumme|Verkäuferschutz|Versand(?:details)?|Copyright)\b)[A-ZÄÖÜ][a-zäöüß]{1,}\s+[A-ZÄÖÜ][a-zäöüß]{1,}$/gm},
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
   {level:"normal",label:"Referenz",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
   {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
