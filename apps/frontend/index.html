@@ -646,8 +646,8 @@ function redactText(text){
     rule.pattern.lastIndex=0;
     out=out.replace(rule.pattern,(match)=>{
       const normalized=match.trim();
-      // Stoplist: bekannte Nicht-PII-Wörter überspringen
-      if(PII_STOPLIST.has(normalized))return match;
+      // Stoplist: wenn irgendein Wort im Match auf der Stoplist steht → überspringen
+      if(normalized.split(/\s+/).some(w=>PII_STOPLIST.has(w)))return match;
       // Gleicher Wert → gleicher Platzhalter
       if(valueToPlaceholder[normalized])return valueToPlaceholder[normalized];
       const base=rule.placeholder;
@@ -803,10 +803,13 @@ function copyText(idx){
 }
 function editUserMsg(idx){
   const m=chatHistory[idx];if(!m||m.role!=="user")return;
+  // Blasen leeren bevor Text zurückgesetzt wird
+  activeRedactionMap={};
   const inp=document.getElementById("chat-input");
   inp.value=m.content||"";
   autoResize(inp);inp.focus();
   inp.selectionStart=inp.selectionEnd=inp.value.length;
+  renderPrivacyMemory(inp.value);
 }
 function loadHistory(){
   if(!chatHistory.length)return;
@@ -833,7 +836,7 @@ async function sendMessage(){
   const hasRedactions=Object.keys(map).length>0;
   try{
     await runAgent(redacted,hasRedactions?map:null);
-  }catch(e){hideTyping();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
+  }catch(e){hideTyping();activeRedactionMap={};renderPrivacyMemory();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
 }
@@ -842,7 +845,7 @@ async function runAgent(text,redactionMap){
   const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:redactText(m.content).redacted}));
   const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
   hideTyping();
-  if(!r.ok){addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
+  if(!r.ok){activeRedactionMap={};renderPrivacyMemory();addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
   const data=await r.json();
   let answer=data.ai_response||"";
   if(data.message&&data.message!=="Agent run completed")answer=data.message;
