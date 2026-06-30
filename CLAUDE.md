@@ -49,6 +49,20 @@ pytest apps/backend/tests/    # Bestands-Tests
 4. Redaction (`redact`)
 5. Provider-Orchestrator (`ProviderOrchestrator.generate`)
 
+## Zugangs- und Tier-Konzept (Roadmap)
+Jeder kann AILIZA kostenlos ausprobieren. Ab ~20 Anfragen oder bei DSGVO-relevanten Daten
+ist eine kostenlose Registrierung erforderlich (Art. 6 DSGVO — Einwilligung mit Identifikation).
+
+| Tier    | Login | Anfragen  | Modelle                        |
+|---------|-------|-----------|--------------------------------|
+| Anonym  | Nein  | ~20/Tag   | Einfach (Groq/Llama)           |
+| Free    | Ja    | Mehr      | Einfache Modelle               |
+| Pro     | Ja    | Viel mehr | + Anthropic / GPT              |
+| Enterprise | Ja | Unbegrenzt | Alle inkl. DeepSeek, Qwen   |
+
+Admin-Endpoints (/admin/*) bleiben immer passwortgeschuetzt (nur Betreiberin).
+Chat-Endpoints sind aktuell offen (kein Token noetig) — Tier-Logik kommt spaeter.
+
 ## Mandanten
 `DEFAULT_TENANT_ID = AILIZA_DEFAULT_TENANT_ID` (Default `default`). Alle Logs/Runs/Facts
 sind tenant-gefiltert.

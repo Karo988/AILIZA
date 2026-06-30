@@ -1092,7 +1092,7 @@ def _ask_llm_directly(
 def run_agent(
     request: Request,
     payload: AgentRunRequest,
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     tenant = _tenant_id(token)
 
@@ -1339,7 +1339,7 @@ def stream_agent_run(
     wait_for_approval: bool = Query(default=False),
     approval_poll_interval: float = Query(default=1.0, ge=0.1, le=30.0),
     approval_timeout: float = Query(default=300.0, ge=1.0, le=3600.0),
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
     task = task.strip()
     if not task:
@@ -1361,7 +1361,7 @@ def stream_agent_run_post(
     wait_for_approval: bool = Query(default=False),
     approval_poll_interval: float = Query(default=1.0, ge=0.1, le=30.0),
     approval_timeout: float = Query(default=300.0, ge=1.0, le=3600.0),
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
     runtime = AgentRuntime()
     return sse_response(
@@ -1377,7 +1377,7 @@ def stream_agent_run_post(
 @app.post("/agent/approvals/{approval_id}/continue")
 def continue_agent_after_approval(
     approval_id: int,
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     runtime = AgentRuntime()
     return runtime.continue_after_approval(approval_id)
@@ -1386,7 +1386,7 @@ def continue_agent_after_approval(
 @app.get("/agent/approvals/{approval_id}/continue/stream")
 def stream_agent_after_approval(
     approval_id: int,
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
     runtime = AgentRuntime()
     return sse_response(runtime.stream_after_approval(approval_id))
@@ -1395,7 +1395,7 @@ def stream_agent_after_approval(
 @app.post("/agent/approvals/{approval_id}/continue/stream")
 def stream_agent_after_approval_post(
     approval_id: int,
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
     runtime = AgentRuntime()
     return sse_response(runtime.stream_after_approval(approval_id))
@@ -2089,7 +2089,7 @@ class SkillProposeRequest(BaseModel):
 def skill_propose(
     request: Request,
     payload: SkillProposeRequest,
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     """
     Schlaegt einen neuen Skill vor. Capability-Check + Sanitierung laufen automatisch.
