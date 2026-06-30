@@ -11,14 +11,20 @@ function App() {
   const [auditLogs, setAuditLogs] = useState([])
   const [chatSessions, setChatSessions] = useState([{ id: Date.now(), title: "Neuer Chat", messages: [] }])
   const [activeChatId, setActiveChatId] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 900)
 
   const activeChat = chatSessions.find(s => s.id === activeChatId) || chatSessions[0]
+
+  function closeSidebar() {
+    if (window.innerWidth <= 900) setSidebarOpen(false)
+  }
 
   function newChat() {
     const id = Date.now()
     setChatSessions(prev => [{ id, title: "Neuer Chat", messages: [] }, ...prev])
     setActiveChatId(id)
     setActivePage("Dashboard")
+    closeSidebar()
   }
 
   function updateChat(id, messages) {
@@ -199,8 +205,10 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell${sidebarOpen ? "" : " sidebar-collapsed"}`}>
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`sidebar${sidebarOpen ? " sidebar--open" : " sidebar--closed"}`}>
+        <button className="sidebar-toggle-close" onClick={() => setSidebarOpen(false)} title="Sidebar schließen">✕</button>
         <div className="brand">
           <div className="brand-mark">AI</div>
           <div>
@@ -218,7 +226,7 @@ function App() {
               <button
                 key={s.id}
                 className={`chat-session-item${s.id === activeChat.id && activePage === "Dashboard" ? " active" : ""}`}
-                onClick={() => { setActiveChatId(s.id); setActivePage("Dashboard") }}
+                onClick={() => { setActiveChatId(s.id); setActivePage("Dashboard"); closeSidebar() }}
                 title={s.title}
               >
                 <span className="chat-session-icon">💬</span>
@@ -233,7 +241,7 @@ function App() {
             <button
               key={page}
               className={activePage === page ? "nav-item active" : "nav-item"}
-              onClick={() => setActivePage(page)}
+              onClick={() => { setActivePage(page); closeSidebar() }}
             >
               {page}
             </button>
@@ -244,7 +252,12 @@ function App() {
           <button onClick={logout} className="logout-btn">Abmelden</button>
         </div>
       </aside>
-      <main className="main-content">{renderPage()}</main>
+      <main className="main-content">
+        {!sidebarOpen && (
+          <button className="sidebar-toggle-open" onClick={() => setSidebarOpen(true)} title="Menü öffnen">☰</button>
+        )}
+        {renderPage()}
+      </main>
     </div>
   )
 }
