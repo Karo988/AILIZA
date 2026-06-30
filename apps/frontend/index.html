@@ -133,9 +133,20 @@ body{
 .typing span:nth-child(3){animation-delay:.3s}
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
 .input-wrap{padding:14px 20px 18px;background:var(--bg);flex-shrink:0}
-/* Kleiner PII-Hinweis unter dem Eingabefeld */
-.pii-hint{max-width:720px;margin:0 auto 6px;font-size:11px;color:var(--text-muted);display:flex;flex-wrap:wrap;gap:5px;min-height:0}
-.pii-tag{background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:2px 8px;color:var(--text-soft)}
+.privacy-panel{max-width:720px;margin:0 auto 8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:11px}
+.privacy-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.privacy-title{font-weight:700;color:var(--text);font-size:12px}
+.privacy-note{color:var(--text-muted);font-size:11px}
+.privacy-items{display:flex;flex-wrap:wrap;gap:8px}
+.privacy-pill{border:1px solid var(--border);border-radius:999px;padding:3px 9px;line-height:1.4;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.privacy-pill.empty{background:#E8F0EA;border-color:#B6D2BD;color:#2D5F3F}
+/* Gehaltene Datenblasen — groß und sichtbar */
+.dsgvo-bubble{background:#E8F0EA;border:2px solid #2D5F3F;border-radius:12px;padding:8px 14px;display:flex;flex-direction:column;gap:2px;animation:bubbleIn .25s ease;min-width:100px}
+.dsgvo-bubble.high{background:#FCE8E8;border-color:#D23B3B}
+.dsgvo-bubble-label{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.dsgvo-bubble-value{font-size:13px;font-weight:600;color:#1A3D28;word-break:break-all}
+.dsgvo-bubble.high .dsgvo-bubble-value{color:#8B2424}
+@keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
 .input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
 .input-box:focus-within{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(45,95,63,.06)}
 .input-row{display:flex;align-items:flex-end;gap:8px}
@@ -236,8 +247,17 @@ body{
 .login-error{font-size:12px;color:var(--err);background:#FCE8E8;border:1px solid #D23B3B;border-radius:6px;padding:7px 10px;margin-bottom:12px;display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 .login-spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px}
-.pii-hint{max-width:720px;margin:0 auto 4px;font-size:11px;color:var(--text-muted);display:flex;flex-wrap:wrap;gap:4px;min-height:0}
-.pii-tag{background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:2px 8px;color:var(--text-soft)}
+/* ── Sende-Bestätigung Modal ── */
+.confirm-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;display:flex;align-items:flex-end;justify-content:center;padding:0 0 20px}
+.confirm-modal.hidden{display:none}
+.confirm-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;width:100%;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,.12)}
+.confirm-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px}
+.confirm-items{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.confirm-pill{font-size:11px;padding:3px 10px;border-radius:20px;background:var(--warn-soft);color:var(--warn);border:1px solid #E8D5A0;font-weight:500}
+.confirm-btns{display:flex;gap:8px}
+.confirm-btns button{flex:1;padding:9px;font-size:13px;font-weight:600;border-radius:8px;cursor:pointer;border:none}
+.btn-confirm-send{background:var(--accent);color:#fff}
+.btn-confirm-all{background:var(--surface-2);color:var(--text);border:1px solid var(--border)!important}
 .btn-confirm-cancel{background:transparent;color:var(--text-muted);border:1px solid var(--border)!important}
 /* ── Hamburger Button ── */
 .mob-menu-btn{display:none;background:none;border:none;font-size:20px;cursor:pointer;padding:4px 8px;color:var(--text);line-height:1;margin-right:4px;border-radius:6px}
@@ -271,6 +291,8 @@ body{
   .welcome-chips{gap:5px}
   .chip{font-size:11px;padding:6px 10px}
   .input-wrap{padding:10px 12px 14px}
+  .privacy-panel{display:none}
+  .privacy-panel.expanded{display:block}
   .privacy-toggle-mob{display:flex!important}
   .input-box{border-radius:10px}
   .input-field{font-size:14px}
@@ -341,14 +363,18 @@ body{
             <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
             <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
             <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
+            <div class="chip" onclick="quickPrompt('Ist das DSGVO-konform? ')">🔒 DSGVO-Check</div>
           </div>
         </div>
       </div></div>
       <div class="input-wrap">
-        <div class="pii-hint" id="pii-hint"></div>
+        <div class="privacy-panel" id="privacy-panel">
+          <div class="privacy-head"><span class="privacy-title">DSGVO-Zwischenspeicher</span><span class="privacy-note" id="privacy-note">Keine sensiblen Daten erkannt</span></div>
+          <div class="privacy-items" id="privacy-items"><span class="privacy-pill empty">Normal: leer</span></div>
+        </div>
         <div class="input-box">
           <div class="input-row">
-            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);showPiiHint(this.value)" onpaste="handlePaste(event)"></textarea>
+            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)" onpaste="handlePaste(event)"></textarea>
             <button class="input-send" id="send-btn" onclick="sendMessage()">↑</button>
           </div>
           <div class="input-toolbar">
@@ -655,6 +681,7 @@ const SKILLS=[
 ];
 let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
 let currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;
+let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
 let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
 let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
@@ -717,7 +744,7 @@ function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
   document.getElementById("m-days").textContent=days;
-  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();showPiiHint();checkStatus();
+  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
@@ -750,11 +777,26 @@ function detectPrivacyItems(inp=""){
   for(const r of PRIVACY_RULES){r.pattern.lastIndex=0;let m;while((m=r.pattern.exec(src))!==null){const v=m[0].trim().slice(0,90);const k=r.level+":"+r.label+":"+v.toLowerCase();if(!seen.has(k)&&v.length>1){seen.add(k);items.push({level:r.level,label:r.label,value:v})}if(items.length>=12)return items;if(m.index===r.pattern.lastIndex)r.pattern.lastIndex++}}
   return items;
 }
-function showPiiHint(inp=""){
-  const hint=document.getElementById("pii-hint");
-  if(!hint)return;
+function renderPrivacyMemory(inp=""){
+  const note=document.getElementById("privacy-note");
+  const list=document.getElementById("privacy-items");
+  // Gehaltene Werte im Zwischenspeicher → große Blasen
+  const held=Object.entries(activeRedactionMap);
+  if(held.length){
+    note.textContent=`🔒 ${held.length} Wert${held.length>1?"e":""} gesichert — werden nach Antwort wieder eingefügt`;
+    list.innerHTML=held.map(([ph,val])=>{
+      const label=ph.replace(/^\[|\]$/g,"");
+      const isHigh=["IBAN","Kartennummer","Gesundheitsdaten"].includes(label);
+      return`<div class="dsgvo-bubble${isHigh?" high":""}"><span class="dsgvo-bubble-label">${escapeHtml(label)}</span><span class="dsgvo-bubble-value">${escapeHtml(val)}</span></div>`;
+    }).join("");
+    return;
+  }
+  // Kein aktiver Zwischenspeicher → Erkennung im Eingabefeld zeigen
   const items=detectPrivacyItems(inp);
-  hint.innerHTML=items.map(i=>`<span class="pii-tag">${escapeHtml(i.label)}</span>`).join("");
+  if(!items.length){note.textContent="Keine sensiblen Daten erkannt";list.innerHTML='<span class="privacy-pill empty">Normal: leer</span>';return}
+  const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
+  note.textContent=`${h} hochsensibel, ${n} normal — beim Einfügen (Strg+V) werden sie gesichert`;
+  list.innerHTML=items.map(i=>`<div class="dsgvo-bubble${i.level==="high"?" high":""}"><span class="dsgvo-bubble-label">${escapeHtml(i.label)}</span><span class="dsgvo-bubble-value">${escapeHtml(i.value)}</span></div>`).join("");
 }
 function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
 function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
@@ -779,7 +821,7 @@ function loadChat(id){
   localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory));
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   document.getElementById("view-chat").classList.add("active");
-  renderChat();showPiiHint();renderRecent();
+  renderChat();renderPrivacyMemory();renderRecent();
 }
 function newChat(){
   saveCurrentChat();
@@ -788,7 +830,7 @@ function newChat(){
   chatHistory=[];context=[];
   localStorage.setItem("ailiza_chat","[]");
   document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt(\'Schreibe eine E-Mail: \')">📧 E-Mail</div><div class="chip" onclick="quickPrompt(\'Übersetze: \')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt(\'Fasse zusammen: \')">📝 Zusammenfassen</div></div></div>';
-  showPiiHint();
+  renderPrivacyMemory();
   renderRecent();
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   document.getElementById("view-chat").classList.add("active");
@@ -797,7 +839,7 @@ function newChat(){
   document.getElementById("chat-input").value="";
   document.getElementById("chat-input").focus();
 }
-function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");if(currentChatId){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));renderRecent()}renderChat();showPiiHint()}
+function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");if(currentChatId){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));renderRecent()}renderChat();renderPrivacyMemory()}
 function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n")],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ailiza-chat-"+Date.now()+".txt";a.click()}
 function saveCurrentChat(){
   if(!chatHistory.length||!currentChatId)return;
@@ -865,11 +907,13 @@ function copyText(idx){
 }
 function editUserMsg(idx){
   const m=chatHistory[idx];if(!m||m.role!=="user")return;
+  // Blasen leeren bevor Text zurückgesetzt wird
+  activeRedactionMap={};
   const inp=document.getElementById("chat-input");
   inp.value=m.content||"";
   autoResize(inp);inp.focus();
   inp.selectionStart=inp.selectionEnd=inp.value.length;
-  showPiiHint(inp.value);
+  renderPrivacyMemory(inp.value);
 }
 function loadHistory(){
   if(!chatHistory.length)return;
@@ -880,40 +924,78 @@ function loadHistory(){
 function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
 function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
 function hideTyping(){document.getElementById("typing")?.remove()}
+let _pendingText="";
+let _pendingRedacted="";
+let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Beim Absenden nochmals PII prüfen und im Hint anzeigen (keine Schwärzung)
-  showPiiHint(text);
+  // PII prüfen
+  const {redacted,map}=redactText(text);
+  const hasRedactions=Object.keys(map).length>0;
+  if(hasRedactions){
+    // Bestätigung einholen
+    _pendingText=text;
+    _pendingRedacted=redacted;
+    _pendingMap=map;
+    const items=document.getElementById("confirm-items");
+    items.innerHTML=Object.entries(map).map(([ph,val])=>`<span class="confirm-pill">${ph.replace(/[\[\]]/g,"")} erkannt</span>`).join("");
+    document.getElementById("confirm-modal").classList.remove("hidden");
+    return;
+  }
+  await _doSend(text,text,{});
+}
+async function confirmSend(choice){
+  document.getElementById("confirm-modal").classList.add("hidden");
+  if(choice==="cancel"){_pendingText="";_pendingRedacted="";_pendingMap={};return;}
+  const textToSend=choice==="redacted"?_pendingRedacted:_pendingText;
+  const mapToUse=choice==="redacted"?_pendingMap:{};
+  await _doSend(_pendingText,textToSend,mapToUse);
+  _pendingText="";_pendingRedacted="";_pendingMap={};
+}
+async function _doSend(displayText,sendText,map){
+  const inp=document.getElementById("chat-input");
   inp.value="";autoResize(inp);
   document.getElementById("send-btn").disabled=true;
   if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
-  chatHistory.push({role:"user",content:text,time:new Date().toISOString()});
+  chatHistory.push({role:"user",content:displayText,time:new Date().toISOString()});
   const inner=document.getElementById("chat-inner");
   inner.innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
+  // Nutzer-Blase nach 3s einklappen
   const userBubbles=inner.querySelectorAll(".bubble.user");
   const lastUser=userBubbles[userBubbles.length-1];
   if(lastUser)animateUserBubble(lastUser);
-  scrollToBottom();showTyping();
+  renderPrivacyMemory();scrollToBottom();
+  showTyping();
   try{
-    await runAgent(text);
-  }catch(e){hideTyping();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
+    await runAgent(sendText,Object.keys(map).length>0?map:null);
+  }catch(e){hideTyping();activeRedactionMap={};renderPrivacyMemory();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
 }
-async function runAgent(text){
-  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+async function runAgent(text,redactionMap){
+  // History ebenfalls schwärzen
+  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:redactText(m.content).redacted}));
   const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
   hideTyping();
-  if(!r.ok){addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
+  if(!r.ok){activeRedactionMap={};renderPrivacyMemory();addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
   const data=await r.json();
   let answer=data.ai_response||"";
   if(data.message&&data.message!=="Agent run completed")answer=data.message;
   if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
   if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
+  // Platzhalter in der Antwort wieder durch Originalwerte ersetzen
+  let reinserted=answer.trim();
+  if(Object.keys(activeRedactionMap).length>0){
+    for(const [ph,val] of Object.entries(activeRedactionMap)){
+      reinserted=reinserted.split(ph).join(val);
+    }
+    // Blasen leeren nach Reinsertion
+    activeRedactionMap={};
+  }
   const isDraft=data.status==="draft"||data.draft===true;
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
-  addAiMessage(answer.trim(),undefined,isDraft?draftHint:undefined);
+  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined);
 }
 function addAiMessage(text,warn,draftHint){
   const msg={role:"ai",content:text,time:new Date().toISOString()};
@@ -927,17 +1009,20 @@ function addAiMessage(text,warn,draftHint){
   const bubbles=inner.querySelectorAll(".bubble.ai");
   const last=bubbles[bubbles.length-1];
   if(last){streamAiBubble(last,text);}
-  showPiiHint();scrollToBottom();
+  renderPrivacyMemory();scrollToBottom();
 }
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function handlePaste(e){
   e.preventDefault();
   const pasted=e.clipboardData.getData("text");
+  const {redacted,map}=redactText(pasted);
+  // Map mergen — mehrere Einfügungen sammeln
+  Object.assign(activeRedactionMap,map);
   const el=e.target;
   const start=el.selectionStart,end=el.selectionEnd;
-  el.value=el.value.slice(0,start)+pasted+el.value.slice(end);
-  el.selectionStart=el.selectionEnd=start+pasted.length;
-  autoResize(el);showPiiHint(el.value);
+  el.value=el.value.slice(0,start)+redacted+el.value.slice(end);
+  el.selectionStart=el.selectionEnd=start+redacted.length;
+  autoResize(el);renderPrivacyMemory();
 }
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
@@ -1046,5 +1131,17 @@ function logout(){
 if(localStorage.getItem("ailiza_consent")==="1"){document.getElementById("login-overlay").classList.add("hidden");init();}
 // else: Consent-Screen bleibt sichtbar
 </script>
+<!-- Bestätigungs-Modal vor dem Senden -->
+<div class="confirm-modal hidden" id="confirm-modal">
+  <div class="confirm-box">
+    <div class="confirm-title">⚠ AILIZA hat sensible Daten erkannt — was möchten Sie senden?</div>
+    <div class="confirm-items" id="confirm-items"></div>
+    <div class="confirm-btns">
+      <button class="btn-confirm-send" onclick="confirmSend('redacted')">Geschwärzt senden</button>
+      <button class="btn-confirm-all" onclick="confirmSend('all')">Alle Daten senden</button>
+      <button class="btn-confirm-cancel" onclick="confirmSend('cancel')">Abbrechen</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
