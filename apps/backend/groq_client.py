@@ -10,7 +10,10 @@ import urllib.error
 from dataclasses import dataclass
 from typing import Optional
 
-from compliance_context import ComplianceContextManager
+try:
+    from compliance_context import ComplianceContextManager
+except ImportError:
+    from apps.backend.compliance_context import ComplianceContextManager
 
 
 @dataclass
