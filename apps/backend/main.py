@@ -1697,6 +1697,35 @@ def admin_totp_delete(
     return {"status": "totp_reset", "rows_deleted": deleted}
 
 
+@app.post("/auth/self-register", status_code=201)
+@_limiter.limit("5/minute")
+def self_register(request: Request, payload: RegisterRequest) -> dict[str, Any]:
+    """Öffentliche Selbst-Registrierung — erstellt immer nur Rolle 'user'."""
+    if os.getenv("AILIZA_SELF_REGISTER", "true").lower() == "false":
+        raise HTTPException(status_code=403, detail="Registrierung deaktiviert.")
+    user_create = UserCreate(
+        user_id=payload.user_id,
+        tenant_id=payload.tenant_id,
+        role="user",
+        plain_password=payload.password,
+    )
+    user_in_db = UserInDB.from_create(user_create)
+    try:
+        entry = db_create_user(
+            user_id=user_in_db.user_id,
+            tenant_id=user_in_db.tenant_id,
+            role=user_in_db.role,
+            hashed_password=user_in_db.hashed_password,
+        )
+    except Exception:
+        raise HTTPException(status_code=409, detail="Nutzername bereits vergeben.")
+    write_audit_entry(action="auth.self_register",
+                      metadata={"user_id": payload.user_id},
+                      tenant_id=payload.tenant_id)
+    token = create_token(entry["user_id"], entry["tenant_id"], "user")
+    return {"status": "created", "user_id": entry["user_id"], "access_token": token, "token_type": "bearer"}
+
+
 @app.post("/auth/logout")
 def logout() -> JSONResponse:
     """Loescht den Session-Cookie. Token-Revocation liegt am Client (Bearer) oder Cookie-Loeschung."""
