@@ -890,9 +890,12 @@ class AgentRuntime:
 # Schreibaufgaben → kein Tool, direkter LLM-Call
 _WRITING_INTENT_PATTERN = re.compile(
     r"\b(?:schreib(?:e|en)?|formulier(?:e|en)?|verfass(?:e|en)?"
-    r"|beantworte?|antworte?\s+auf"
+    r"|beantworte?|antworte?\s+(?:auf|mail|e[-\s]?mail)?"
     r"|übersetze?|übersetz(?:e|en)?"
-    r"|erstell(?:e|en)?\s+(?:eine?[rn]?\s+)?(?:e[-\s]?mail|nachricht|brief|entwurf|bericht|text|zusammenfassung))\b",
+    r"|erstell(?:e|en)?\s+(?:eine?[rn]?\s+)?(?:e[-\s]?mail|nachricht|brief|entwurf|bericht|text|zusammenfassung|antwort)"
+    r"|(?:antwort|dankes?(?:mail|schreiben)?|bestätig(?:ung)?s?(?:mail)?)\s+(?:schreiben|erstellen|formulieren|auf|für)?"
+    r"|schick(?:e|en)?\s+(?:eine?[rn]?\s+)?(?:e[-\s]?mail|nachricht|brief)"
+    r")\b",
     re.I | re.UNICODE,
 )
 
