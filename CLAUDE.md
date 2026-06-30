@@ -15,6 +15,11 @@ pytest tests/                 # neue konsolidierte Tests
 pytest apps/backend/tests/    # Bestands-Tests
 ```
 
+## Arbeitsregeln (IMMER einhalten)
+- Vor jeder Aenderung: erst erklaeren WAS geaendert wird und WARUM — dann auf Bestaetigung warten.
+- Nie sofort committen oder pushen. Erst fragen, Aenderung zeigen, dann ausfuehren.
+- Keine Aktion ohne Rueckmeldung der Nutzerin.
+
 ## Sicherheitsregeln (NIEMALS verletzen)
 - Keine echten API-Keys in Code oder Logs.
 - Keine PII, Secrets oder vollstaendigen Prompts in Logs.
