@@ -229,6 +229,18 @@ body{
 .login-error{font-size:12px;color:var(--err);background:#FCE8E8;border:1px solid #D23B3B;border-radius:6px;padding:7px 10px;margin-bottom:12px;display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 .login-spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px}
+/* ── Sende-Bestätigung Modal ── */
+.confirm-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;display:flex;align-items:flex-end;justify-content:center;padding:0 0 20px}
+.confirm-modal.hidden{display:none}
+.confirm-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;width:100%;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,.12)}
+.confirm-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px}
+.confirm-items{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.confirm-pill{font-size:11px;padding:3px 10px;border-radius:20px;background:var(--warn-soft);color:var(--warn);border:1px solid #E8D5A0;font-weight:500}
+.confirm-btns{display:flex;gap:8px}
+.confirm-btns button{flex:1;padding:9px;font-size:13px;font-weight:600;border-radius:8px;cursor:pointer;border:none}
+.btn-confirm-send{background:var(--accent);color:#fff}
+.btn-confirm-all{background:var(--surface-2);color:var(--text);border:1px solid var(--border)!important}
+.btn-confirm-cancel{background:transparent;color:var(--text-muted);border:1px solid var(--border)!important}
 /* ── Hamburger Button ── */
 .mob-menu-btn{display:none;background:none;border:none;font-size:20px;cursor:pointer;padding:4px 8px;color:var(--text);line-height:1;margin-right:4px;border-radius:6px}
 .mob-menu-btn:hover{background:var(--surface-2)}
@@ -668,14 +680,8 @@ const PRIVACY_RULES=[
   // Adresse inkl. PLZ + Stadt
   {level:"normal",label:"Adresse",placeholder:"[Adresse]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer)\s+\d+[a-z]?/gi},
   {level:"normal",label:"PLZ+Stadt",placeholder:"[Ort]",pattern:/\b\d{5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s-]{2,30}/g},
-  // Namen nach Präpositionen
-  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:von|an|durch|für|Absender|Empfänger)[:\s]\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
-  // Namen mit Titel
+  // Namen nur mit eindeutigem Kontext: Titel oder "mein Name ist"
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:Herr(?:n)?|Frau|Dr\.|Prof\.)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
-  // Namen in Anrede: "Lieber Steffen", "Hallo Maria" — kein "Liebe Grüße", kein "Hallo zusammen"
-  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:Lieber?|Hallo)\s)(?!(?:Grüße|zusammen|alle|Team|Welt)\b)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]{2,}/g},
-  // Vorname Nachname am Zeilenanfang — braucht ZWEI Wörter, Grußformeln ausgeschlossen
-  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/^(?!(?:Viele\s+Grüße|Mit\s+freundlichen|Beste\s+Grüße|Herzliche\s+Grüße|Mit\s+besten|Liebe\s+Grüße|Schöne\s+Grüße|Guten\s+Morgen|Guten\s+Tag|Guten\s+Abend|Vielen\s+Dank|Lieber?\s+|Betreff|Datum|Summe|Zwischensumme|Verkäuferschutz|Versand(?:details)?|Copyright)\b)[A-ZÄÖÜ][a-zäöüß]{1,}\s+[A-ZÄÖÜ][a-zäöüß]{1,}$/gm},
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
   {level:"normal",label:"Referenz",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
   {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
@@ -877,22 +883,46 @@ function loadHistory(){
 function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
 function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
 function hideTyping(){document.getElementById("typing")?.remove()}
+let _pendingText="";
+let _pendingRedacted="";
+let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
+  // PII prüfen
+  const {redacted,map}=redactText(text);
+  const hasRedactions=Object.keys(map).length>0;
+  if(hasRedactions){
+    // Bestätigung einholen
+    _pendingText=text;
+    _pendingRedacted=redacted;
+    _pendingMap=map;
+    const items=document.getElementById("confirm-items");
+    items.innerHTML=Object.entries(map).map(([ph,val])=>`<span class="confirm-pill">${ph.replace(/[\[\]]/g,"")} erkannt</span>`).join("");
+    document.getElementById("confirm-modal").classList.remove("hidden");
+    return;
+  }
+  await _doSend(text,text,{});
+}
+async function confirmSend(choice){
+  document.getElementById("confirm-modal").classList.add("hidden");
+  if(choice==="cancel"){_pendingText="";_pendingRedacted="";_pendingMap={};return;}
+  const textToSend=choice==="redacted"?_pendingRedacted:_pendingText;
+  const mapToUse=choice==="redacted"?_pendingMap:{};
+  await _doSend(_pendingText,textToSend,mapToUse);
+  _pendingText="";_pendingRedacted="";_pendingMap={};
+}
+async function _doSend(displayText,sendText,map){
+  const inp=document.getElementById("chat-input");
   inp.value="";autoResize(inp);
   document.getElementById("send-btn").disabled=true;
   if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
-  // Original lokal speichern und anzeigen
-  chatHistory.push({role:"user",content:text,time:new Date().toISOString()});
+  chatHistory.push({role:"user",content:displayText,time:new Date().toISOString()});
   document.getElementById("chat-inner").innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
   renderPrivacyMemory();scrollToBottom();
   showTyping();
-  // PII schwärzen bevor es den Browser verlässt
-  const {redacted,map}=redactText(text);
-  const hasRedactions=Object.keys(map).length>0;
   try{
-    await runAgent(redacted,hasRedactions?map:null);
+    await runAgent(sendText,Object.keys(map).length>0?map:null);
   }catch(e){hideTyping();activeRedactionMap={};renderPrivacyMemory();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
@@ -1042,5 +1072,17 @@ function logout(){
 if(localStorage.getItem("ailiza_consent")==="1"){document.getElementById("login-overlay").classList.add("hidden");init();}
 // else: Consent-Screen bleibt sichtbar
 </script>
+<!-- Bestätigungs-Modal vor dem Senden -->
+<div class="confirm-modal hidden" id="confirm-modal">
+  <div class="confirm-box">
+    <div class="confirm-title">⚠ AILIZA hat sensible Daten erkannt — was möchten Sie senden?</div>
+    <div class="confirm-items" id="confirm-items"></div>
+    <div class="confirm-btns">
+      <button class="btn-confirm-send" onclick="confirmSend('redacted')">Geschwärzt senden</button>
+      <button class="btn-confirm-all" onclick="confirmSend('all')">Alle Daten senden</button>
+      <button class="btn-confirm-cancel" onclick="confirmSend('cancel')">Abbrechen</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
