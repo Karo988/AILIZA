@@ -940,29 +940,31 @@ let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Verbotene / geheime Daten → Senden sofort blockieren
-  const rawItems=detectPrivacyItems(text);
-  const blocked=rawItems.filter(i=>i.level==="secret"||i.level==="forbidden");
-  if(blocked.length){
-    const labels=blocked.map(i=>i.label).join(", ");
-    const banner=document.getElementById("pii-consent");
-    document.getElementById("pii-consent-ts").textContent=`⛔ Nicht gesendet: ${labels} dürfen nicht an externe KI übermittelt werden (Art. 9/10 DSGVO).`;
-    document.getElementById("pii-consent-btn").style.display="none";
-    banner.classList.add("show");
-    setTimeout(()=>{banner.classList.remove("show");document.getElementById("pii-consent-btn").style.display="";},5000);
-    return;
-  }
-  // Sensible / kritische / vertrauliche Daten → redaktieren + Einverständnis
+  // Alle 5 Stufen werden redaktiert — kein harter Block mehr
   const {redacted,map}=redactText(text);
   const hasPii=Object.keys(map).length>0;
-  if(hasPii&&!localStorage.getItem("ailiza_pii_consent")){
-    _pendingSendText=redacted;_pendingMap=map;
+  if(!hasPii){await _doSend(text,{});return;}
+  _pendingSendText=redacted;_pendingMap=map;
+  // Prüfen ob verbotene/geheime Kategorien enthalten
+  const rawItems=detectPrivacyItems(text);
+  const hasCritical=rawItems.some(i=>i.level==="secret"||i.level==="forbidden");
+  const banner=document.getElementById("pii-consent");
+  const btn=document.getElementById("pii-consent-btn");
+  const txtEl=document.querySelector(".pii-consent-text");
+  if(hasCritical){
+    const labels=[...new Set(rawItems.filter(i=>i.level==="secret"||i.level==="forbidden").map(i=>i.label))].join(", ");
+    txtEl.innerHTML=`🔴 <strong>Verbotene Daten erkannt (${labels}).</strong> Alle wurden durch Platzhalter ersetzt — die KI sieht <em>keine</em> echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span>`;
+    btn.textContent="Geschwärzt senden";
+  } else {
+    txtEl.innerHTML=`🔒 <strong>Sensible Daten erkannt.</strong> Vor dem Senden werden Name, Adresse, Telefon usw. automatisch durch Platzhalter ersetzt. Die KI sieht keine echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span>`;
+    btn.textContent="Verstanden & senden";
+  }
+  btn.style.display="";
+  if(!localStorage.getItem("ailiza_pii_consent")||hasCritical){
     const ts=new Date().toLocaleString("de-DE");
-    document.getElementById("pii-consent-ts").textContent=`${ts}`;
-    document.getElementById("pii-consent-btn").style.display="";
+    document.getElementById("pii-consent-ts").textContent=ts;
     if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{document.getElementById("pii-consent-ts").textContent=`${ts} · ${p.coords.latitude.toFixed(3)}°N ${p.coords.longitude.toFixed(3)}°E`;},()=>{});
-    document.getElementById("pii-consent").classList.add("show");
-    return;
+    banner.classList.add("show");return;
   }
   await _doSend(redacted,map);
 }
