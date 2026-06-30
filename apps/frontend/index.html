@@ -115,8 +115,10 @@ body{
   transition:transform .6s cubic-bezier(.4,0,.2,1),max-width .5s ease,opacity .4s ease,padding .4s ease;
   overflow:hidden;white-space:nowrap;max-width:300px;cursor:default;
 }
-.dsgvo-bubble.high{background:#FFFBE6;border-color:#F0C040;color:#7A5A00}
+.dsgvo-bubble.high{background:#FFFBE6;border-color:#E0A800;color:#7A5A00}
+.dsgvo-bubble.confidential{background:#FFF0E6;border-color:#E07B00;color:#7A3A00}
 .dsgvo-bubble.forbidden{background:#FDE8E8;border-color:#C0392B;color:#7A1A1A}
+.dsgvo-bubble.secret{background:#1A1A1A;border-color:#000;color:#F0C040}
 .dsgvo-bubble-label{font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
 .dsgvo-bubble-value{color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis}
 .dsgvo-bubble.fly-out{transform:translateX(120px);opacity:0;max-width:36px;padding:3px 6px}
@@ -160,11 +162,16 @@ body{
 /* Gehaltene Datenblasen — groß und sichtbar */
 .dsgvo-bubble{background:#E8F0EA;border:2px solid #2D5F3F;border-radius:12px;padding:8px 14px;display:flex;flex-direction:column;gap:2px;animation:bubbleIn .25s ease;min-width:100px}
 .dsgvo-bubble.high{background:#FFFBE6;border-color:#E0A800}
+.dsgvo-bubble.confidential{background:#FFF0E0;border-color:#E07B00}
 .dsgvo-bubble.forbidden{background:#FCE8E8;border-color:#C0392B}
+.dsgvo-bubble.secret{background:#1A1A1A;border-color:#000}
 .dsgvo-bubble-label{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
 .dsgvo-bubble-value{font-size:13px;font-weight:600;color:#1A3D28;word-break:break-all}
 .dsgvo-bubble.high .dsgvo-bubble-value{color:#7A5A00}
+.dsgvo-bubble.confidential .dsgvo-bubble-value{color:#7A3A00}
 .dsgvo-bubble.forbidden .dsgvo-bubble-value{color:#8B2424}
+.dsgvo-bubble.secret .dsgvo-bubble-label{color:#888}
+.dsgvo-bubble.secret .dsgvo-bubble-value{color:#F0C040}
 @keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
 .input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
 .input-box:focus-within{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(45,95,63,.06)}
@@ -647,33 +654,47 @@ let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","R
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
 let context=[];
 const PRIVACY_RULES=[
-  // ── VERBOTEN (Art. 9 + Art. 10 DSGVO) — rote Blasen ──
-  {level:"forbidden",label:"Gesundheit",placeholder:"[Gesundheitsdaten]",pattern:/\b(?:diagnose|krankheit|patient|medikament|therapie|behandlung|arzt|diabetes|depression|schwanger|behinderung|psychisch|pflegestufe|krankenversicherung)\b/gi},
-  {level:"forbidden",label:"Herkunft",placeholder:"[Herkunft]",pattern:/\b(?:ethnisch(?:e[rns]?)?|rassisch(?:e[rns]?)?|hautfarbe|nationalität|staatsangehörigkeit|migrationshintergrund)\b/gi},
-  {level:"forbidden",label:"Religion",placeholder:"[Religion]",pattern:/\b(?:religion|glaube|konfession|kirchenmitglied|muslim|christ(?:lich)?|jüdisch|buddhist|hindu|atheist|kirchensteuer)\b/gi},
-  {level:"forbidden",label:"Politisch",placeholder:"[Polit. Meinung]",pattern:/\b(?:partei(?:mitglied)?|gewerkschaft(?:smitglied)?|politische?\s+(?:meinung|überzeugung|haltung)|wahlgeheimnis)\b/gi},
-  {level:"forbidden",label:"Biometrie",placeholder:"[Biometriedaten]",pattern:/\b(?:fingerabdruck|iris(?:scan)?|gesichtserkennung|retinascan|biometrisch|stimmerkennung)\b/gi},
-  {level:"forbidden",label:"Sexualität",placeholder:"[Sexualdaten]",pattern:/\b(?:sexuell(?:e[rns]?)?|sexualität|geschlechtsidentität|homosexuell|lesbisch|schwul|bisexuell|transgender|queer|non.?binary)\b/gi},
-  {level:"forbidden",label:"Strafrecht",placeholder:"[Strafrechtl. Daten]",pattern:/\b(?:vorstrafe[n]?|strafregister|verurteil(?:t|ung)|straftat|verdächtig(?:er)?|polizeilich(?:es)?\s+führungszeugnis|ermittlungsverfahren)\b/gi},
-  // ── HOCHSENSIBEL (finanziell) — gelbe Blasen ──
+  // ── ⚫ NIEMALS SENDEN (Zugangsdaten / Schlüssel) ──
+  {level:"secret",label:"API-Schlüssel",placeholder:"[API-Key]",pattern:/\b(?:sk-[A-Za-z0-9]{20,}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{35}|AKIA[A-Z0-9]{16})\b/g},
+  {level:"secret",label:"Zugangsdaten",placeholder:"[Passwort]",pattern:/\b(?:passwort|password|kennwort|geheimwort|pin)\s*[:=]\s*\S+/gi},
+  {level:"secret",label:"Bearer-Token",placeholder:"[Token]",pattern:/Bearer\s+[A-Za-z0-9._\-]{20,}/g},
+  // ── 🔴 VERBOTEN — Art. 9 DSGVO ──
+  {level:"forbidden",label:"Gesundheit",placeholder:"[Gesundheitsdaten]",pattern:/\b(?:diagnose|krankmeldung|krankheit|patient|medikament|therapie|behandlung|arzt|diabetes|depression|schwanger(?:schaft)?|behinderung|psychisch|pflegestufe|krankenversicherung|allergie|allergi(?:sch|ker))\b/gi},
+  {level:"forbidden",label:"Herkunft",placeholder:"[Herkunft]",pattern:/\b(?:ethnisch(?:e[rns]?)?|rassisch(?:e[rns]?)?|hautfarbe|nationalität|migrationshintergrund|herkunftsland)\b/gi},
+  {level:"forbidden",label:"Religion",placeholder:"[Religion]",pattern:/\b(?:religion|weltanschauung|glaube|konfession|kirchenmitglied|kirchensteuer|muslim|islamisch|christ(?:lich)?|jüdisch|buddhist|hindu|atheist)\b/gi},
+  {level:"forbidden",label:"Politisch",placeholder:"[Polit. Meinung]",pattern:/\b(?:partei(?:mitglied)?|gewerkschaft(?:s(?:mitglied|zugehörigkeit))?|politische?\s+(?:meinung|überzeugung|haltung|einstellung))\b/gi},
+  {level:"forbidden",label:"Biometrie",placeholder:"[Biometriedaten]",pattern:/\b(?:fingerabdruck|iris(?:scan)?|gesichtserkennung|retinascan|biometrisch|stimmerkennung|venenscan)\b/gi},
+  {level:"forbidden",label:"Sexualität",placeholder:"[Sexualdaten]",pattern:/\b(?:sexuell(?:e[rns]?)?|sexualität|geschlechtsidentität|homosexuell|lesbisch|schwul|bisexuell|transgender|queer|non.?binary|sexualleben)\b/gi},
+  {level:"forbidden",label:"Genetik",placeholder:"[Genetische Daten]",pattern:/\b(?:genetisch(?:e[rns]?)?|dna(?:-test)?|gentest|erbkrankheit|genom)\b/gi},
+  // ── 🔴 VERBOTEN — Art. 10 DSGVO ──
+  {level:"forbidden",label:"Strafrecht",placeholder:"[Strafrechtl. Daten]",pattern:/\b(?:vorstrafe[n]?|strafregister|strafanzeige|verurteil(?:t|ung)|straftat|ermittlungsverfahren|führungszeugnis|polizeilich(?:e[rns]?)?\s+(?:vorgang|akte|ermittlung)|hausverbot|betrugsverdacht|diebstahlverdacht)\b/gi},
+  // ── 🟠 GESCHÄFTSVERTRAULICH ──
+  {level:"confidential",label:"Zugangsdaten",placeholder:"[Zugangsdaten]",pattern:/\b(?:benutzername|nutzername|username|loginname|anmeldename)\s*[:=]\s*\S+/gi},
+  {level:"confidential",label:"Gehalt",placeholder:"[Gehaltsdaten]",pattern:/\b(?:gehalt|lohn|brutto(?:gehalt|lohn)?|netto(?:gehalt|lohn)?|jahresgehalt|monatslohn|vergütung|honorar)\s*(?:[:=von]\s*)?(?:ca\.?\s*)?\d[\d.,\s]*(?:€|EUR|tsd\.?|k€)?/gi},
+  {level:"confidential",label:"Marge",placeholder:"[Kalk. Daten]",pattern:/\b(?:einkaufspreis|marge|deckungsbeitrag|kalkulation|rohertrag|aufschlag)\s*(?:[:=]\s*)?\d[\d.,\s]*(?:%|€|EUR)?/gi},
+  {level:"confidential",label:"Mahnwesen",placeholder:"[Mahndaten]",pattern:/\b(?:mahnung|mahnbescheid|inkasso(?:verfahren)?|zahlungsverzug|zwangsvollstreckung|pfändung)\b/gi},
+  // ── 🟡 KRITISCH (finanziell / Identifikation) ──
   {level:"high",label:"IBAN",placeholder:"[IBAN]",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
+  {level:"high",label:"BIC",placeholder:"[BIC]",pattern:/\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/g},
   {level:"high",label:"Kreditkarte",placeholder:"[Kartennummer]",pattern:/\b(?:\d{4}[ \-]){3}\d{4}\b/g},
-  // ── SENSIBEL (personenbezogen) — grüne Blasen ──
+  {level:"high",label:"Steuer-ID",placeholder:"[Steuer-ID]",pattern:/\b(?:Steuer(?:identifikations)?(?:nummer|nr\.?|-ID)|Steuernummer)\s*[:№]?\s*\d[\d \/]{8,14}/gi},
+  {level:"high",label:"USt-IdNr",placeholder:"[USt-IdNr]",pattern:/\bDE\d{9}\b/g},
+  {level:"high",label:"Ausweis-Nr.",placeholder:"[Ausweisnummer]",pattern:/\b(?:ausweis(?:nummer)?|personalausweis|reisepass(?:nummer)?|passport)\s*[:№]?\s*[A-Z0-9]{6,12}/gi},
+  {level:"high",label:"Versicherungs-Nr.",placeholder:"[Versicherungs-Nr.]",pattern:/\b[A-Z]\d{8}[A-Z]\d{3}\b|\b(?:versicherungsnummer|versicherungs-?nr\.?)\s*[:№]?\s*[A-Z0-9\s]{6,20}/gi},
+  {level:"high",label:"Kreditkarte",placeholder:"[Kartennummer]",pattern:/\b(?:paypal(?:konto|-konto)?|paypal\.me\/\S+)\b/gi},
+  // ── 🟢 SENSIBEL (personenbezogen) ──
   {level:"normal",label:"E-Mail",placeholder:"[E-Mail]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
-  // Telefon: mind. 7 Ziffern, kein reines Jahr-Format (z.B. 001/2024 ist kein Telefon)
   {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/\b(?:\+49[ .-]?|0)[1-9][0-9]{3,}[ ()\/.-]*[0-9]{2,}(?!\/20\d{2})\b/g},
-  // Firma: jedes Wort vor der Rechtsform muss mit Großbuchstaben beginnen
+  {level:"normal",label:"IP-Adresse",placeholder:"[IP-Adresse]",pattern:/\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g},
   {level:"normal",label:"Firma",placeholder:"[Firma]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+(?:&|best\s+of|[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)){0,3}\s+(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|UG(?:\s*\(haftungsbeschränkt\))?|AG|KG|OHG|GbR|e\.V\.|SE)\b/g},
-  // Adresse: gängige Straßensuffixe inkl. dom/berg/hof/markt
   {level:"normal",label:"Adresse",placeholder:"[Adresse]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer|dom|berg|hof|markt|graben|garten|steig|stieg|anger)\s+\d+[a-z]?(?:\/\d+[a-z]?)?/gi},
   {level:"normal",label:"PLZ+Stadt",placeholder:"[Ort]",pattern:/\b\d{5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s-]{2,30}/g},
-  // Namen nur mit eindeutigem Kontext: Titel oder "mein Name ist"
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:Herr(?:n)?|Frau|Dr\.|Prof\.)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
-  {level:"normal",label:"Referenz",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
+  {level:"normal",label:"Kundennummer",placeholder:"[Kundennummer]",pattern:/\b(?:Kundennummer|Kunden-?Nr\.?|Kd\.?-?Nr\.?)\s*[:№#]?\s*[A-Z0-9][\w\-]{2,19}/gi},
+  {level:"normal",label:"Referenz-Nr.",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
   {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
   {level:"normal",label:"Datum",placeholder:"[Datum]",pattern:/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g},
-  {level:"normal",label:"Transaktions-Nr.",placeholder:"[Transaktions-Nr.]",pattern:/\b[A-Z0-9]{17}\b/g},
 ];
 // Wörter die NIE als PII erkannt werden sollen
 const PII_STOPLIST=new Set(["AILIZA","KI","AI","EU","DSGVO","GmbH","UG","AG","KG","GbR","PDF","AGB","FAQ","CEO","CTO","CFO","HR","IT"]);
@@ -764,10 +785,11 @@ function renderPrivacyMemory(inp=""){
   // Kein aktiver Zwischenspeicher → Erkennung im Eingabefeld zeigen
   const items=detectPrivacyItems(inp);
   if(!items.length){note.textContent="Keine sensiblen Daten erkannt";list.innerHTML='<span class="privacy-pill empty">Normal: leer</span>';return}
-  const f=items.filter(i=>i.level==="forbidden").length;const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
-  const parts=[];if(f)parts.push(`${f} verboten (Art.9)`);if(h)parts.push(`${h} hochsensibel`);if(n)parts.push(`${n} sensibel`);
-  note.textContent=parts.join(", ")+" — beim Einfügen (Strg+V) werden sie gesichert";
-  list.innerHTML=items.map(i=>{const cls=i.level==="forbidden"?" forbidden":i.level==="high"?" high":"";return`<div class="dsgvo-bubble${cls}"><span class="dsgvo-bubble-label">${escapeHtml(i.label)}</span><span class="dsgvo-bubble-value">${escapeHtml(i.value)}</span></div>`;}).join("");
+  const s=items.filter(i=>i.level==="secret").length;const f=items.filter(i=>i.level==="forbidden").length;const c=items.filter(i=>i.level==="confidential").length;const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
+  const parts=[];if(s)parts.push(`${s} ⚫ niemals senden`);if(f)parts.push(`${f} 🔴 Art.9/10`);if(c)parts.push(`${c} 🟠 vertraulich`);if(h)parts.push(`${h} 🟡 kritisch`);if(n)parts.push(`${n} 🟢 sensibel`);
+  note.textContent=parts.join(" · ")+" — beim Einfügen (Strg+V) gesichert";
+  const lvlCls=l=>l==="secret"?" secret":l==="forbidden"?" forbidden":l==="confidential"?" confidential":l==="high"?" high":"";
+  list.innerHTML=items.map(i=>`<div class="dsgvo-bubble${lvlCls(i.level)}"><span class="dsgvo-bubble-label">${escapeHtml(i.label)}</span><span class="dsgvo-bubble-value">${escapeHtml(i.value)}</span></div>`).join("");
 }
 function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
 function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
