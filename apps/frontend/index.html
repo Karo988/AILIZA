@@ -185,6 +185,10 @@ body{
 .input-field::placeholder{color:var(--text-muted)}
 .input-send{width:32px;height:32px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
 .input-send:disabled{background:var(--border-strong);cursor:not-allowed}
+.kI-preview-container{margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2)}
+.kI-preview-label{font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:500}
+.kI-preview-field{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px;font-family:inherit;font-size:12px;background:var(--surface-2);color:var(--text-muted);resize:none;max-height:100px;line-height:1.5;cursor:not-allowed}
+.kI-preview-field::placeholder{color:var(--text-muted);opacity:.7}
 .input-toolbar{display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2);font-size:11px}
 .tool-btn{display:flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid transparent;background:transparent;border-radius:5px;cursor:pointer;font-size:11px;color:var(--text-soft)}
 .tool-btn:hover{background:var(--surface-2);color:var(--text)}
@@ -371,6 +375,10 @@ body{
           <div class="input-row">
             <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)" onpaste="handlePaste(event)"></textarea>
             <button class="input-send" id="send-btn" onclick="sendMessage()">↑</button>
+          </div>
+          <div class="kI-preview-container">
+            <div class="kI-preview-label">🔒 KI erhält:</div>
+            <textarea class="kI-preview-field" id="kI-input-preview" readonly placeholder="Hier siehst du, was die KI von deinem Text erhält (mit Platzhaltern statt Originaldaten)"></textarea>
           </div>
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
@@ -777,6 +785,15 @@ function detectPrivacyItems(inp=""){
   return items;
 }
 function renderPrivacyMemory(inp=""){
+  // KI-Preview aktualisieren: zeige redaktierten Text
+  const preview=document.getElementById("kI-input-preview");
+  if(inp){
+    const {redacted}=redactText(inp);
+    preview.value=redacted;
+  }else{
+    preview.value="";
+  }
+
   const note=document.getElementById("privacy-note");
   const list=document.getElementById("privacy-items");
   const sidebar=document.getElementById("dsgvo-sidebar");
