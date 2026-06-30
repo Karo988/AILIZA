@@ -659,7 +659,7 @@ body{
     <div id="panel-login">
       <div class="login-field"><label>Nutzername</label><input type="text" id="l-user" placeholder="Nutzername" autocomplete="username"></div>
       <div class="login-field"><label>Passwort</label><input type="password" id="l-pass" placeholder="Passwort" autocomplete="current-password" onkeydown="if(event.key==='Enter')giveConsent()"></div>
-      <div class="login-btns"><button class="btn-login" id="btn-login" onclick="giveConsent()">Anmelden</button></div>
+      <div class="login-btns"><button class="btn-login" id="btn-login" onclick="giveConsent()">Anmelden →</button></div>
     </div>
     <!-- Registrieren-Panel -->
     <div id="panel-register" style="display:none">
@@ -1182,7 +1182,7 @@ async function giveConsent(){
   try{
     const r=await fetch(`${API}/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:user,password:pass})});
     const data=await r.json();
-    if(!r.ok){showLoginError(data.detail||"Anmeldung fehlgeschlagen.");btn.disabled=false;btn.textContent="Zustimmen & anmelden";return}
+    if(!r.ok){showLoginError(data.detail||"Anmeldung fehlgeschlagen.");btn.disabled=false;btn.textContent="Anmelden →";return}
     localStorage.setItem("ailiza_jwt",data.access_token);
     localStorage.setItem("ailiza_user",user);
     localStorage.setItem("ailiza_consent","1");
