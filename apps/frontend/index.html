@@ -98,9 +98,27 @@ body{
 .msg{display:flex;flex-direction:column;gap:4px}
 .msg.user{align-items:flex-end}
 .msg.ai{align-items:flex-start}
-.bubble{padding:10px 14px;border-radius:14px;max-width:88%;font-size:13px;line-height:1.6;word-wrap:break-word}
-.bubble.user{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
-.bubble.ai{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px}
+/* ── Basis-Blase ── */
+.bubble{padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.6;word-wrap:break-word;white-space:pre-wrap}
+/* ── Nutzer-Blase: rechts, klappt nach 3s ein ── */
+.bubble.user{
+  background:var(--accent);color:#fff;border-bottom-right-radius:4px;
+  max-width:88%;cursor:pointer;
+  transition:max-width .35s ease,padding .25s ease,opacity .25s ease;
+  animation:slideInRight .25s ease;
+}
+.bubble.user.collapsed{max-width:60px;padding:6px 12px;opacity:.7;overflow:hidden;white-space:nowrap;text-overflow:clip}
+.bubble.user.collapsed::after{content:"💬 …";font-size:12px}
+.bubble.user.collapsed .bubble-text{display:none}
+@keyframes slideInRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+/* ── AILIZA-Blase: links, öffnet sich wie ein Mund ── */
+.bubble.ai{
+  background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px;
+  max-width:88%;overflow:hidden;
+  max-height:0;opacity:0;padding:0 14px;
+  transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .3s ease,padding .3s ease;
+}
+.bubble.ai.open{max-height:1200px;opacity:1;padding:10px 14px}
 .bubble.ai strong{color:var(--text)}
 .bubble.ai code{background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:12px}
 .msg-tags{display:flex;flex-wrap:wrap;gap:4px;max-width:88%}
@@ -837,15 +855,38 @@ function renderChat(){
   const inner=document.getElementById("chat-inner");
   if(!chatHistory.length){inner.innerHTML=`<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt('Schreibe eine E-Mail: ')">📧 E-Mail</div><div class="chip" onclick="quickPrompt('Übersetze: ')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt('Fasse zusammen: ')">📝 Zusammenfassen</div></div></div>`;return}
   const offset=Math.max(0,chatHistory.length-50);
-  inner.innerHTML=chatHistory.slice(-50).map((m,i)=>renderMsg(m,offset+i)).join("");scrollToBottom();
+  inner.innerHTML=chatHistory.slice(-50).map((m,i)=>renderMsg(m,offset+i)).join("");
+  // Alle AI-Blasen sofort öffnen (History, kein Streaming)
+  inner.querySelectorAll(".bubble.ai").forEach(b=>b.classList.add("open"));
+  // Nutzer-Blasen in History sofort einklappen
+  inner.querySelectorAll(".bubble.user").forEach(b=>b.classList.add("collapsed"));
+  scrollToBottom();
 }
 function renderMsg(m,idx){
-  const text=(m.content||"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
+  const text=(m.content||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
   const i=idx!==undefined?idx:chatHistory.indexOf(m);
-  if(m.role==="user")return`<div class="msg user"><div class="bubble user">${text}</div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
+  if(m.role==="user")return`<div class="msg user"><div class="bubble user" onclick="this.classList.toggle('collapsed')" title="Klicken zum Ein-/Ausklappen"><span class="bubble-text">${text}</span></div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
   const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
   const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
   return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
+}
+function animateUserBubble(el){
+  // Nach 3s einklappen, Klick klappt aus
+  setTimeout(()=>{if(el)el.classList.add("collapsed")},3000);
+}
+function streamAiBubble(el,text){
+  // Blase aufgehen lassen
+  requestAnimationFrame(()=>{el.classList.add("open")});
+  // Text zeichenweise eintippen
+  const raw=text.replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">");
+  let i=0;
+  el.innerHTML="";
+  const interval=setInterval(()=>{
+    i++;
+    el.innerHTML=(raw.slice(0,i)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
+    scrollToBottom();
+    if(i>=raw.length)clearInterval(interval);
+  },6);
 }
 function copyText(idx){
   const m=chatHistory[idx];if(!m)return;
@@ -918,7 +959,12 @@ async function _doSend(displayText,sendText,map){
   document.getElementById("send-btn").disabled=true;
   if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
   chatHistory.push({role:"user",content:displayText,time:new Date().toISOString()});
-  document.getElementById("chat-inner").innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
+  const inner=document.getElementById("chat-inner");
+  inner.innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
+  // Nutzer-Blase nach 3s einklappen
+  const userBubbles=inner.querySelectorAll(".bubble.user");
+  const lastUser=userBubbles[userBubbles.length-1];
+  if(lastUser)animateUserBubble(lastUser);
   renderPrivacyMemory();scrollToBottom();
   showTyping();
   try{
@@ -951,7 +997,20 @@ async function runAgent(text,redactionMap){
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
   addAiMessage(reinserted,undefined,isDraft?draftHint:undefined);
 }
-function addAiMessage(text,warn,draftHint){const msg={role:"ai",content:text,time:new Date().toISOString()};if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;chatHistory.push(msg);localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));saveCurrentChat();document.getElementById("chat-inner").innerHTML+=renderMsg(msg,chatHistory.length-1);renderPrivacyMemory();scrollToBottom()}
+function addAiMessage(text,warn,draftHint){
+  const msg={role:"ai",content:text,time:new Date().toISOString()};
+  if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;
+  chatHistory.push(msg);
+  localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));
+  saveCurrentChat();
+  const inner=document.getElementById("chat-inner");
+  inner.innerHTML+=renderMsg(msg,chatHistory.length-1);
+  // Letzte AI-Blase animiert öffnen + Text streamen
+  const bubbles=inner.querySelectorAll(".bubble.ai");
+  const last=bubbles[bubbles.length-1];
+  if(last){streamAiBubble(last,text);}
+  renderPrivacyMemory();scrollToBottom();
+}
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function handlePaste(e){
   e.preventDefault();
