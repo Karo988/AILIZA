@@ -48,12 +48,87 @@ function ScanResult({ scan }) {
   )
 }
 
+// Nutzer-Blase: rechts, schließt sich nach 3s, Klick öffnet wieder
+function UserBubble({ content }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [visible, setVisible] = useState(true)
+
+  useEffect(() => {
+    // Nach 3 Sekunden sanft kollabieren
+    const t = setTimeout(() => setCollapsed(true), 3000)
+    return () => clearTimeout(t)
+  }, [])
+
+  return (
+    <div className="chat-msg user">
+      <button
+        className={`msg-bubble user-bubble ${collapsed ? "user-bubble--collapsed" : "user-bubble--open"}`}
+        onClick={() => setCollapsed(c => !c)}
+        title={collapsed ? "Nachricht anzeigen" : "Nachricht minimieren"}
+      >
+        {collapsed
+          ? <span className="bubble-peek">💬 …</span>
+          : <pre className="msg-text">{content}</pre>
+        }
+      </button>
+    </div>
+  )
+}
+
+// AILIZA-Blase: Mitte/links, öffnet sich animiert, Text fließt rein
+function AilizaBubble({ content, isError, notice, governance_notice, draft, isLoading }) {
+  const [displayed, setDisplayed] = useState("")
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!content) return
+    setOpen(false)
+    setDisplayed("")
+    // Kurze Pause dann aufgehen
+    const openTimer = setTimeout(() => setOpen(true), 80)
+    return () => clearTimeout(openTimer)
+  }, [content])
+
+  useEffect(() => {
+    if (!open || !content) return
+    // Text Zeichen für Zeichen von links einfließen lassen
+    let i = 0
+    setDisplayed("")
+    const interval = setInterval(() => {
+      i++
+      setDisplayed(content.slice(0, i))
+      if (i >= content.length) clearInterval(interval)
+    }, 8) // Geschwindigkeit: 8ms pro Zeichen
+    return () => clearInterval(interval)
+  }, [open, content])
+
+  if (isLoading) {
+    return (
+      <div className="chat-msg assistant">
+        <div className="msg-bubble ailiza-bubble ailiza-bubble--open loading">
+          <span className="dot" /><span className="dot" /><span className="dot" />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`chat-msg assistant${isError ? " error" : ""}`}>
+      <div className={`msg-bubble ailiza-bubble ${open ? "ailiza-bubble--open" : "ailiza-bubble--closed"}`}>
+        <pre className="msg-text msg-text--stream">{displayed}</pre>
+        {notice && <p className="chat-result-notice">{notice}</p>}
+        {governance_notice && <p className="chat-result-notice">{governance_notice}</p>}
+        {draft && <p className="chat-result-notice">Entwurf — menschliche Prüfung erforderlich</p>}
+      </div>
+    </div>
+  )
+}
+
 export default function AgentChat({ onRunComplete, initialMessages = [], onMessagesChange }) {
   const [messages, setMessages] = useState(initialMessages)
   const [input, setInput] = useState("")
   const [deepResearch, setDeepResearch] = useState(false)
   const [loading, setLoading] = useState(false)
-
   const [uploadLoading, setUploadLoading] = useState(false)
   const [scanResult, setScanResult] = useState(null)
   const [uploadError, setUploadError] = useState(null)
@@ -80,7 +155,6 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
     setInput("")
     setLoading(true)
 
-    // History: nur role+content, ohne interne Felder
     const history = updatedMessages.map(m => ({ role: m.role === "error" ? "assistant" : m.role, content: m.content }))
 
     try {
@@ -88,7 +162,9 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
       if (!data) return
 
       const status = data?.status
-      const content = data?.ai_response || data?.message || "Keine Antwort erhalten."
+      const content = status === "local_only"
+        ? (data?.message || "AILIZA läuft im lokalen Modus.")
+        : (data?.ai_response || data?.message || "Keine Antwort erhalten.")
       const isError = status === "failed" || status === "blocked"
 
       const assistantMsg = {
@@ -106,11 +182,13 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
       })
       onRunComplete?.()
     } catch (err) {
-      setMessages(prev => [...prev, {
-        role: "error",
-        content: `Fehler (HTTP ${err?.httpStatus ?? "unbekannt"})`,
-        id: Date.now(),
-      }])
+      const status = err?.httpStatus
+      const userMsg =
+        status === 401 ? "Nicht authentifiziert — bitte neu anmelden." :
+        status === 403 ? "Keine Berechtigung für diese Aktion." :
+        status === 500 ? "Interner Serverfehler — bitte später erneut versuchen." :
+        `Fehler (HTTP ${status ?? "unbekannt"})`
+      setMessages(prev => [...prev, { role: "error", content: userMsg, id: Date.now() }])
     } finally {
       setLoading(false)
     }
@@ -153,7 +231,7 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
     <div className="agent-chat">
       <div className="agent-chat-header">
         <div>
-          <h2 className="agent-chat-title">AILIZA</h2>
+          <h2 className="agent-chat-title">Chat mit AILIZA</h2>
           <p className="agent-chat-hint">Strg+Enter zum Absenden.</p>
         </div>
         <label className="deep-research-toggle">
@@ -183,24 +261,22 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
           </div>
         )}
 
-        {messages.map((msg) => (
-          <div key={msg.id} className={`chat-msg ${msg.role}`}>
-            <div className="msg-bubble">
-              <pre className="msg-text">{msg.content}</pre>
-              {msg.notice && <p className="chat-result-notice">{msg.notice}</p>}
-              {msg.governance_notice && <p className="chat-result-notice">{msg.governance_notice}</p>}
-              {msg.draft && <p className="chat-result-notice">Entwurf — menschliche Prüfung erforderlich</p>}
-            </div>
-          </div>
-        ))}
-
-        {loading && (
-          <div className="chat-msg assistant">
-            <div className="msg-bubble loading">
-              <span className="dot" /><span className="dot" /><span className="dot" />
-            </div>
-          </div>
+        {messages.map((msg) =>
+          msg.role === "user" ? (
+            <UserBubble key={msg.id} content={msg.content} />
+          ) : (
+            <AilizaBubble
+              key={msg.id}
+              content={msg.content}
+              isError={msg.role === "error"}
+              notice={msg.notice}
+              governance_notice={msg.governance_notice}
+              draft={msg.draft}
+            />
+          )
         )}
+
+        {loading && <AilizaBubble isLoading />}
         <div ref={bottomRef} />
       </div>
 
@@ -212,7 +288,7 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={deepResearch ? "Thema für tiefe Recherche …" : "Nachricht eingeben… (Strg+Enter zum Senden)"}
+          placeholder={deepResearch ? "Thema für tiefe Recherche …" : "Nachricht eingeben … (Strg+Enter)"}
           rows={2}
           disabled={loading}
         />

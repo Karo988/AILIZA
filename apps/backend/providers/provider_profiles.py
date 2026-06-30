@@ -192,6 +192,17 @@ def check_provider_policy(
         names = [dc.value for dc in forbidden]
         return False, (f"Provider '{provider_id}': Datenklassen nicht erlaubt: "
                        f"{', '.join(names)}. Kein AVV oder Transfer-Basis fehlt.")
+    # DSGVO Art. 28: sensible Datenklassen erfordern unterzeichneten AVV
+    AVV_REQUIRED = {
+        DataClass.PERSONAL_DATA, DataClass.CONFIDENTIAL,
+        DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
+    }
+    if not profile.avv_signed:
+        avv_blocked = [dc for dc in data_classes if dc in AVV_REQUIRED]
+        if avv_blocked:
+            names = [dc.value for dc in avv_blocked]
+            return False, (f"Provider '{provider_id}': Datenklassen {', '.join(names)} "
+                           f"nicht erlaubt — kein AVV (DSGVO Art. 28) unterzeichnet.")
     return True, "ok"
 
 

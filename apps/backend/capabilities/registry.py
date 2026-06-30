@@ -343,7 +343,7 @@ def check_capability(
             capability_id=capability_id,
             allowed=False,
             decision=PolicyDecision.BLOCK,
-            reason=f"Datenklassen explizit verboten fuer '{capability_id}': {', '.join(denied_names)}",
+            reason=f"Datenklassen nicht erlaubt (explizit verboten) fuer '{capability_id}': {', '.join(denied_names)}",
             requires_approval=True,
             risk_level=cap.risk_level.value,
             capability_enabled=True,
