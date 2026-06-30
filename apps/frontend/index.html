@@ -667,6 +667,8 @@ function init(){
   document.getElementById("m-days").textContent=days;
   updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();
   setInterval(checkStatus,15000);
+  // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
+  setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
   if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
 function showView(name,el){
