@@ -624,8 +624,8 @@ const PRIVACY_RULES=[
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=\b(?:von|an|durch|für|Absender|Empfänger)[:\s]\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)+/g},
   // Namen mit Titel
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:Herr(?:n)?|Frau|Dr\.|Prof\.)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
-  // Vorname Nachname / Nachname Vorname am Zeilenanfang
-  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/^[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+$/gm},
+  // Vorname Nachname am Zeilenanfang — Grußformeln und häufige Phrasen ausgeschlossen
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/^(?!(?:Viele\s+Grüße|Mit\s+freundlichen|Beste\s+Grüße|Herzliche\s+Grüße|Mit\s+besten|Liebe\s+Grüße|Schöne\s+Grüße|Guten\s+Morgen|Guten\s+Tag|Guten\s+Abend|Vielen\s+Dank|Lieber?\s+\w|Betreff|Datum|Summe|Zwischensumme|Verkäuferschutz|Versand(?:details)?|Copyright)\b)[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+$/gm},
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:mein name ist|ich heiße|ich bin)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
   {level:"normal",label:"Referenz",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?|Auftragsnummer|Bestell(?:ung)?(?:snummer)?|Aktenzeichen|Vertragsnummer|Fallnummer)\s*[:\-#]?\s*\d[\w\-\/]{1,19}/gi},
   {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
