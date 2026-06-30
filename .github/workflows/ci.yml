@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      AILIZA_DATABASE_URL: sqlite:///:memory:
+      AILIZA_DATABASE_URL: "sqlite:///:memory:"
       AILIZA_EXTERNAL_LLM_ENABLED: "false"
       AILIZA_DEFAULT_TENANT_ID: default
       SECRET_KEY: ci-test-secret-key-not-for-production
