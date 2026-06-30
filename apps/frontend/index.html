@@ -364,7 +364,7 @@ body{
       <div class="input-wrap">
         <div class="pii-consent" id="pii-consent">
           <div class="pii-consent-text">🔒 <strong>Sensible Daten erkannt.</strong> Vor dem Senden werden Name, Adresse, Telefon usw. automatisch durch Platzhalter ersetzt. Die KI sieht keine echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span></div>
-          <button class="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
+          <button class="pii-consent-btn" id="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
           <button class="pii-consent-deny" onclick="denyPiiConsent()">Abbrechen</button>
         </div>
         <div class="input-box">
@@ -768,9 +768,10 @@ function toggleTool(n){tools[n]=!tools[n];localStorage.setItem("ailiza_tools",JS
 function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
 function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function detectPrivacyItems(inp=""){
-  const src=[...chatHistory.map(m=>m.content||""),inp].join("\n");
+  // Nur aktuellen Input scannen (kein Chat-Verlauf — der ist bereits redaktiert)
+  const src=inp;
   const seen=new Set();const items=[];
-  for(const r of PRIVACY_RULES){r.pattern.lastIndex=0;let m;while((m=r.pattern.exec(src))!==null){const v=m[0].trim().slice(0,90);const k=r.level+":"+r.label+":"+v.toLowerCase();if(!seen.has(k)&&v.length>1){seen.add(k);items.push({level:r.level,label:r.label,value:v})}if(items.length>=12)return items;if(m.index===r.pattern.lastIndex)r.pattern.lastIndex++}}
+  for(const r of PRIVACY_RULES){r.pattern.lastIndex=0;let m;while((m=r.pattern.exec(src))!==null){const v=m[0].trim().slice(0,90);const k=r.level+":"+r.label+":"+v.toLowerCase();if(!seen.has(k)&&v.length>1){seen.add(k);items.push({level:r.level,label:r.label,value:v})}if(items.length>=20)return items;if(m.index===r.pattern.lastIndex)r.pattern.lastIndex++}}
   return items;
 }
 function renderPrivacyMemory(inp=""){
@@ -937,14 +938,26 @@ let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Vor dem Absenden nochmals PII prüfen
+  // Verbotene / geheime Daten → Senden sofort blockieren
+  const rawItems=detectPrivacyItems(text);
+  const blocked=rawItems.filter(i=>i.level==="secret"||i.level==="forbidden");
+  if(blocked.length){
+    const labels=blocked.map(i=>i.label).join(", ");
+    const banner=document.getElementById("pii-consent");
+    document.getElementById("pii-consent-ts").textContent=`⛔ Nicht gesendet: ${labels} dürfen nicht an externe KI übermittelt werden (Art. 9/10 DSGVO).`;
+    document.getElementById("pii-consent-btn").style.display="none";
+    banner.classList.add("show");
+    setTimeout(()=>{banner.classList.remove("show");document.getElementById("pii-consent-btn").style.display="";},5000);
+    return;
+  }
+  // Sensible / kritische / vertrauliche Daten → redaktieren + Einverständnis
   const {redacted,map}=redactText(text);
   const hasPii=Object.keys(map).length>0;
   if(hasPii&&!localStorage.getItem("ailiza_pii_consent")){
-    // Einverständnis einholen — mit Zeitstempel und Ort
     _pendingSendText=redacted;_pendingMap=map;
     const ts=new Date().toLocaleString("de-DE");
     document.getElementById("pii-consent-ts").textContent=`${ts}`;
+    document.getElementById("pii-consent-btn").style.display="";
     if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{document.getElementById("pii-consent-ts").textContent=`${ts} · ${p.coords.latitude.toFixed(3)}°N ${p.coords.longitude.toFixed(3)}°E`;},()=>{});
     document.getElementById("pii-consent").classList.add("show");
     return;
