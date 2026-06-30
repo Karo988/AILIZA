@@ -146,16 +146,38 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _seed_tenant = os.getenv("AILIZA_DEFAULT_TENANT_ID", DEFAULT_TENANT_ID)
     if _seed_pass and len(_seed_pass) >= 8:
         try:
+            import bcrypt as _bcrypt
+            _hashed = _bcrypt.hashpw(_seed_pass.encode(), _bcrypt.gensalt()).decode()
             existing = db_authenticate_user(_seed_user, _seed_pass, _seed_tenant)
             if existing is None:
-                db_create_user(_seed_user, _seed_pass, _seed_tenant, role="admin")
-                write_audit_entry(
-                    action="startup.seed_admin_created",
-                    metadata={"user_id": _seed_user, "tenant_id": _seed_tenant},
-                    tenant_id=_seed_tenant,
-                )
-        except Exception:
-            pass  # User existiert bereits oder DB noch nicht bereit
+                # User existiert nicht oder hat anderes Passwort — neu anlegen oder updaten
+                from .database import get_user as _get_user
+                if _get_user(_seed_user, _seed_tenant) is None:
+                    db_create_user(_seed_user, _seed_tenant, "admin", _hashed)
+                    write_audit_entry(
+                        action="startup.seed_admin_created",
+                        metadata={"user_id": _seed_user, "tenant_id": _seed_tenant},
+                        tenant_id=_seed_tenant,
+                    )
+                else:
+                    # User existiert mit altem Passwort → Passwort aktualisieren
+                    from .database import engine as _engine, users as _users
+                    from sqlalchemy import update as _update
+                    with _engine.begin() as _conn:
+                        _conn.execute(
+                            _update(_users)
+                            .where(_users.c.user_id == _seed_user)
+                            .where(_users.c.tenant_id == _seed_tenant)
+                            .values(hashed_password=_hashed)
+                        )
+                    write_audit_entry(
+                        action="startup.seed_admin_password_updated",
+                        metadata={"user_id": _seed_user, "tenant_id": _seed_tenant},
+                        tenant_id=_seed_tenant,
+                    )
+        except Exception as _e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("Seed-Admin fehlgeschlagen: %s", _e)
     # ── Ende Seed-Admin ──────────────────────────────────────────────────────
 
     # ── Provider-Diagnose beim Startup (kein Key-Inhalt, nur Präsenz) ─────────
