@@ -614,7 +614,8 @@ const PRIVACY_RULES=[
   {level:"high",label:"IBAN",placeholder:"[IBAN]",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
   {level:"high",label:"Kreditkarte",placeholder:"[Kartennummer]",pattern:/\b(?:\d{4}[ \-]){3}\d{4}\b/g},
   {level:"normal",label:"E-Mail",placeholder:"[E-Mail]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
-  {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
+  // Telefon: mind. 7 Ziffern, kein reines Jahr-Format (z.B. 001/2024 ist kein Telefon)
+  {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/\b(?:\+49[ .-]?|0)[1-9][0-9]{3,}[ ()\/.-]*[0-9]{2,}(?!\/20\d{2})\b/g},
   // Firma: nur direkt vor der Rechtsform, kein Grußwort davor
   {level:"normal",label:"Firma",placeholder:"[Firma]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß]*(?:\s+(?:best\s+of|[A-Za-zÄÖÜäöüß&.,-]+)){0,5}\s+(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|UG(?:\s*\(haftungsbeschränkt\))?|AG|KG|OHG|GbR|e\.V\.|SE)\b/g},
   // Adresse inkl. PLZ + Stadt
@@ -634,6 +635,8 @@ const PRIVACY_RULES=[
   {level:"normal",label:"Datum",placeholder:"[Datum]",pattern:/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g},
   {level:"normal",label:"Transaktions-Nr.",placeholder:"[Transaktions-Nr.]",pattern:/\b[A-Z0-9]{17}\b/g},
 ];
+// Wörter die NIE als PII erkannt werden sollen
+const PII_STOPLIST=new Set(["AILIZA","KI","AI","EU","DSGVO","GmbH","UG","AG","KG","GbR","PDF","AGB","FAQ","CEO","CTO","CFO","HR","IT"]);
 // Ersetzt PII durch Platzhalter — gleiche Werte bekommen denselben Platzhalter (keine Duplikate)
 function redactText(text){
   let out=text;
@@ -643,6 +646,8 @@ function redactText(text){
     rule.pattern.lastIndex=0;
     out=out.replace(rule.pattern,(match)=>{
       const normalized=match.trim();
+      // Stoplist: bekannte Nicht-PII-Wörter überspringen
+      if(PII_STOPLIST.has(normalized))return match;
       // Gleicher Wert → gleicher Platzhalter
       if(valueToPlaceholder[normalized])return valueToPlaceholder[normalized];
       const base=rule.placeholder;
