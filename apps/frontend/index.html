@@ -637,8 +637,10 @@ body{
     <label class="login-check"><input type="checkbox" id="l-consent"> Ich habe den Datenschutzhinweis gelesen und stimme der Verarbeitung meiner Eingaben gemäß Art. 6 Abs. 1 lit. a DSGVO zu. Ich akzeptiere die Nutzungsbedingungen.</label>
     <label class="login-check"><input type="checkbox" id="l-age"> Ich bin mindestens 16 Jahre alt (Art. 8 DSGVO).</label>
     <div class="ki-hinweis">🤖 <strong>KI-Hinweis (EU AI Act Art. 52):</strong> Sie interagieren mit einem KI-System. Antworten werden automatisch generiert und sollten bei wichtigen Entscheidungen durch einen Menschen geprüft werden.</div>
+    <div class="login-field" style="margin-top:12px"><label>Nutzername</label><input type="text" id="l-user" placeholder="admin" autocomplete="username"></div>
+    <div class="login-field"><label>Passwort</label><input type="password" id="l-pass" placeholder="••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')giveConsent()"></div>
     <div class="login-btns">
-      <button class="btn-login" id="btn-login" onclick="giveConsent()">Zustimmen &amp; starten</button>
+      <button class="btn-login" id="btn-login" onclick="giveConsent()">Zustimmen &amp; anmelden</button>
     </div>
   </div>
 </div>
@@ -916,8 +918,10 @@ async function sendMessage(){
   const text=inp.value.trim();if(!text)return;
   // Vor dem Absenden nochmals PII prüfen (wegen manuell geänderter Daten)
   const {redacted,map}=redactText(text);
-  // Blase zeigt Original, LLM bekommt geschwärzten Text
-  await _doSend(text,redacted,map);
+  // Blase zeigt geschwärzten Text (Platzhalter) — Nutzer sieht dass Daten raus sind
+  // LLM bekommt ebenfalls geschwärzten Text
+  // Antwort: Platzhalter werden durch Originalwerte ersetzt
+  await _doSend(redacted,map);
 }
 async function _doSend(displayText,sendText,map){
   const inp=document.getElementById("chat-input");
@@ -1077,22 +1081,38 @@ async function deleteMyData(){
   // Consent zurücksetzen → Consent-Screen erscheint neu
   setTimeout(()=>{document.getElementById("login-overlay").classList.remove("hidden");},2000);
 }
-// ── Consent (einmalig, keine Registrierung nötig) ──
-function authHeaders(){return{"Content-Type":"application/json"}}
+// ── Auth ──
+function authHeaders(){
+  const t=localStorage.getItem("ailiza_jwt");
+  const h={"Content-Type":"application/json"};
+  if(t)h["Authorization"]="Bearer "+t;
+  return h;
+}
 function showLoginError(msg){const el=document.getElementById("login-error");el.textContent=msg;el.style.display="block"}
-function giveConsent(){
+async function giveConsent(){
   if(!document.getElementById("l-consent").checked||!document.getElementById("l-age").checked){showLoginError("Bitte beide Einwilligungen bestätigen.");return}
-  localStorage.setItem("ailiza_consent","1");
-  localStorage.setItem("ailiza_consent_ts",new Date().toISOString());
-  document.getElementById("login-overlay").classList.add("hidden");
-  init();
+  const user=document.getElementById("l-user").value.trim();
+  const pass=document.getElementById("l-pass").value;
+  if(!user||!pass){showLoginError("Nutzername und Passwort eingeben.");return}
+  const btn=document.getElementById("btn-login");btn.disabled=true;btn.innerHTML='<span class="login-spinner"></span>Anmelden…';
+  try{
+    const r=await fetch(`${API}/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:user,password:pass})});
+    const data=await r.json();
+    if(!r.ok){showLoginError(data.detail||"Anmeldung fehlgeschlagen.");btn.disabled=false;btn.textContent="Zustimmen & anmelden";return}
+    localStorage.setItem("ailiza_jwt",data.access_token);
+    localStorage.setItem("ailiza_consent","1");
+    localStorage.setItem("ailiza_consent_ts",new Date().toISOString());
+    document.getElementById("login-overlay").classList.add("hidden");
+    init();
+  }catch{showLoginError("Server nicht erreichbar.");btn.disabled=false;btn.textContent="Zustimmen & anmelden";}
 }
 function logout(){
   localStorage.removeItem("ailiza_consent");
+  localStorage.removeItem("ailiza_jwt");
   document.getElementById("login-overlay").classList.remove("hidden");
 }
-// Consent bereits erteilt? → direkt zur App
-if(localStorage.getItem("ailiza_consent")==="1"){document.getElementById("login-overlay").classList.add("hidden");init();}
+// Gespeicherter Token vorhanden? → direkt zur App
+if(localStorage.getItem("ailiza_consent")==="1"&&localStorage.getItem("ailiza_jwt")){document.getElementById("login-overlay").classList.add("hidden");init();}
 // else: Consent-Screen bleibt sichtbar
 </script>
 </body>
