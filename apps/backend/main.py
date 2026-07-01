@@ -2566,6 +2566,264 @@ def policy_check(
         }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 1.3: NEW ENDPOINT /api/policy-redact (Backend PolicyEngine + Redaction V2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class PolicyRedactRequest(BaseModel):
+    """Request für Policy + Redaction"""
+    text: str = Field(..., min_length=0, max_length=100000)
+    context: str | None = None  # employment, credit, general
+    detected_categories: set[str] | None = None
+
+class PolicyRedactResponse(BaseModel):
+    """Response: Schicht 1 (ALLE sehen)"""
+    decision: str
+    risk_level: str
+    safe_text: str
+    user_message_de: str
+    can_send_to_llm: bool
+    requires_human_review: bool
+    documentation_required: bool = False
+    admin_only: dict[str, Any] | None = None  # Nur Admin (serverseitig gefiltert)
+
+def contains_secret(text: str) -> bool:
+    """Prüft auf Geheimnisse: API-Keys, Tokens, etc."""
+    secret_patterns = [
+        r"\bsk-[\w\-]{15,}\b",  # OpenAI
+        r"\bgsk_[\w\-]{15,}\b",  # Groq
+        r"\beyJ[\w\-\.]+\b",     # JWT
+        r"\bBearer\s+[A-Za-z0-9._\-]{20,}\b",  # Bearer Token
+    ]
+    for pattern in secret_patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
+def detect_prompt_injection(text: str) -> bool:
+    """Prüft auf bekannte Prompt-Injection Muster"""
+    injection_patterns = [
+        r"ignore.*instruction",
+        r"forget.*system.*prompt",
+        r"new.*instruction.*:",
+        r"act.*as.*",
+    ]
+    text_lower = text.lower()
+    for pattern in injection_patterns:
+        if re.search(pattern, text_lower):
+            return True
+    return False
+
+def map_risk_to_user_message(level: str) -> str:
+    """Nutzer-freundliche Meldungen (keine technischen Details)"""
+    messages = {
+        "green": "Ihre Anfrage wurde verarbeitet.",
+        "yellow": "Ihre persönlichen Daten wurden geschützt. Sie können mit dieser bereinigten Fassung weitermachen.",
+        "orange": "Diese Anfrage erfordert eine Genehmigung. Bitte wenden Sie sich an einen Administrator.",
+        "red": "Sicherheitsrelevante Angaben wurden entfernt. Die bereinigte Fassung kann genutzt werden.",
+        "violet": "Besonders sensible Daten wurden geschützt. Sie können mit den übrigen Angaben weitermachen.",
+        "black": "Diese Entscheidung kann nicht automatisch getroffen werden. Sie müssen einen Mensch manuell überprüfen und dokumentieren.",
+        "critical": "Es wurde ein Datenschutzverstoß erkannt. Bitte kontaktieren Sie den Datenschutz."
+    }
+    return messages.get(level, "Ihre Anfrage wurde verarbeitet.")
+
+def build_escalation_info(risk_level: str, violations: list[str] = None) -> dict[str, Any] | None:
+    """Eskalations-Infos nur für Admin"""
+    if risk_level == "black":
+        return {
+            "severity": "high_risk",
+            "reason": "Hochrisiko-automatisierte Entscheidung erkannt",
+            "required_action": "Menschliche Prüfung + Dokumentation",
+            "legal_reference": "Art. 22 DSGVO, EU AI Act Art. 6",
+            "contact": "dpo@ailiza.de"
+        }
+
+    if risk_level == "critical":
+        return {
+            "severity": "critical",
+            "reason": "DSGVO-Verstoß erkannt",
+            "violations": violations or [],
+            "required_action": "Sofortige Analyse + Dokumentation",
+            "contact": "dpo@ailiza.de"
+        }
+
+    return None
+
+@app.post("/api/policy-redact", response_model=PolicyRedactResponse)
+def policy_redact(
+    request: PolicyRedactRequest,
+    current_user: TokenData | None = Depends(get_current_user),
+) -> PolicyRedactResponse:
+    """
+    Phase 1.3: Backend Policy + Redaction (Einzige Quelle der Wahrheit)
+
+    SICHERHEIT:
+    1. Originaldaten werden NICHT zurückgegeben
+    2. admin_only wird SERVERSEITIG gefiltert (nur Admin)
+    3. Bei Fehler: technical_block
+    4. Secrets → security_block (nicht technical_block)
+    """
+    try:
+        text = request.text or ""
+
+        # ─────────────────────────────────────────────────────────
+        # 1. SICHERHEITS-CHECKS
+        # ─────────────────────────────────────────────────────────
+
+        # Geheimnis erkannt?
+        if contains_secret(text):
+            admin_block = None
+            if current_user and current_user.role == "admin":
+                admin_block = {
+                    "escalation_info": {
+                        "severity": "security",
+                        "security_finding": "SECRET_DETECTED",
+                        "reason": "API-Key, Token oder Geheimnis im Text erkannt",
+                        "required_action": "Geheimnis widerrufen/rotieren",
+                        "contact": "security@ailiza.de"
+                    }
+                }
+
+            return PolicyRedactResponse(
+                decision="security_block",
+                risk_level="critical",
+                safe_text="[BLOCKIERT: Sicherheitsverstoß erkannt]",
+                user_message_de="Ihre Anfrage enthält einen Sicherheitsfund (z.B. API-Key). Dieser wurde entfernt.",
+                can_send_to_llm=False,
+                requires_human_review=False,
+                documentation_required=False,
+                admin_only=admin_block
+            )
+
+        # Prompt-Injection erkannt?
+        if detect_prompt_injection(text):
+            admin_block = None
+            if current_user and current_user.role == "admin":
+                admin_block = {
+                    "escalation_info": {
+                        "severity": "security",
+                        "security_finding": "PROMPT_INJECTION_DETECTED",
+                        "reason": "Angriffsmuster in Text erkannt",
+                        "required_action": "Security-Analyse durchführen",
+                        "contact": "security@ailiza.de"
+                    }
+                }
+
+            return PolicyRedactResponse(
+                decision="security_block",
+                risk_level="critical",
+                safe_text="[BLOCKIERT: Sicherheitsverstoß erkannt]",
+                user_message_de="Ihre Anfrage enthält ein Angriffsmuster. Bitte kontaktieren Sie Support.",
+                can_send_to_llm=False,
+                requires_human_review=False,
+                documentation_required=False,
+                admin_only=admin_block
+            )
+
+        # ─────────────────────────────────────────────────────────
+        # 2. POLICY + REDACTION
+        # ─────────────────────────────────────────────────────────
+
+        try:
+            from .governance.redaction_v2 import RedactionEngineV2
+        except ImportError:
+            from governance.redaction_v2 import RedactionEngineV2
+
+        # Redaction durchführen
+        redaction_engine = RedactionEngineV2()
+        redaction_result = redaction_engine.redact(text, request.detected_categories)
+
+        # ─────────────────────────────────────────────────────────
+        # 3. ENTSCHEIDUNG TREFFEN (AILIZA-Regel: nicht blockieren)
+        # ─────────────────────────────────────────────────────────
+
+        risk_level = redaction_result.level.value
+
+        if risk_level == "green":
+            decision = "safe_output"
+        elif risk_level == "yellow":
+            decision = "safe_output_with_redactions"
+        elif risk_level == "orange":
+            decision = "requires_human_review"
+        elif risk_level in ["red", "violet"]:
+            decision = "safe_output_with_redactions"
+        elif risk_level == "black":
+            decision = "requires_human_review"
+        elif risk_level == "critical":
+            decision = "requires_human_review"
+        else:
+            decision = "safe_output"
+
+        # ─────────────────────────────────────────────────────────
+        # 4. CAN_SEND_TO_LLM (nur Green/Yellow + transparent)
+        # ─────────────────────────────────────────────────────────
+
+        can_send_to_llm = (
+            decision == "safe_output" and risk_level in ["green"]
+        ) or (
+            decision == "safe_output_with_redactions" and
+            risk_level == "yellow"
+        )
+
+        # ─────────────────────────────────────────────────────────
+        # 5. NUTZER-MELDUNG
+        # ─────────────────────────────────────────────────────────
+
+        user_message = map_risk_to_user_message(risk_level)
+
+        # ─────────────────────────────────────────────────────────
+        # 6. ADMIN-BLOCK (serverseitig gefiltert)
+        # ─────────────────────────────────────────────────────────
+
+        admin_only = None
+        if current_user and current_user.role == "admin":
+            admin_only = {
+                "gdpr_reason_codes": [],  # TODO: aus policy_result
+                "ai_act_risk": "unknown",  # TODO: aus ai_act_evaluator
+                "escalation_info": build_escalation_info(risk_level, redaction_result.violations)
+            }
+
+        # ─────────────────────────────────────────────────────────
+        # 7. RESPONSE
+        # ─────────────────────────────────────────────────────────
+
+        return PolicyRedactResponse(
+            decision=decision,
+            risk_level=risk_level,
+            safe_text=redaction_result.redacted_text,
+            user_message_de=user_message,
+            can_send_to_llm=can_send_to_llm,
+            requires_human_review=decision in ["requires_human_review"],
+            documentation_required=risk_level in ["black", "critical"],
+            admin_only=admin_only
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Policy-Redaction error: {e}")
+        # TECHNICAL_BLOCK: Systemfehler
+        admin_only = None
+        if current_user and current_user.role == "admin":
+            admin_only = {
+                "escalation_info": {
+                    "severity": "system_error",
+                    "reason": "Policy-Engine error",
+                    "error": str(e),
+                    "contact": "support@ailiza.de"
+                }
+            }
+
+        return PolicyRedactResponse(
+            decision="technical_block",
+            risk_level="critical",
+            safe_text="[BLOCKIERT: Sicherheitsprüfung nicht verfügbar]",
+            user_message_de="Das System ist gerade nicht verfügbar. Bitte versuchen Sie später erneut.",
+            can_send_to_llm=False,
+            requires_human_review=False,
+            documentation_required=False,
+            admin_only=admin_only
+        )
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
