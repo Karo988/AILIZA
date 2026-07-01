@@ -962,33 +962,25 @@ let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Alle 5 Stufen werden redaktiert — kein harter Block mehr
-  const {redacted,map}=redactText(text);
-  const hasPii=Object.keys(map).length>0;
-  if(!hasPii){await _doSend(text,{});return;}
-  _pendingSendText=redacted;_pendingMap=map;
-  // Prüfen ob verbotene/geheime Kategorien enthalten
-  const rawItems=detectPrivacyItems(text);
-  const hasCritical=rawItems.some(i=>i.level==="secret"||i.level==="forbidden");
-  const banner=document.getElementById("pii-consent");
-  const btn=document.getElementById("pii-consent-btn");
-  const txtEl=document.querySelector(".pii-consent-text");
-  if(hasCritical){
-    const labels=[...new Set(rawItems.filter(i=>i.level==="secret"||i.level==="forbidden").map(i=>i.label))].join(", ");
-    txtEl.innerHTML=`🔴 <strong>Verbotene Daten erkannt (${labels}).</strong> Alle wurden durch Platzhalter ersetzt — die KI sieht <em>keine</em> echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span>`;
-    btn.textContent="Geschwärzt senden";
-  } else {
-    txtEl.innerHTML=`🔒 <strong>Sensible Daten erkannt.</strong> Vor dem Senden werden Name, Adresse, Telefon usw. automatisch durch Platzhalter ersetzt. Die KI sieht keine echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span>`;
-    btn.textContent="Verstanden & senden";
+  // Phase 1.3: Backend PolicyEngine (einzige Quelle der Wahrheit)
+  const policyResult=await redactWithBackend(text);
+  // Sicherheitsprüfung vom Backend
+  if(policyResult.decision==="security_block"||policyResult.decision==="technical_block"){
+    alert(policyResult.user_message_de);
+    inp.value="";autoResize(inp);
+    return;
   }
-  btn.style.display="";
-  if(!localStorage.getItem("ailiza_pii_consent")||hasCritical){
-    const ts=new Date().toLocaleString("de-DE");
-    document.getElementById("pii-consent-ts").textContent=ts;
-    if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{document.getElementById("pii-consent-ts").textContent=`${ts} · ${p.coords.latitude.toFixed(3)}°N ${p.coords.longitude.toFixed(3)}°E`;},()=>{});
-    banner.classList.add("show");return;
+  // Wenn menschliche Prüfung erforderlich (requires_human_review)
+  if(policyResult.decision==="requires_human_review"){
+    const ok=confirm(policyResult.user_message_de+"\n\nTrotzdem fortfahren?");
+    if(!ok){inp.value="";autoResize(inp);return;}
   }
-  await _doSend(redacted,map);
+  // safe_output oder safe_output_with_redactions — weitermachen mit Backend-Schwärzung
+  const safeText=policyResult.safe_text;
+  await _doSend(safeText,{});
+  if(policyResult.admin_only){
+    showAdminPanel(policyResult.admin_only);
+  }
 }
 async function approvePiiConsent(){
   localStorage.setItem("ailiza_pii_consent","1");
@@ -1022,8 +1014,8 @@ async function _doSend(sendText,map){
   document.getElementById("chat-input").focus();
 }
 async function runAgent(text,redactionMap){
-  // History ebenfalls schwärzen
-  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:redactText(m.content).redacted}));
+  // Phase 1.3: History wird bereits durch Backend geschwärzt
+  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
   const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
   hideTyping();
   if(!r.ok){activeRedactionMap={};renderPrivacyMemory();addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
