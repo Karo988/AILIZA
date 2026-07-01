@@ -670,7 +670,7 @@ let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto
 let context=[];
 const PRIVACY_RULES=[
   // ── ⚫ NIEMALS SENDEN (Zugangsdaten / Schlüssel) ──
-  {level:"secret",label:"API-Schlüssel",placeholder:"[API-Key]",pattern:/\b(?:sk-[A-Za-z0-9]{20,}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{35}|AKIA[A-Z0-9]{16})\b/g},
+  {level:"secret",label:"API-Schlüssel",placeholder:"[API-Key]",pattern:/\b(?:sk-[\w\-]{15,}|gsk_[\w\-]{15,}|xai-[\w\-]{15,}|AIza[A-Za-z0-9_-]{35}|AKIA[A-Z0-9]{16})\b/g},
   {level:"secret",label:"Zugangsdaten",placeholder:"[Passwort]",pattern:/\b(?:passwort|password|kennwort|geheimwort|pin)\s*[:=]\s*\S+/gi},
   {level:"secret",label:"Bearer-Token",placeholder:"[Token]",pattern:/Bearer\s+[A-Za-z0-9._\-]{20,}/g},
   // ── 🔴 VERBOTEN — Art. 9 DSGVO ──
@@ -699,7 +699,7 @@ const PRIVACY_RULES=[
   {level:"high",label:"PayPal",placeholder:"[PayPal-Konto]",pattern:/\b(?:paypal(?:konto|-konto)?|paypal\.me\/\S+)\b/gi},
   // ── 🟢 SENSIBEL (personenbezogen) ──
   {level:"normal",label:"E-Mail",placeholder:"[E-Mail]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
-  {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/\b(?:\+49[ .-]?|0)[1-9][0-9]{2,}[ ()\/.-]*[0-9]{2,}(?!\/20\d{2})\b/g},
+  {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/(?:\+49|0)[\s.-]?[1-9]\d{2,}[\s()\/.-]*\d{2,}(?![\d])/g},
   {level:"normal",label:"IP-Adresse",placeholder:"[IP-Adresse]",pattern:/\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g},
   {level:"normal",label:"Firma",placeholder:"[Firma]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+(?:&|best\s+of|[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)){0,3}\s+(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|UG(?:\s*\(haftungsbeschränkt\))?|AG|KG|OHG|GbR|e\.V\.|SE|Ltd\.?|Inc\.?|Corp\.?)\b/g},
   {level:"normal",label:"Adresse",placeholder:"[Adresse]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer|dom|berg|hof|markt|graben|garten|steig|stieg|anger)\s+\d+[a-z]?(?:\/\d+[a-z]?)?/gi},
@@ -714,6 +714,11 @@ const PRIVACY_RULES=[
   {level:"normal",label:"Referenz-Nr.",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnungs?(?:nummer|nr\.?)?|Auftragsnummer|Bestellnummer|Bestell(?:ung)?(?:s?nr\.?)?|Aktenzeichen|Vertragsnummer|Fallnummer|Angebot(?:s?nummer)?|Offertenummer)\s*[:\-#]?\s*[A-Z0-9][\w\-\/]{1,19}/gi},
   {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
   {level:"normal",label:"Datum",placeholder:"[Datum]",pattern:/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g},
+  // ── Zusätzliche kritische Patterns ──
+  {level:"high",label:"CVV",placeholder:"[CVV]",pattern:/CVV\s*[:=]?\s*\d{3,4}/gi},
+  {level:"high",label:"TAN",placeholder:"[TAN]",pattern:/TAN\s*(?:Testwert)?[:=]?\s*\d{6,8}/gi},
+  {level:"secret",label:"Private Key",placeholder:"[Schlüssel]",pattern:/-----BEGIN\s+(?:RSA\s+)?(?:PRIVATE|TEST)\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+)?(?:PRIVATE|TEST)\s+KEY-----/gi},
+  {level:"high",label:"Benutzername",placeholder:"[Benutzername]",pattern:/(?:benutzername|username|account|login|kundenkonto)\s*[:=]\s*[\w.\-@]+/gi},
 ];
 // Wörter die NIE als PII erkannt werden sollen
 const PII_STOPLIST=new Set(["AILIZA","KI","AI","EU","DSGVO","GmbH","UG","AG","KG","GbR","PDF","AGB","FAQ","CEO","CTO","CFO","HR","IT"]);
