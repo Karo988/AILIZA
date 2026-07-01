@@ -130,7 +130,7 @@ class RedactionEngineV2:
         result_text = self._remove_secrets(result_text)
 
         # 4. Redact normale PII
-        pii_count = self._redact_normal_pii(result_text)
+        result_text, pii_count = self._redact_normal_pii(result_text)
         if pii_count > 0:
             if result_level == RedactionLevel.GREEN:
                 result_level = RedactionLevel.YELLOW
@@ -218,8 +218,8 @@ class RedactionEngineV2:
                 text = pattern.sub("", text)
         return text
 
-    def _redact_normal_pii(self, text: str) -> int:
-        """Redact normale PII mit normalisierten Platzhaltern"""
+    def _redact_normal_pii(self, text: str) -> tuple[str, int]:
+        """Redact normale PII mit normalisierten Platzhaltern - gibt (modifizierter_text, count) zurück"""
         count = 0
 
         for pii_type, pattern in self.PATTERNS.items():
@@ -252,7 +252,7 @@ class RedactionEngineV2:
 
             text = pattern.sub(replacer, text)
 
-        return count
+        return text, count
 
     def _normalize_label(self, pii_type: str) -> str:
         """Normalisiert PII-Typ zu Platzhalter-Label (ohne Zähler)"""
