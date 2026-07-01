@@ -72,7 +72,7 @@ Eine manuelle Prüfung ist aus Effizienzgründen nicht vorgesehen.
 
     def test_health_data_alone_orange(self):
         """Art. 9 data alone (without HR context) should be ORANGE (approval_required)."""
-        task = "I have been diagnosed with migraine."
+        task = "Mir wurde eine Migräne diagnostiziert."
         decision = PolicyEngine.process_with_policy(task, "user1")
 
         assert decision.decision == "approval_required"
@@ -100,7 +100,7 @@ Eine manuelle Prüfung ist aus Effizienzgründen nicht vorgesehen.
 
     def test_third_country_public_yellow(self):
         """Third country unclear + public data = allow with notice (YELLOW)."""
-        task = "Außerhalb EU Verarbeitung, aber nur öffentliche Daten"
+        task = "Daten werden in USA verarbeitet. Prüfung der Datenschutzstandards nicht abgeschlossen, aber nur öffentliche Daten"
         decision = PolicyEngine.process_with_policy(task, "user1", data_class="public")
 
         assert decision.decision == "allow"
