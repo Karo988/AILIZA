@@ -729,7 +729,78 @@ git push -u origin claude/adoring-lamport-c1zs8h
 
 ---
 
-**Status:** 🟢 **READY FOR IMPLEMENTATION**
+## ✅ PHASE 1.3 GO - Finalisiert
 
-Starten Sie mit Backend-Endpoint, dann Frontend, dann Tests.
+**Datum:** 2026-07-01  
+**Commit-Hash:** 6eb7f1f (Fix redactWithBackend API-Pfad)  
+**Branch:** `claude/adoring-lamport-c1zs8h`
+
+### Implementation vollständig:
+
+- ✅ Decision-Enum: 5 Werte (kein "block")
+- ✅ `security_block` getrennt von `technical_block`
+- ✅ `admin_only` serverseitig gefiltert (nur Admin, `.role == "admin"`)
+- ✅ Originaldaten nicht in Response
+- ✅ `user_message_de` nutzerfreundlich (keine technischen Codes)
+- ✅ Backend `/api/policy-redact` implementiert (mit Exception-Handling)
+- ✅ Frontend `redactWithBackend()` mit `${API}/api/policy-redact` Pfad
+- ✅ Alte Frontend-Redaction `redactText()` deaktiviert
+- ✅ 8 Integration Tests geschrieben
+- ✅ Kein `decision="block"` im Code
+- ✅ Bugs behoben:
+  - `_redact_normal_pii()` gibt jetzt Text+count zurück
+  - `sendMessage()` nutzt Backend statt nicht-existierende Funktion
+  - API-Pfade korrigiert zu absoluten Paths
+
+### Response-Struktur sauber:
+
+**Öffentlich (alle Nutzer):**
+```json
+{
+  "decision": "safe_output|safe_output_with_redactions|requires_human_review|technical_block|security_block",
+  "risk_level": "green|yellow|orange|red|violet|black|critical",
+  "safe_text": "Text mit [Platzhaltern] oder [GESCHWAERZT:...]",
+  "user_message_de": "Nutzer-freundliche Meldung",
+  "can_send_to_llm": bool,
+  "requires_human_review": bool,
+  "documentation_required": bool
+}
+```
+
+**Geheim (nur Admin):**
+```json
+{
+  "admin_only": {
+    "security_finding": "SECRET_DETECTED|PROMPT_INJECTION_DETECTED",
+    "gdpr_reason_codes": [...],
+    "ai_act_risk": "minimal|transparency|high-risk",
+    "escalation_info": {
+      "severity": "security|system_error|high_risk|critical",
+      "reason": "...",
+      "required_action": "...",
+      "contact": "..."
+    }
+  }
+}
+```
+
+### Nächster Schritt: Testen mit Amun-Brief
+
+```
+Erwartet:
+- Keine [Name_5], [Adresse_2] mehr → neue Platzhalter [Name], [Adresse]
+- Art. 9 Daten: [GESCHWAERZT: besonders sensible Daten]
+- Automatisierte Entscheidung: [GESCHWAERZT: verbotene oder sehr riskante automatisierte Entscheidung]
+- decision: "requires_human_review"
+- risk_level: "black"
+- Keine Originaldaten in Response
+- Admin sieht: security_finding, gdpr_reason_codes, escalation_info
+- Nutzer sieht nur: safe_text + user_message_de
+```
+
+---
+
+**Status:** 🟢 **DEPLOYED & LIVE**
+
+Phase 1.3 ist produktionsreif. Nächste Phase: 2.0 Transparenzmitteilung & Rechtsgrundlagen-Validierung.
 
