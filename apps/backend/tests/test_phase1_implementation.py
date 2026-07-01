@@ -232,6 +232,85 @@ class TestRetention:
         assert "legal_hold = FALSE" in sql
 
 
+class TestHighRiskContexts:
+    """Test Phase 1.1: High-Risk Context Blockade."""
+
+    def test_detect_hr_health_combination(self):
+        text = "Bewerbung von Paula Müller. Gesundheit: wiederkehrende Migräne"
+        risks = PIITaxonomy.detect_high_risk_context(text)
+        assert len(risks) > 0
+        risk_codes = [rc for rc, _ in risks]
+        assert "HIGH_RISK_HR_HEALTH" in risk_codes
+
+    def test_block_hr_health_combination(self):
+        task = "Bewerbung Paula Ronder. Gesundheitsdaten: Migräne, früherer Herzinfarkt"
+        decision = PolicyEngine.process_with_policy(task, "user1")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+        assert decision.reason_code == "HIGH_RISK_HR_HEALTH"
+
+    def test_block_hr_biometric(self):
+        task = "Bewerber-Analyse: Biometrische Gesichtsanalyse aus Bewerbungsfoto durchgeführt"
+        decision = PolicyEngine.process_with_policy(task, "user1")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+
+    def test_block_hr_special_category(self):
+        task = "Bewerbung Kandidat X. Religion: muslimisch. Politische Meinung: grüne Wähler"
+        decision = PolicyEngine.process_with_policy(task, "user1")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+
+    def test_block_automated_decision_with_impact(self):
+        task = "Automatisierte Entscheidung: Ablehnung der Bewerbung aufgrund Scoring-Ergebnis"
+        decision = PolicyEngine.process_with_policy(task, "user1")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+        assert "HIGH_RISK_AUTOMATED_DECISION" in decision.reason_code or decision.reason_code == "HIGH_RISK_AUTOMATED_DECISION"
+
+    def test_block_credit_scoring(self):
+        task = "Bonitätsbewertung Person: Kreditwürdigkeit niedrig, Scoring: 35%"
+        decision = PolicyEngine.process_with_policy(task, "user1")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+
+    def test_block_criminal_data(self):
+        task = "Strafrechtliche Information: Person hat Eintrag im Strafregister"
+        decision = PolicyEngine.process_with_policy(task, "user1")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+
+    def test_block_trade_union_data(self):
+        task = "Gewerkschaftsbezug: mögliche Mitgliedschaft in Tarifvertrag-Gruppe"
+        decision = PolicyEngine.process_with_policy(task, "user1")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+
+    def test_third_country_unclear_confidential_data(self):
+        task = "Daten werden in USA verarbeitet. Prüfung der Datenschutzstandards nicht abgeschlossen."
+        decision = PolicyEngine.process_with_policy(task, "user1", data_class="confidential")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+
+    def test_third_country_unclear_personal_data(self):
+        task = "Drittlandübermittlung in Singapur: Auftragsverarbeitungsvertrag nicht geprüft."
+        decision = PolicyEngine.process_with_policy(task, "user1", data_class="personal")
+        assert decision.decision == "block"
+        assert decision.risk_level == "red"
+
+    def test_third_country_unclear_internal_data(self):
+        task = "Drittland USA: AVV unklar, aber nur interne Daten betroffen"
+        decision = PolicyEngine.process_with_policy(task, "user1", data_class="internal")
+        assert decision.decision == "approval_required"
+        assert decision.risk_level == "orange"
+
+    def test_third_country_unclear_public_data(self):
+        task = "Außerhalb EU Verarbeitung, aber nur öffentliche Daten"
+        decision = PolicyEngine.process_with_policy(task, "user1", data_class="public")
+        assert decision.decision == "allow"
+        assert decision.risk_level == "yellow"
+
+
 class TestFullWorkflow:
     """End-to-end tests combining all Phase 1 components."""
 
