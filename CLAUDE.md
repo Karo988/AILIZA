@@ -1,8 +1,20 @@
 # AILIZA — Projektkontext fuer Claude Code
 
-AILIZA ist ein EU-konformer (DSGVO + EU AI Act) autonomer KI-Agent fuer KMU.
-Backend: FastAPI + SQLAlchemy (SQLite). Jeder externe LLM-Call laeuft durch eine
-mehrstufige Governance-Pipeline.
+## AILIZA Vision & Anforderungen
+
+**AILIZA** = DSGVO + EU AI Act konformer KI-Assistant fuer alle KMUs
+- Nutzerfreundlich, aber mit maximaler Datensicherheit
+- Multi-LLM Support: ChatGPT, Anthropic, Groq, Mistral + Chinesische LLMs (DeepSeek, Qwen) mit Punktesystem
+- **Zertifizierungsreife erforderlich** (DSGVO-Konformität ist Voraussetzung, nicht Feature)
+- Backend: FastAPI + SQLAlchemy (SQLite). Jeder externe LLM-Call laeuft durch eine mehrstufige Governance-Pipeline.
+
+## KRITISCHE ANFORDERUNGEN
+
+⚠️ **NICHTS ohne Genehmigung aendern!** Vor jeder Code-Aenderung: ERST erklaeren WAS und WARUM, dann auf OK warten.
+
+✅ **Governance ist zentral** — jede PII, die unredaktiert rausgeht, ist ein Zertifizierungs-Fehler.
+
+✅ **Alle 5 DSGVO-Kategorien muessen redaktiert werden:** secret (⚫) > forbidden (🔴) > confidential (🟠) > high (🟡) > normal (🟢)
 
 ## Startbefehle
 ```bash
@@ -16,9 +28,19 @@ pytest apps/backend/tests/    # Bestands-Tests
 ```
 
 ## Arbeitsregeln (IMMER einhalten)
-- Vor jeder Aenderung: erst erklaeren WAS geaendert wird und WARUM — dann auf Bestaetigung warten.
-- Nie sofort committen oder pushen. Erst fragen, Aenderung zeigen, dann ausfuehren.
-- Keine Aktion ohne Rueckmeldung der Nutzerin.
+
+**GRUNDREGEL: Erst fragen, dann programmieren.**
+- Vor jeder Code-Aenderung: ERKLAEREN WAS und WARUM wird geaendert.
+- Dann auf OK/Bestaetigung WARTEN.
+- Erst DANACH: Aenderung durchfuehren, committen, pushen.
+- Keine Aktion ohne explizite Rueckmeldung der Nutzerin.
+- NIEMALS ohne Genehmigung aendern!
+
+**Wichtig fuer Zertifizierung:**
+- Jede Redaction-Rule muss korrekt sein (keine False Positives/Negatives)
+- DSGVO-Kategorien sind nicht verhandelbar (Art. 5, 6, 9, 10)
+- Governance-Pipeline darf nicht umgangen werden
+- Audit-Logs muessen lueckenlos sein
 
 ## Sicherheitsregeln (NIEMALS verletzen)
 - Keine echten API-Keys in Code oder Logs.
@@ -66,3 +88,19 @@ Chat-Endpoints sind aktuell offen (kein Token noetig) — Tier-Logik kommt spaet
 ## Mandanten
 `DEFAULT_TENANT_ID = AILIZA_DEFAULT_TENANT_ID` (Default `default`). Alle Logs/Runs/Facts
 sind tenant-gefiltert.
+
+## Model-Strategie fuer Claude Code Sessions
+
+**Standard: Sonnet 5**
+- Iterative Entwicklung (Pattern-Fixes, Tests, Debugging)
+- Governance-Code (Policy, Redaction)
+- Bugfixing & Refactoring
+- Gutes Preis-Leistungs-Verhaeltnis bei langen Sessions
+
+**Opus 4.8:** Nur fuer
+- Grosse Architektur-Entscheidungen (z.B. Pipeline neu designen)
+- DSGVO/EU AI Act Compliance-Fragen (Art. 9 Kategorisierung, etc.)
+- Code-Reviews vor Meilensteinen
+- Komplexe Sicherheits-Analysen
+
+**Haiku:** Nur fuer triviale Aufgaben (Syntax, Formatierung, Status-Checks)
