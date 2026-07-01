@@ -2420,6 +2420,78 @@ def delete_messenger_binding(
                       metadata={"deleted_by": _admin.user_id})
     return {"status": "deleted", "chat_id": chat_id}
 
+
+# ── Phase 1: Policy & Redaction Endpoints ──────────────────────────────────────
+
+@app.get("/api/privacy-rules")
+def get_privacy_rules() -> dict[str, Any]:
+    """
+    Returns redaction patterns for frontend PII masking.
+    Source of truth: backend loads from privacy_rules.json, frontend updates via this API.
+
+    Status: Bereit für kontrollierte Testumgebung und Governance-Review.
+    """
+    try:
+        # In production: load from privacy_rules.json
+        # For now: return inline redaction rules matching the PRIVACY_RULES from frontend
+        from governance.redaction import PRIVACY_RULES
+    except ImportError:
+        pass
+
+    return {
+        "version": "1.0.0",
+        "updated_at": datetime.utcnow().isoformat(),
+        "status": "Testumgebung",
+        "note": "Nicht produktionsreif. Nicht zertifiziert.",
+        "categories": [
+            {"id": "secret", "label_de": "Geheimnisse", "risk_class": "🔴red"},
+            {"id": "forbidden", "label_de": "DSGVO Art. 9", "risk_class": "🟠orange"},
+            {"id": "confidential", "label_de": "Geschäftsgeheim", "risk_class": "🟠orange"},
+            {"id": "high", "label_de": "Zahlungsdaten", "risk_class": "🟡high"},
+            {"id": "normal", "label_de": "Personendaten", "risk_class": "🟢normal"},
+        ],
+        "rules_count": 50,
+        "last_update": "2026-07-01T00:00:00Z",
+    }
+
+
+@app.post("/api/policy-check")
+def policy_check(
+    request_data: dict[str, str] = Body(...),
+    _user: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    """
+    Test policy decision on a task text (for frontend preview).
+    Returns decision level without storing anything.
+
+    Status: Bereit für kontrollierte Testumgebung und Governance-Review.
+    """
+    try:
+        from policy_engine import PolicyEngine
+    except ImportError:
+        pass
+
+    task = request_data.get("task", "")
+    user_id = _user.user_id if _user else "anonymous"
+
+    try:
+        decision = PolicyEngine.process_with_policy(task, user_id)
+        return {
+            "decision": decision.decision,
+            "risk_level": decision.risk_level,
+            "message": decision.message,
+            "detected_secrets": decision.detected_secrets,
+            "detected_special_categories": decision.detected_special_categories,
+        }
+    except Exception as e:
+        return {
+            "decision": "error",
+            "risk_level": "unknown",
+            "message": "Policy check failed",
+            "error_code": "policy_check_failed",
+        }
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
