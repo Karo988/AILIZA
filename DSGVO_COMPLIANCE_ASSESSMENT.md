@@ -471,11 +471,30 @@ LLM_PROVIDER_COMPLIANCE = {
 
 ---
 
-## 📚 Referenzen
+## 📚 Referenzen & Richtlinien
 
-- DSGVO: https://eur-lex.europa.eu/eli/reg/2016/679/oj
-- EU AI Act: https://eur-lex.europa.eu/eli/reg/2024/1689/oj
-- EDPB Guidelines on Article 22: https://edpb.ec.europa.eu/sites/default/files/files/file1/edpb_guidelines_201_automated_decision_making_en.pdf
-- Schrems II Decision: https://curia.europa.eu/jcms/upload/docs/application/pdf/2020-07/cp200091en.pdf
-- ISPC Standard Contractual Clauses: https://commission.europa.eu/publications/standard-contractual-clauses-scc_en
+### Europäische Regulierung
+
+- **DSGVO:** https://eur-lex.europa.eu/eli/reg/2016/679/oj
+- **EU AI Act:** https://eur-lex.europa.eu/eli/reg/2024/1689/oj
+- **EDPB Guidelines on Article 22:** https://edpb.ec.europa.eu/sites/default/files/files/file1/edpb_guidelines_201_automated_decision_making_en.pdf
+- **Schrems II Decision:** https://curia.europa.eu/jcms/upload/docs/application/pdf/2020-07/cp200091en.pdf
+- **Standard Contractual Clauses:** https://commission.europa.eu/publications/standard-contractual-clauses-scc_en
+
+### Deutschland 🇩🇪 (GDD & BfDI)
+
+- **GDD Musterrichtlinie für KI** (German Data Protection Association)
+  https://www.gdd.de/wp-content/uploads/2025/06/GDD-Musterrichtlinie-KI.pdf
+  
+  Konkrete deutsche Implementierungsstandards für:
+  - KI-Governance und Risikomanagement
+  - DSGVO-Konformität in KI-Systemen
+  - Datenschutz-Folgenabschätzung (DPIA)
+  - Hochrisiko-Klassifizierung
+  - Audit- und Compliance-Prozesse
+  
+- **BfDI (Bundesbeauftragter für Datenschutz):** https://www.bfdi.bund.de
+  - Offizielle deutsche Datenschutzbehörde
+  - Beschwerde- und Audit-Verfahren
+  - Aktuelle Positionspapiere zu KI und DSGVO
 

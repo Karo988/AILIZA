@@ -304,11 +304,24 @@ Phase 1.2 Implementation Tests
 
 ## 📚 Referenzdokumente
 
+### Europäisch
+
 - **DSGVO:** https://eur-lex.europa.eu/eli/reg/2016/679/oj
 - **EU AI Act:** https://eur-lex.europa.eu/eli/reg/2024/1689/oj
 - **EU Digital Strategy:** https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai
 - **EDPB Guidelines:** https://edpb.ec.europa.eu/sites/default/files/files/file1/edpb_guidelines_201_automated_decision_making_en.pdf
 - **Schrems II:** https://curia.europa.eu/jcms/upload/docs/application/pdf/2020-07/cp200091en.pdf
+
+### Deutschland 🇩🇪 (Standard-Richtlinien)
+
+- **GDD Musterrichtlinie für KI:** https://www.gdd.de/wp-content/uploads/2025/06/GDD-Musterrichtlinie-KI.pdf
+  - Offizielle deutsche Best Practice für KI-Governance
+  - Konkrete DSGVO-Implementierung
+  - Risikoklassifizierung und DPIA-Vorlagen
+  
+- **BfDI (Bundesbeauftragter für Datenschutz):** https://www.bfdi.bund.de
+  - Deutsche Aufsichtsbehörde für DSGVO-Konformität
+  - Beschwerdeverfahren (Anlaufstelle)
 
 ---
 
