@@ -45,6 +45,7 @@ try:
     from .governance.data_governance import classify, DataClass, DataTarget
     from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
+    from .compliance_auditor import evaluate_compliance, Severity
 except ImportError:
     from agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from database import (
@@ -69,6 +70,7 @@ except ImportError:
     from governance.data_governance import classify, DataClass, DataTarget
     from governance.redaction import redact, reinsert
     from governance.data_matrix import check_data_target, PolicyDecision
+    from compliance_auditor import evaluate_compliance, Severity
 
 
 @asynccontextmanager
@@ -856,6 +858,88 @@ def _is_redacted(text: str) -> bool:
     import re
     return bool(re.search(r'\[[^\]]+\]', text))
 
+
+def _compliance_pre_check(
+    task: str,
+    tenant_id: str,
+) -> dict[str, Any]:
+    """
+    DSGVO + EU-AI-Act Compliance Audit VOR Verarbeitung.
+
+    Pipeline-Platzierung: VOR _governance_pre_check (fail-closed auf Violations)
+
+    Rückgabe:
+      {"decision": "allow",          "audit_id": "..."}
+      {"decision": "review_required", "audit_id": "...", "message": "...", "violations": [...]}
+      {"decision": "block",          "audit_id": "...", "message": "...", "violations": [...]}
+    """
+    try:
+        compliance_report = evaluate_compliance(task)
+    except Exception as e:
+        # Fail-closed: bei Audit-Fehler blocken
+        write_audit_entry(
+            action="compliance.audit_error",
+            tenant_id=tenant_id,
+            metadata={"error": str(e)[:100], "task_length": len(task)},
+        )
+        return {
+            "decision": "block",
+            "audit_id": "error",
+            "message": "Compliance-Prüfung konnte nicht durchgeführt werden.",
+        }
+
+    # Audit-Report speichern
+    violations_summary = [
+        {
+            "severity": v.severity.value,
+            "article": v.article,
+            "title": v.title,
+        }
+        for v in compliance_report.violations
+    ]
+
+    audit_id = f"compliance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    write_audit_entry(
+        action="compliance.audit_completed",
+        tenant_id=tenant_id,
+        metadata={
+            "audit_id": audit_id,
+            "status": compliance_report.status.value,
+            "red_violations": compliance_report.red_count,
+            "review_violations": compliance_report.review_count,
+            "yellow_violations": compliance_report.yellow_count,
+            "violations_summary": violations_summary[:5],
+        },
+    )
+
+    # Blockierung bei kritischen Violations
+    if compliance_report.status == Severity.BLOCK:
+        return {
+            "decision": "block",
+            "audit_id": audit_id,
+            "message": (
+                f"🔴 Compliance-Blockierung: {compliance_report.red_count} kritische Violations erkannt. "
+                f"Grund: {compliance_report.block_reason}"
+            ),
+            "violations": violations_summary,
+        }
+
+    # Review-Anfrage bei Review-Violations
+    if compliance_report.status == Severity.REVIEW:
+        return {
+            "decision": "review_required",
+            "audit_id": audit_id,
+            "message": f"⚠️  Compliance-Review erforderlich: {compliance_report.review_count} Violations erkannt.",
+            "violations": violations_summary,
+        }
+
+    # Alles OK
+    return {
+        "decision": "allow",
+        "audit_id": audit_id,
+    }
+
+
 def _governance_pre_check(
     task: str,
     tenant_id: str,
@@ -1115,8 +1199,35 @@ def run_agent(
             "results": [],
         }
 
+    # ── COMPLIANCE PRE-CHECK (VOR Governance): DSGVO + EU-AI-Act Audit ────────
+    # Fail-closed: 🔴 BLOCK → sofort ablehnen, 🟠 REVIEW → Admin-Queue
+    compliance_check = _compliance_pre_check(payload.task, tenant_id=tenant)
+
+    if compliance_check["decision"] == "block":
+        return {
+            "status": "compliance_blocked",
+            "message": compliance_check["message"],
+            "ai_response": compliance_check["message"],
+            "compliance_violations": compliance_check.get("violations", []),
+            "audit_id": compliance_check.get("audit_id"),
+            "steps": [],
+            "results": [],
+        }
+
+    if compliance_check["decision"] == "review_required":
+        return {
+            "status": "compliance_review",
+            "message": compliance_check["message"],
+            "ai_response": compliance_check["message"],
+            "compliance_violations": compliance_check.get("violations", []),
+            "audit_id": compliance_check.get("audit_id"),
+            "notice": "Diese Anfrage wurde zur Admin-Genehmigung gekennzeichnet.",
+            "steps": [],
+            "results": [],
+        }
+
     # ── Governance Pre-Check: classify → data_matrix → redact/block ─────────
-    # Läuft VOR jedem Tool-Call und LLM-Call.
+    # Läuft NACH Compliance-Check.
     # BLOCK: nur bei CREDENTIALS / SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
     # PERSONAL_DATA/HR/LEGAL/FINANCIAL: lokal redacten, als Entwurf weiterlaufen.
     pre_check = _governance_pre_check(payload.task, tenant_id=tenant)
