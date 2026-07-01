@@ -1375,6 +1375,80 @@ def run_agent(
             "results": [],
         }
 
+    # ── Phase 1.2: Policy Engine High-Risk Detection (neu, ERSTES Gate) ──────
+    # Erkennt Hochrisiko-Kontexte: HR+Health, HR+Biometric, automatisierte Entscheidung, Bonitäts-Scoring, etc.
+    # BLOCKIERT auf RED, eskaliert auf ORANGE, redacted auf YELLOW, freigegeben auf GREEN.
+    try:
+        from policy_engine import PolicyEngine
+    except ImportError:
+        PolicyEngine = None
+
+    user_id = token.user_id if token else "anonymous"
+    policy_decision = None
+
+    if PolicyEngine:
+        policy_decision = PolicyEngine.process_with_policy(payload.task, user_id)
+
+        # Policy-Decision Handling
+        if policy_decision.decision == "block":
+            # RED: Sofort blockiert, keine Weiterverarbeitung
+            write_audit_entry(
+                action="policy.blocked",
+                tenant_id=tenant,
+                metadata={
+                    "reason_code": policy_decision.reason_code,
+                    "risk_level": policy_decision.risk_level,
+                    "detected_categories": policy_decision.detected_special_categories,
+                    "high_risk_contexts": [rc for rc, _ in policy_decision.high_risk_contexts] if policy_decision.high_risk_contexts else [],
+                },
+            )
+            return {
+                "status": "blocked",
+                "message": policy_decision.message,
+                "ai_response": policy_decision.message,
+                "steps": [],
+                "results": [],
+                "policy_decision": policy_decision.decision,
+                "reason_code": policy_decision.reason_code,
+            }
+
+        elif policy_decision.decision == "approval_required":
+            # ORANGE: Approval-Gate erforderlich
+            write_audit_entry(
+                action="policy.approval_required",
+                tenant_id=tenant,
+                metadata={
+                    "reason_code": policy_decision.reason_code,
+                    "risk_level": policy_decision.risk_level,
+                },
+            )
+            # TODO: Approval-Request erstellen und zurückgeben
+            # Für jetzt: auch blockieren bis Approval-System aktiv
+            return {
+                "status": "approval_required",
+                "message": policy_decision.message,
+                "ai_response": policy_decision.message,
+                "steps": [],
+                "results": [],
+                "policy_decision": policy_decision.decision,
+                "reason_code": policy_decision.reason_code,
+            }
+
+        elif policy_decision.decision == "redact":
+            # YELLOW: Redacted Text verwenden, aber mit Draft-Status
+            # Payload wird mit redacted_text überschrieben
+            payload.task = policy_decision.redacted_text
+            write_audit_entry(
+                action="policy.redacted",
+                tenant_id=tenant,
+                metadata={
+                    "reason_code": policy_decision.reason_code,
+                    "risk_level": policy_decision.risk_level,
+                },
+            )
+
+        # GREEN: Normaler Flow, keine Änderung erforderlich
+
     # ── Governance Pre-Check: classify → data_matrix → redact/block ─────────
     # Läuft VOR jedem Tool-Call und LLM-Call.
     # BLOCK: nur bei CREDENTIALS / SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
