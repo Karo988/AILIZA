@@ -695,7 +695,7 @@ async function redactWithBackend(text, context=null){
   }
   try{
     const token=localStorage.getItem("auth_token")||"";
-    const response=await fetch("/api/policy-redact",{
+    const response=await fetch(`${API}/api/policy-redact`,{
       method:"POST",
       headers:{
         "Content-Type":"application/json",
