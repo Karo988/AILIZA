@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#2D5F3F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="AILIZA">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon.svg">
 <title>AILIZA — Ihr autonomer KI-Assistent</title>
+<script src="/config.js"></script>
 <style>
 :root {
   --bg: #FAFAF7;
@@ -32,8 +39,6 @@ body{
   display:flex;
   flex-direction:column;
 }
-
-/* ── TOP BAR ── */
 .topbar{
   height:42px;
   background:var(--surface);
@@ -44,773 +49,352 @@ body{
   gap:12px;
   flex-shrink:0;
 }
-.brand{
-  font-weight:700;
-  font-size:14px;
-  letter-spacing:.5px;
-}
+.brand{font-weight:700;font-size:14px;letter-spacing:.5px}
 .brand-mark{color:var(--accent)}
 .brand-sub{font-size:11px;color:var(--text-muted);font-weight:400;margin-left:6px}
-.topbar-status{
-  margin-left:auto;
-  display:flex;
-  align-items:center;
-  gap:10px;
-  font-size:11px;
-}
-.status-dot{
-  display:inline-flex;
-  align-items:center;
-  gap:5px;
-  padding:3px 9px;
-  border-radius:20px;
-  font-weight:500;
-}
+.topbar-status{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:11px}
+.status-dot{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-weight:500}
 .status-ok{background:var(--accent-soft);color:var(--accent)}
 .status-off{background:#FCE8E8;color:var(--err)}
-.deadline-pill{
-  background:var(--warn-soft);
-  color:var(--warn);
-  padding:3px 9px;
-  border-radius:20px;
-  font-weight:500;
-}
-
-/* ── LAYOUT ── */
-.app{
-  flex:1;
-  display:flex;
-  min-height:0;
-}
-
-/* ── SIDEBAR ── */
-.sidebar{
-  width:240px;
-  background:var(--surface);
-  border-right:1px solid var(--border);
-  display:flex;
-  flex-direction:column;
-  flex-shrink:0;
-}
-.side-section{
-  padding:6px 8px;
-}
-.side-section + .side-section{
-  border-top:1px solid var(--border);
-}
-.side-label{
-  font-size:10px;
-  font-weight:600;
-  color:var(--text-muted);
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  padding:8px 10px 4px;
-}
-.side-item{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:7px 10px;
-  border-radius:6px;
-  cursor:pointer;
-  font-size:13px;
-  color:var(--text-soft);
-  user-select:none;
-}
+.deadline-pill{background:var(--warn-soft);color:var(--warn);padding:3px 9px;border-radius:20px;font-weight:500}
+.app{flex:1;display:flex;min-height:0}
+.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.dsgvo-sidebar{width:200px;background:var(--surface);border-left:1px solid var(--border);display:none;flex-direction:column;flex-shrink:0;overflow-y:auto;padding:12px 10px;gap:6px}
+.dsgvo-sidebar.visible{display:flex}
+.dsgvo-sidebar-title{font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.dsgvo-sidebar-empty{font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;line-height:1.6}
+.dsgvo-sidebar .dsgvo-bubble{min-width:unset;width:100%;box-sizing:border-box}
+.side-section{padding:6px 8px}
+.side-section+.side-section{border-top:1px solid var(--border)}
+.side-label{font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;padding:8px 10px 4px}
+.side-item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text-soft);user-select:none}
 .side-item:hover{background:var(--surface-2)}
 .side-item.active{background:var(--surface-2);color:var(--text);font-weight:500}
 .side-ic{width:14px;text-align:center;flex-shrink:0;font-size:13px}
-.side-count{
-  margin-left:auto;
-  font-size:10px;
-  background:var(--surface-2);
-  color:var(--text-muted);
-  padding:1px 6px;
-  border-radius:10px;
-  font-weight:500;
-}
+.side-count{margin-left:auto;font-size:10px;background:var(--surface-2);color:var(--text-muted);padding:1px 6px;border-radius:10px;font-weight:500}
 .side-item.active .side-count{background:var(--border);color:var(--text-soft)}
-.side-scroll{
-  flex:1;
-  overflow-y:auto;
-}
-.side-list-item{
-  padding:6px 10px 6px 24px;
-  font-size:12px;
-  color:var(--text-soft);
-  cursor:pointer;
-  border-radius:6px;
-  display:flex;
-  align-items:center;
-  gap:8px;
-  position:relative;
-}
+.side-scroll{flex:1;overflow-y:auto}
+.side-list-item{padding:6px 10px 6px 24px;font-size:12px;color:var(--text-soft);cursor:pointer;border-radius:6px;display:flex;align-items:center;gap:8px;position:relative}
 .side-list-item:hover{background:var(--surface-2)}
-.side-list-item .dot{
-  width:5px;
-  height:5px;
-  border-radius:50%;
-  background:var(--text-muted);
-  flex-shrink:0;
-}
+.side-list-item .dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);flex-shrink:0}
 .side-list-item.active .dot{background:var(--accent)}
-.side-list-text{
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-  flex:1;
-}
-.side-list-meta{
-  font-size:10px;
-  color:var(--text-muted);
-  flex-shrink:0;
-}
-.side-add{
-  padding:6px 10px;
-  font-size:11px;
-  color:var(--text-muted);
-  cursor:pointer;
-  border-radius:6px;
-}
-.side-add:hover{color:var(--text);background:var(--surface-2)}
-.side-footer{
-  border-top:1px solid var(--border);
-  padding:10px 14px;
-  font-size:10px;
-  color:var(--text-muted);
-  text-align:center;
-}
-
-/* ── MAIN ── */
-.main{
-  flex:1;
-  display:flex;
-  flex-direction:column;
-  min-width:0;
-}
-
-/* ── TABS / VIEW SWITCH ── */
+.side-list-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.side-list-meta{font-size:10px;color:var(--text-muted);flex-shrink:0}
+.side-add{padding:7px 10px;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;border-radius:6px;background:var(--accent-soft);margin:4px 8px;text-align:center}
+.side-add:hover{background:#d4e8d8;color:#234a31}
+.side-footer{border-top:1px solid var(--border);padding:10px 14px;font-size:10px;color:var(--text-muted);text-align:center}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
 .view{display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden}
 .view.active{display:flex}
-
-/* ── CHAT VIEW ── */
-.chat-header{
-  padding:14px 20px;
-  border-bottom:1px solid var(--border);
-  background:var(--surface);
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex-shrink:0;
-}
-.chat-title{
-  font-size:14px;
-  font-weight:600;
-}
-.chat-subtitle{
-  font-size:11px;
-  color:var(--text-muted);
-}
+.chat-header{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.chat-title{font-size:14px;font-weight:600}
+.chat-subtitle{font-size:11px;color:var(--text-muted)}
 .chat-actions{margin-left:auto;display:flex;gap:6px}
-.btn-mini{
-  border:1px solid var(--border);
-  background:var(--surface);
-  padding:4px 10px;
-  font-size:11px;
-  border-radius:5px;
-  cursor:pointer;
-  color:var(--text-soft);
-}
+.btn-mini{border:1px solid var(--border);background:var(--surface);padding:4px 10px;font-size:11px;border-radius:5px;cursor:pointer;color:var(--text-soft)}
 .btn-mini:hover{background:var(--surface-2)}
-
-.chat-body{
-  flex:1;
-  overflow-y:auto;
-  padding:20px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-}
-.chat-inner{
-  width:100%;
-  max-width:720px;
-  display:flex;
-  flex-direction:column;
-  gap:14px;
-}
-
-.welcome{
-  text-align:center;
-  padding:48px 20px 24px;
-}
-.welcome-h{
-  font-size:22px;
-  font-weight:600;
-  margin-bottom:8px;
-  letter-spacing:-.3px;
-}
-.welcome-sub{
-  font-size:13px;
-  color:var(--text-soft);
-  margin-bottom:24px;
-}
-.welcome-chips{
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-  justify-content:center;
-  max-width:540px;
-  margin:0 auto;
-}
-.chip{
-  background:var(--surface);
-  border:1px solid var(--border);
-  padding:8px 14px;
-  border-radius:20px;
-  font-size:12px;
-  cursor:pointer;
-  color:var(--text-soft);
-}
+.chat-body{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center}
+.chat-inner{width:100%;max-width:720px;display:flex;flex-direction:column;gap:14px}
+.welcome{text-align:center;padding:48px 20px 24px}
+.welcome-h{font-size:22px;font-weight:600;margin-bottom:8px;letter-spacing:-.3px}
+.welcome-sub{font-size:13px;color:var(--text-soft);margin-bottom:24px}
+.welcome-chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-width:540px;margin:0 auto}
+.chip{background:var(--surface);border:1px solid var(--border);padding:8px 14px;border-radius:20px;font-size:12px;cursor:pointer;color:var(--text-soft)}
 .chip:hover{background:var(--surface-2);border-color:var(--border-strong);color:var(--text)}
-
-.msg{
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-}
+.msg{display:flex;flex-direction:column;gap:4px}
 .msg.user{align-items:flex-end}
 .msg.ai{align-items:flex-start}
-.bubble{
-  padding:10px 14px;
-  border-radius:14px;
-  max-width:88%;
-  font-size:13px;
-  line-height:1.6;
-  word-wrap:break-word;
-}
+/* ── Basis-Blase ── */
+.bubble{padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.6;word-wrap:break-word;white-space:pre-wrap}
+/* ── Nutzer-Blase: rechts, bleibt vollständig sichtbar ── */
 .bubble.user{
-  background:var(--accent);
-  color:#fff;
-  border-bottom-right-radius:4px;
-}
-.bubble.ai{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-bottom-left-radius:4px;
-}
-.bubble.ai strong{color:var(--text)}
-.bubble.ai code{
-  background:var(--surface-2);
-  padding:1px 5px;
-  border-radius:3px;
-  font-size:12px;
-}
-.msg-tags{
-  display:flex;
-  flex-wrap:wrap;
-  gap:4px;
+  background:var(--accent);color:#fff;border-bottom-right-radius:4px;
   max-width:88%;
+  animation:slideInRight .25s ease;
 }
-.msg-tag{
-  font-size:10px;
-  padding:2px 7px;
-  border-radius:10px;
-  font-weight:500;
+@keyframes slideInRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+/* ── PII-Daten: schieben sich nach rechts raus (Fun-Effekt) ── */
+.dsgvo-bubble{
+  display:inline-flex;align-items:center;gap:5px;
+  background:var(--surface-2);border:1px solid var(--border);
+  border-radius:20px;padding:3px 10px;font-size:11px;color:var(--text-soft);
+  transition:transform .6s cubic-bezier(.4,0,.2,1),max-width .5s ease,opacity .4s ease,padding .4s ease;
+  overflow:hidden;white-space:nowrap;max-width:300px;cursor:default;
 }
+.dsgvo-bubble.high{background:#FFFBE6;border-color:#E0A800;color:#7A5A00}
+.dsgvo-bubble.confidential{background:#FFF0E6;border-color:#E07B00;color:#7A3A00}
+.dsgvo-bubble.forbidden{background:#FDE8E8;border-color:#C0392B;color:#7A1A1A}
+.dsgvo-bubble.secret{background:#1A1A1A;border-color:#000;color:#F0C040}
+.dsgvo-bubble-label{font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+.dsgvo-bubble-value{color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.dsgvo-bubble.fly-out{transform:translateX(120px);opacity:0;max-width:36px;padding:3px 6px}
+.dsgvo-bubble.minimized{transform:none;opacity:.7;max-width:36px;padding:3px 6px;font-size:9px;color:transparent}
+.dsgvo-bubble.minimized::before{content:"🔒";font-size:12px;color:var(--accent);display:block}
+/* ── PII-Einverständnis-Banner ── */
+.pii-consent{background:#FFF9E6;border:1px solid #E8D9A0;border-radius:8px;padding:10px 14px;margin:0 0 8px;font-size:12px;color:#7A6200;display:none;align-items:flex-start;gap:10px}
+.pii-consent.show{display:flex}
+.pii-consent-text{flex:1;line-height:1.5}
+.pii-consent-btn{background:var(--accent);color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.pii-consent-deny{background:none;color:var(--text-muted);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px}
+/* ── AILIZA-Blase: links, öffnet sich wie ein Mund ── */
+.bubble.ai{
+  background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px;
+  max-width:88%;overflow:hidden;
+  max-height:0;opacity:0;padding:0 14px;
+  transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .3s ease,padding .3s ease;
+}
+.bubble.ai.open{max-height:1200px;opacity:1;padding:10px 14px}
+.bubble.ai strong{color:var(--text)}
+.bubble.ai code{background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:12px}
+.msg-tags{display:flex;flex-wrap:wrap;gap:4px;max-width:88%}
+.msg-tag{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500}
 .tag-ai{background:var(--accent-soft);color:var(--accent)}
 .tag-warn{background:var(--warn-soft);color:var(--warn)}
-.tag-info{background:#E6EEF5;color:#1F4569}
-.msg-meta{
-  font-size:10px;
-  color:var(--text-muted);
-  padding:0 4px;
-}
-
-.typing{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:14px;
-  border-bottom-left-radius:4px;
-  padding:10px 14px;
-  display:flex;
-  gap:4px;
-  align-self:flex-start;
-}
-.typing span{
-  width:5px;
-  height:5px;
-  background:var(--text-muted);
-  border-radius:50%;
-  animation:bounce .8s infinite;
-}
+.draft-banner{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;color:#1D4ED8;font-size:12px;font-weight:500;padding:6px 12px;margin-bottom:6px}
+.msg-meta{font-size:10px;color:var(--text-muted);padding:0 4px}
+.typing{background:var(--surface);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-self:flex-start}
+.typing span{width:5px;height:5px;background:var(--text-muted);border-radius:50%;animation:bounce .8s infinite}
 .typing span:nth-child(2){animation-delay:.15s}
 .typing span:nth-child(3){animation-delay:.3s}
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
-
-/* ── INPUT ── */
-.input-wrap{
-  padding:14px 20px 18px;
-  background:var(--bg);
-  flex-shrink:0;
-}
-.privacy-panel{
-  max-width:720px;
-  margin:0 auto 8px;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:9px 11px;
-  font-size:11px;
-}
-.privacy-head{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:7px;
-}
-.privacy-title{
-  font-weight:700;
-  color:var(--text);
-}
-.privacy-note{
-  color:var(--text-muted);
-}
-.privacy-items{
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-}
-.privacy-pill{
-  border:1px solid var(--border);
-  border-radius:999px;
-  padding:3px 9px;
-  line-height:1.4;
-  max-width:100%;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.privacy-pill.high{
-  background:#FCE8E8;
-  border-color:#D23B3B;
-  color:#8B2424;
-  font-weight:800;
-}
-.privacy-pill.normal{
-  background:#E8F0EA;
-  border-color:#B6D2BD;
-  color:#2D5F3F;
-  font-weight:600;
-}
-.privacy-pill.empty{
-  background:#E8F0EA;
-  border-color:#B6D2BD;
-  color:#2D5F3F;
-}
-.input-box{
-  max-width:720px;
-  margin:0 auto;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:12px;
-  padding:10px 12px;
-  transition:border-color .15s, box-shadow .15s;
-}
-.input-box:focus-within{
-  border-color:var(--border-strong);
-  box-shadow:0 0 0 3px rgba(45,95,63,.06);
-}
-.input-row{
-  display:flex;
-  align-items:flex-end;
-  gap:8px;
-}
-.input-field{
-  flex:1;
-  border:none;
-  outline:none;
-  font-family:inherit;
-  font-size:13px;
-  background:transparent;
-  resize:none;
-  max-height:140px;
-  line-height:1.5;
-  color:var(--text);
-}
+.input-wrap{padding:14px 20px 18px;background:var(--bg);flex-shrink:0}
+.privacy-panel{max-width:720px;margin:0 auto 8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:11px}
+.privacy-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.privacy-title{font-weight:700;color:var(--text);font-size:12px}
+.privacy-note{color:var(--text-muted);font-size:11px}
+.privacy-items{display:flex;flex-wrap:wrap;gap:8px}
+.privacy-pill{border:1px solid var(--border);border-radius:999px;padding:3px 9px;line-height:1.4;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.privacy-pill.empty{background:#E8F0EA;border-color:#B6D2BD;color:#2D5F3F}
+/* Gehaltene Datenblasen — groß und sichtbar */
+.dsgvo-bubble{background:#E8F0EA;border:2px solid #2D5F3F;border-radius:12px;padding:8px 14px;display:flex;flex-direction:column;gap:2px;animation:bubbleIn .25s ease;min-width:100px}
+.dsgvo-bubble.high{background:#FFFBE6;border-color:#E0A800}
+.dsgvo-bubble.confidential{background:#FFF0E0;border-color:#E07B00}
+.dsgvo-bubble.forbidden{background:#FCE8E8;border-color:#C0392B}
+.dsgvo-bubble.secret{background:#1A1A1A;border-color:#000}
+.dsgvo-bubble-label{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.dsgvo-bubble-value{font-size:13px;font-weight:600;color:#1A3D28;word-break:break-all}
+.dsgvo-bubble.high .dsgvo-bubble-value{color:#7A5A00}
+.dsgvo-bubble.confidential .dsgvo-bubble-value{color:#7A3A00}
+.dsgvo-bubble.forbidden .dsgvo-bubble-value{color:#8B2424}
+.dsgvo-bubble.secret .dsgvo-bubble-label{color:#888}
+.dsgvo-bubble.secret .dsgvo-bubble-value{color:#F0C040}
+@keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
+.input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
+.input-box:focus-within{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(45,95,63,.06)}
+.input-row{display:flex;align-items:flex-end;gap:8px}
+.input-field{flex:1;border:none;outline:none;font-family:inherit;font-size:13px;background:transparent;resize:vertical;max-height:200px;line-height:1.5;color:var(--text);user-select:text}
 .input-field::placeholder{color:var(--text-muted)}
-.input-send{
-  width:32px;height:32px;
-  background:var(--accent);
-  color:#fff;
-  border:none;
-  border-radius:8px;
-  cursor:pointer;
-  font-size:14px;
-  flex-shrink:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
+.input-send{width:32px;height:32px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
 .input-send:disabled{background:var(--border-strong);cursor:not-allowed}
-.input-toolbar{
-  display:flex;
-  align-items:center;
-  gap:6px;
-  margin-top:8px;
-  padding-top:8px;
-  border-top:1px solid var(--surface-2);
-  font-size:11px;
-}
-.tool-btn{
-  display:flex;
-  align-items:center;
-  gap:5px;
-  padding:4px 9px;
-  border:1px solid transparent;
-  background:transparent;
-  border-radius:5px;
-  cursor:pointer;
-  font-size:11px;
-  color:var(--text-soft);
-}
+.kI-preview-container{margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2)}
+.kI-preview-label{font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:500}
+.kI-preview-field{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px;font-family:inherit;font-size:12px;background:var(--surface-2);color:var(--text-muted);resize:vertical;max-height:200px;line-height:1.5;user-select:text}
+.kI-preview-field::placeholder{color:var(--text-muted);opacity:.7}
+.input-toolbar{display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2);font-size:11px}
+.tool-btn{display:flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid transparent;background:transparent;border-radius:5px;cursor:pointer;font-size:11px;color:var(--text-soft)}
 .tool-btn:hover{background:var(--surface-2);color:var(--text)}
 .tool-btn.active{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}
 .tool-sep{flex:1}
-.tool-select{
-  background:transparent;
-  border:1px solid var(--border);
-  padding:3px 8px;
-  border-radius:5px;
-  font-size:11px;
-  font-family:inherit;
-  color:var(--text-soft);
-  cursor:pointer;
-  outline:none;
-}
-
-/* ── PROJEKTE VIEW ── */
-.page-wrap{
-  flex:1;
-  overflow-y:auto;
-  padding:24px 32px;
-}
-.page-head{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  margin-bottom:20px;
-}
-.page-title{
-  font-size:20px;
-  font-weight:600;
-  letter-spacing:-.3px;
-}
-.page-sub{
-  font-size:12px;
-  color:var(--text-muted);
-  margin-top:2px;
-}
-.btn-primary{
-  background:var(--accent);
-  color:#fff;
-  border:none;
-  padding:7px 14px;
-  border-radius:6px;
-  font-size:12px;
-  font-weight:500;
-  cursor:pointer;
-}
+.tool-select{background:transparent;border:1px solid var(--border);padding:3px 8px;border-radius:5px;font-size:11px;font-family:inherit;color:var(--text-soft);cursor:pointer;outline:none}
+.page-wrap{flex:1;overflow-y:auto;padding:24px 32px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px}
+.page-title{font-size:20px;font-weight:600;letter-spacing:-.3px}
+.page-sub{font-size:12px;color:var(--text-muted);margin-top:2px}
+.btn-primary{background:var(--accent);color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer}
 .btn-primary:hover{background:#234a31}
-.grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
-  gap:12px;
-}
-.card{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px;
-}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
 .card-h{font-size:13px;font-weight:600;margin-bottom:4px}
 .card-desc{font-size:12px;color:var(--text-soft);margin-bottom:10px;line-height:1.5}
-.card-meta{
-  display:flex;
-  gap:6px;
-  font-size:10px;
-  flex-wrap:wrap;
-}
-.meta-pill{
-  background:var(--surface-2);
-  color:var(--text-soft);
-  padding:2px 8px;
-  border-radius:10px;
-  font-weight:500;
-}
+.card-meta{display:flex;gap:6px;font-size:10px;flex-wrap:wrap}
+.meta-pill{background:var(--surface-2);color:var(--text-soft);padding:2px 8px;border-radius:10px;font-weight:500}
 .meta-pill.hi{background:var(--warn-soft);color:var(--warn)}
-.meta-pill.del{
-  background:transparent;
-  color:var(--text-muted);
-  cursor:pointer;
-  border:none;
-  margin-left:auto;
-}
+.meta-pill.del{background:transparent;color:var(--text-muted);cursor:pointer;border:none;margin-left:auto}
 .meta-pill.del:hover{color:var(--err)}
-.empty{
-  text-align:center;
-  padding:48px;
-  color:var(--text-muted);
-  font-size:13px;
-}
-
-/* ── STATUS ── */
-.metrics{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
-  gap:10px;
-  margin-bottom:20px;
-}
-.metric{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px;
-}
+.empty{text-align:center;padding:48px;color:var(--text-muted);font-size:13px}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
 .metric-lbl{font-size:11px;color:var(--text-muted);margin-bottom:6px}
 .metric-val{font-size:22px;font-weight:600;letter-spacing:-.3px}
 .metric-val.warn{color:var(--warn)}
 .metric-val.ok{color:var(--accent)}
-
-/* ── MODAL ── */
-.modal{
-  position:fixed;
-  inset:0;
-  background:rgba(20,20,20,.4);
-  display:none;
-  align-items:center;
-  justify-content:center;
-  z-index:100;
-}
+.modal{position:fixed;inset:0;background:rgba(20,20,20,.4);display:none;align-items:center;justify-content:center;z-index:100}
 .modal.open{display:flex}
-.modal-box{
-  background:var(--surface);
-  border-radius:12px;
-  padding:20px;
-  width:90%;
-  max-width:440px;
-}
+.modal-box{background:var(--surface);border-radius:12px;padding:20px;width:90%;max-width:440px}
 .modal-h{font-size:15px;font-weight:600;margin-bottom:14px}
 .field{margin-bottom:10px}
-.field label{
-  display:block;
-  font-size:11px;
-  color:var(--text-muted);
-  margin-bottom:4px;
-}
-.field input,.field textarea,.field select{
-  width:100%;
-  border:1px solid var(--border);
-  border-radius:6px;
-  padding:7px 9px;
-  font-size:12px;
-  font-family:inherit;
-  outline:none;
-  background:var(--surface);
-}
-.field input:focus,.field textarea:focus,.field select:focus{
-  border-color:var(--accent);
-}
-.modal-acts{
-  display:flex;
-  gap:8px;
-  justify-content:flex-end;
-  margin-top:14px;
-}
-.btn-ghost{
-  background:transparent;
-  border:1px solid var(--border);
-  color:var(--text-soft);
-  padding:7px 14px;
-  font-size:12px;
-  border-radius:6px;
-  cursor:pointer;
-}
-
-/* ── KEY POPOVER ── */
-.key-pop{
-  position:absolute;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:8px;
-  padding:12px;
-  box-shadow:0 4px 20px rgba(0,0,0,.08);
-  z-index:50;
-  display:none;
-  width:280px;
-}
+.field label{display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px}
+.field input,.field textarea,.field select{width:100%;border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:12px;font-family:inherit;outline:none;background:var(--surface)}
+.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--accent)}
+.modal-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text-soft);padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer}
+.key-pop{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;box-shadow:0 4px 20px rgba(0,0,0,.08);z-index:50;display:none;width:280px}
 .key-pop.open{display:block}
 .key-pop label{font-size:11px;color:var(--text-muted);margin-bottom:4px;display:block}
-.key-pop input{
-  width:100%;
-  padding:6px 8px;
-  font-size:12px;
-  border:1px solid var(--border);
-  border-radius:5px;
-  outline:none;
-  font-family:inherit;
-}
+.key-pop input{width:100%;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;outline:none;font-family:inherit}
 .key-pop-actions{display:flex;gap:6px;margin-top:8px;justify-content:flex-end}
-
-/* SKILL TILES */
-.skill-tiles{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
-  gap:10px;
-}
-.skill-tile{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:14px;
-  cursor:pointer;
-  transition:border-color .15s;
-}
+.skill-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.skill-tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s}
 .skill-tile:hover{border-color:var(--accent)}
 .skill-ic{font-size:18px;margin-bottom:8px}
 .skill-n{font-size:13px;font-weight:600;margin-bottom:3px}
 .skill-d{font-size:11px;color:var(--text-muted);line-height:1.4}
+/* ── Nachrichten-Aktionen ── */
+.msg-actions{display:flex;gap:4px;margin-top:3px;opacity:0;transition:opacity .15s}
+.msg:hover .msg-actions{opacity:1}
+.user-actions{justify-content:flex-end}
+.ai-actions{justify-content:flex-start}
+.msg-act{background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer;color:var(--text-muted);transition:background .1s}
+.msg-act:hover{background:var(--surface-2);color:var(--text)}
+/* ── Wissensbibliothek ── */
+.wissen-cats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.wissen-cat-btn{padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);font-size:12px;cursor:pointer;color:var(--text-soft)}
+.wissen-cat-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.wissen-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.wissen-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s}
+.wissen-card:hover{border-color:var(--accent)}
+.wissen-card-ic{font-size:16px;margin-bottom:6px}
+.wissen-card-title{font-size:13px;font-weight:600;margin-bottom:3px}
+.wissen-card-desc{font-size:11px;color:var(--text-muted);line-height:1.4;margin-bottom:8px}
+.wissen-card-cat{font-size:10px;background:var(--surface-2);color:var(--text-muted);padding:2px 7px;border-radius:10px;font-weight:500;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* ── Hamburger Button ── */
+.mob-menu-btn{display:none;background:none;border:none;font-size:20px;cursor:pointer;padding:4px 8px;color:var(--text);line-height:1;margin-right:4px;border-radius:6px}
+.mob-menu-btn:hover{background:var(--surface-2)}
+/* ── Sidebar Overlay (Mobile) ── */
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:49}
+.sidebar-overlay.open{display:block}
+/* ── Mobile Media Queries ── */
+@media(max-width:768px){
+  .topbar{padding:0 12px;height:44px}
+  .brand{font-size:15px}
+  .brand-sub{display:none}
+  .deadline-pill{display:none}
+  .mob-menu-btn{display:inline-flex;align-items:center;justify-content:center}
+  .sidebar{
+    position:fixed;top:0;left:0;height:100%;z-index:50;
+    transform:translateX(-100%);transition:transform .25s cubic-bezier(.4,0,.2,1);
+    width:260px!important;
+  }
+  .sidebar.open{transform:translateX(0)}
+  .app{flex-direction:column}
+  .main{min-width:0;width:100%}
+  .chat-header{padding:10px 14px;gap:8px}
+  .chat-title{font-size:13px}
+  .chat-subtitle{display:none}
+  .chat-body{padding:12px}
+  .chat-inner{gap:10px}
+  .bubble{font-size:13px;max-width:94%}
+  .welcome{padding:28px 10px 16px}
+  .welcome-h{font-size:18px}
+  .welcome-chips{gap:5px}
+  .chip{font-size:11px;padding:6px 10px}
+  .input-wrap{padding:10px 12px 14px}
+  .privacy-panel{display:none}
+  .dsgvo-sidebar{display:none}
+  .privacy-panel.expanded{display:block}
+  .privacy-toggle-mob{display:flex!important}
+  .input-box{border-radius:10px}
+  .input-field{font-size:14px}
+  .input-toolbar{gap:4px}
+  .tool-btn{padding:3px 7px;font-size:11px}
+  .page-wrap{padding:14px 14px}
+  .grid{grid-template-columns:1fr}
+  .metrics{grid-template-columns:repeat(2,1fr)}
+  .skill-tiles{grid-template-columns:repeat(2,1fr)}
+  .wissen-grid{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
-
-<!-- ── TOP BAR ── -->
 <div class="topbar">
-  <div class="brand">
-    AI<span class="brand-mark">LIZA</span>
-    <span class="brand-sub">v0.4 · KMU · EU-konform</span>
-  </div>
+  <div class="brand">AI<span class="brand-mark">LIZA</span><span class="brand-sub">v0.5 · KMU · EU-konform</span></div>
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
   </div>
 </div>
-
-<!-- ── APP ── -->
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 <div class="app">
-
-  <!-- ── SIDEBAR ── -->
-  <div class="sidebar">
-
+  <div class="sidebar" id="sidebar">
     <div class="side-section">
-      <div class="side-item active" onclick="showView('chat',this)">
-        <span class="side-ic">💬</span><span>Neuer Chat</span>
-      </div>
-      <div class="side-item" onclick="showView('projects',this)">
-        <span class="side-ic">📁</span><span>Projekte</span>
-        <span class="side-count" id="proj-count">0</span>
-      </div>
-      <div class="side-item" onclick="showView('skills',this)">
-        <span class="side-ic">⚡</span><span>Skills</span>
-      </div>
-      <div class="side-item" onclick="showView('status',this)">
-        <span class="side-ic">🛡️</span><span>Compliance</span>
-      </div>
+      <div class="side-item active" onclick="newChat();this.classList.add('active');closeSidebar()"><span class="side-ic">💬</span><span>Neuer Chat</span></div>
+      <div class="side-item" onclick="showView('projects',this);closeSidebar()"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
+      <div class="side-item" onclick="showView('skills',this);closeSidebar()"><span class="side-ic">⚡</span><span>Skills</span></div>
+      <div class="side-item" onclick="showView('status',this);closeSidebar()"><span class="side-ic">🛡️</span><span>Compliance</span></div>
+      <div class="side-item" onclick="showView('impressum',this);closeSidebar()"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
+      <div class="side-item" onclick="showView('wissen',this);closeSidebar()"><span class="side-ic">📚</span><span>Wissensbibliothek</span></div>
+      <div class="side-item" onclick="showView('agb',this);closeSidebar()"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
     </div>
-
     <div class="side-section">
       <div class="side-label">Letzte Chats</div>
-      <div class="side-scroll" id="recent-chats" style="max-height:200px">
-        <div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>
-      </div>
+      <div class="side-scroll" id="recent-chats" style="max-height:200px"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div></div>
       <div class="side-add" onclick="newChat()">＋ Neuer Chat</div>
     </div>
-
     <div class="side-section">
       <div class="side-label">Projekte</div>
-      <div id="proj-list" style="max-height:160px;overflow-y:auto">
-        <div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>
-      </div>
+      <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div></div>
       <div class="side-add" onclick="openProjModal()">＋ Neues Projekt</div>
     </div>
-
     <div class="side-section">
       <div class="side-label">Ordner</div>
       <div id="folder-list"></div>
       <div class="side-add" onclick="addFolder()">＋ Ordner</div>
     </div>
-
     <div style="flex:1"></div>
-    <div class="side-footer">
-      AILIZA · EU AI Act Art. 52<br>
-      <span style="color:var(--accent)">Limited Risk · DSGVO</span>
-    </div>
+    <div class="side-footer">AILIZA · EU AI Act Art. 52<br><span style="color:var(--accent)">Limited Risk · DSGVO</span></div>
   </div>
-
-  <!-- ── MAIN ── -->
   <div class="main">
-
-    <!-- ═══ CHAT VIEW ═══ -->
     <div class="view active" id="view-chat">
       <div class="chat-header">
-        <div>
-          <div class="chat-title">Chat mit AILIZA</div>
-          <div class="chat-subtitle">Autonomer KI-Assistent · Antwortet auf Deutsch · DSGVO-konform</div>
-        </div>
+        <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen">☰</button>
+        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 52</div></div>
         <div class="chat-actions">
-          <button class="btn-mini" onclick="clearChat()">🗑 Verlauf löschen</button>
+          <button class="btn-mini" onclick="clearChat()">🗑 Löschen</button>
           <button class="btn-mini" onclick="exportChat()">⬇ Export</button>
         </div>
       </div>
-
-      <div class="chat-body" id="chat-body">
-        <div class="chat-inner" id="chat-inner">
-          <div class="welcome">
-            <div class="welcome-h">Was kann ich für Sie tun?</div>
-            <div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div>
-            <div class="welcome-chips">
-              <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">✉️ E-Mail schreiben</div>
-              <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
-              <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
-              <div class="chip" onclick="quickPrompt('Welcher Tag ist heute?')">📅 Heutiges Datum</div>
-              <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
-              <div class="chip" onclick="quickPrompt('Ist das DSGVO-konform? ')">🔒 DSGVO-Check</div>
-            </div>
+      <div class="chat-body" id="chat-body"><div class="chat-inner" id="chat-inner">
+        <div class="welcome">
+          <div class="welcome-h">Was kann ich für Sie tun?</div>
+          <div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div>
+          <div class="welcome-chips">
+            <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">📧 E-Mail schreiben</div>
+            <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
+            <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
+            <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
           </div>
         </div>
-      </div>
-
+      </div></div>
       <div class="input-wrap">
-        <div class="privacy-panel" id="privacy-panel">
-          <div class="privacy-head">
-            <span class="privacy-title">DSGVO / EU AI Act Zwischenspeicher</span>
-            <span class="privacy-note" id="privacy-note">Keine sensiblen Daten erkannt</span>
-          </div>
-          <div class="privacy-items" id="privacy-items">
-            <span class="privacy-pill empty">Normal: leer</span>
-          </div>
+        <div class="pii-consent" id="pii-consent">
+          <div class="pii-consent-text">🔒 <strong>Sensible Daten erkannt.</strong> Vor dem Senden werden Name, Adresse, Telefon usw. automatisch durch Platzhalter ersetzt. Die KI sieht keine echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span></div>
+          <button class="pii-consent-btn" id="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
+          <button class="pii-consent-deny" onclick="denyPiiConsent()">Abbrechen</button>
         </div>
         <div class="input-box">
           <div class="input-row">
-            <textarea class="input-field" id="chat-input" rows="1"
-              placeholder="Tu, was du willst… Drücke Enter zum Senden, Shift+Enter für neue Zeile"
-              onkeydown="handleKey(event)" oninput="autoResize(this); renderPrivacyMemory(this.value)"></textarea>
+            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)" onpaste="handlePaste(event)"></textarea>
             <button class="input-send" id="send-btn" onclick="sendMessage()">↑</button>
+          </div>
+          <div class="kI-preview-container">
+            <div class="kI-preview-label">🔒 KI erhält:</div>
+            <textarea class="kI-preview-field" id="kI-input-preview" readonly placeholder="Hier siehst du, was die KI von deinem Text erhält (mit Platzhaltern statt Originaldaten)"></textarea>
           </div>
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
             <button class="tool-btn" id="tool-auto" onclick="toggleTool('auto')">⚡ Autonom</button>
-            <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
-            <div class="tool-sep"></div>
-            <select class="tool-select" id="provider-sel" onchange="updateModels()">
-              <option value="groq">Groq (kostenlos)</option>
-              <option value="anthropic">Anthropic Claude</option>
-              <option value="openai">OpenAI</option>
-              <option value="mistral">Mistral</option>
-            </select>
-            <select class="tool-select" id="model-sel"></select>
+            <div class="dev-controls" style="display:none">
+              <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
+              <div class="tool-sep"></div>
+              <select class="tool-select" id="provider-sel" onchange="updateModels()">
+                <option value="groq">Groq (kostenlos)</option>
+                <option value="anthropic">Anthropic Claude</option>
+                <option value="openai">OpenAI</option>
+                <option value="mistral">Mistral</option>
+              </select>
+              <select class="tool-select" id="model-sel"></select>
+            </div>
           </div>
-          <!-- Key Popover -->
           <div class="key-pop" id="key-pop">
             <label>API-Key für <span id="key-pop-provider">Groq</span>:</label>
             <input type="password" id="key-pop-input" placeholder="gsk_... oder sk-...">
@@ -822,63 +406,27 @@ body{
         </div>
       </div>
     </div>
-
-    <!-- ═══ PROJEKTE VIEW ═══ -->
     <div class="view" id="view-projects">
       <div class="page-wrap">
-        <div class="page-head">
-          <div>
-            <div class="page-title">Projekte</div>
-            <div class="page-sub">Aufgaben verwalten und Chat-Verläufe zuordnen</div>
-          </div>
-          <button class="btn-primary" onclick="openProjModal()">＋ Neues Projekt</button>
-        </div>
+        <div class="page-head"><div><div class="page-title">Projekte</div><div class="page-sub">Aufgaben verwalten und Chats zuordnen</div></div><button class="btn-primary" onclick="openProjModal()">＋ Neues Projekt</button></div>
         <div class="grid" id="proj-grid"></div>
       </div>
     </div>
-
-    <!-- ═══ SKILLS VIEW ═══ -->
     <div class="view" id="view-skills">
       <div class="page-wrap">
-        <div class="page-head">
-          <div>
-            <div class="page-title">Skills</div>
-            <div class="page-sub">Klicke einen Skill — der Chat startet mit dem passenden Prompt</div>
-          </div>
-        </div>
+        <div class="page-head"><div><div class="page-title">Skills</div><div class="page-sub">Klicke einen Skill — Chat startet mit passendem Prompt</div></div></div>
         <div class="skill-tiles" id="skill-tiles"></div>
       </div>
     </div>
-
-    <!-- ═══ STATUS VIEW ═══ -->
     <div class="view" id="view-status">
       <div class="page-wrap">
-        <div class="page-head">
-          <div>
-            <div class="page-title">Compliance & Status</div>
-            <div class="page-sub">DSGVO und EU AI Act Übersicht</div>
-          </div>
-        </div>
-
+        <div class="page-head"><div><div class="page-title">Compliance & Status</div><div class="page-sub">DSGVO und EU AI Act Übersicht</div></div></div>
         <div class="metrics">
-          <div class="metric">
-            <div class="metric-lbl">Agent-Runs</div>
-            <div class="metric-val" id="m-runs">—</div>
-          </div>
-          <div class="metric">
-            <div class="metric-lbl">Genehmigungen</div>
-            <div class="metric-val warn" id="m-appr">—</div>
-          </div>
-          <div class="metric">
-            <div class="metric-lbl">Compliance</div>
-            <div class="metric-val ok">OK</div>
-          </div>
-          <div class="metric">
-            <div class="metric-lbl">EU AI Act Frist</div>
-            <div class="metric-val warn" id="m-days">—</div>
-          </div>
+          <div class="metric"><div class="metric-lbl">Agent-Runs</div><div class="metric-val" id="m-runs">—</div></div>
+          <div class="metric"><div class="metric-lbl">Genehmigungen</div><div class="metric-val warn" id="m-appr">—</div></div>
+          <div class="metric"><div class="metric-lbl">Compliance</div><div class="metric-val ok">OK</div></div>
+          <div class="metric"><div class="metric-lbl">EU AI Act Frist</div><div class="metric-val warn" id="m-days">—</div></div>
         </div>
-
         <div class="card" style="margin-bottom:12px">
           <div class="card-h">Compliance-Status</div>
           <div style="font-size:12px;color:var(--text-soft);margin-top:8px">
@@ -888,58 +436,223 @@ body{
             <div style="padding:5px 0;color:var(--warn)">⚠ Vollständige Pflichten ab 02.08.2026</div>
           </div>
         </div>
+        <div class="card"><div class="card-h">Letzte Agent-Runs</div><div id="runs-list" style="margin-top:10px"><div class="empty">Lädt…</div></div></div>
+        <div class="card" style="margin-top:12px;border-color:#D23B3B">
+          <div class="card-h" style="color:var(--err)">🗑 Meine Daten löschen (DSGVO Art. 17)</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Löscht alle Ihre Chat-Verläufe, Projekte und gespeicherten Daten — lokal und auf dem Server. Diese Aktion kann nicht rückgängig gemacht werden.</p>
+          <button onclick="deleteMyData()" style="background:#8B2424;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Alle meine Daten unwiderruflich löschen</button>
+          <div id="delete-data-msg" style="margin-top:8px;font-size:12px;display:none"></div>
+        </div>
+      </div>
+    </div>
+    <div class="view" id="view-impressum">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Impressum &amp; Datenschutz</div><div class="page-sub">Rechtliche Angaben gemäß § 5 TMG · DSGVO Art. 13</div></div></div>
+
+        <div class="card" style="margin-bottom:12px;background:#FFF9E6;border-color:#E8D9A0">
+          <div class="card-h" style="color:#7A6200">⚠ Beta-Version</div>
+          <p style="font-size:12px;color:#7A6200;margin-top:6px;line-height:1.6">AILIZA befindet sich derzeit in einer geschlossenen Testphase. Die Nutzung erfolgt ohne Gewähr. Funktionen, Verfügbarkeit und Datenhaltung können sich jederzeit ändern. Keine kommerzielle Nutzung ohne ausdrückliche Genehmigung.</p>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Impressum (§ 5 TMG)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:2">
+            <div><strong>Verantwortlich:</strong> Karola Fromm-Nasreldin</div>
+            <div><strong>Kontakt:</strong> <a href="mailto:Karofromm@gmail.com" style="color:var(--accent)">Karofromm@gmail.com</a></div>
+            <div><strong>Plattform der EU-Kommission zur Online-Streitbeilegung (ODR):</strong> <span style="color:var(--text-muted)">https://ec.europa.eu/consumers/odr</span></div>
+            <div style="color:var(--text-muted);font-size:11px;margin-top:8px">Telefon und vollständige Adresse werden nach Gründung der UG ergänzt. Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Datenschutzerklärung (DSGVO Art. 13)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.8">
+            <p style="margin-bottom:8px"><strong>Verantwortliche Stelle:</strong> Karola Fromm-Nasreldin, Karofromm@gmail.com</p>
+            <p style="margin-bottom:8px"><strong>Zweck der Verarbeitung:</strong> Ihre Eingaben werden ausschließlich zur Beantwortung Ihrer Anfragen durch das KI-System AILIZA verarbeitet. Personenbezogene Daten werden vor der Übertragung automatisch erkannt und lokal durch Platzhalter ersetzt (Privacy by Design, DSGVO Art. 25). Es werden keine Klartextprompts dauerhaft gespeichert.</p>
+            <p style="margin-bottom:8px"><strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. a DSGVO (Einwilligung), erteilt beim ersten Aufruf. Mindestalter: 16 Jahre (Art. 8 DSGVO).</p>
+            <p style="margin-bottom:8px"><strong>Lokale Datenspeicherung:</strong> Chat-Verläufe, Projekte und Einstellungen werden ausschließlich lokal in Ihrem Browser (localStorage) gespeichert. Diese Daten verlassen Ihr Gerät nicht, sofern Sie sie nicht aktiv im Chat eingeben. Es werden keine Cookies gesetzt.</p>
+            <p style="margin-bottom:8px"><strong>Empfänger / Drittlandübermittlung:</strong> Zur KI-Verarbeitung können Anfragen an externe Anbieter (z.B. Groq Inc., USA) weitergeleitet werden. Die Übermittlung erfolgt auf Basis von EU-Standardvertragsklauseln gemäß Art. 46 Abs. 2 lit. c DSGVO. Vor jeder Übertragung werden personenbezogene Daten lokal pseudonymisiert.</p>
+            <p style="margin-bottom:8px"><strong>Speicherdauer:</strong> Audit-Logs (ohne Inhalte) werden nach 90 Tagen automatisch gelöscht. Chat-Verläufe verbleiben ausschließlich lokal in Ihrem Browser und können jederzeit gelöscht werden.</p>
+            <p style="margin-bottom:8px"><strong>Ihre Rechte (Art. 15–22 DSGVO):</strong></p>
+            <ul style="margin:0 0 8px 16px;line-height:2">
+              <li>Auskunft (Art. 15) — auf Anfrage per E-Mail</li>
+              <li>Berichtigung (Art. 16) — auf Anfrage per E-Mail</li>
+              <li>Löschung (Art. 17) — sofort über den Button im Compliance-Bereich</li>
+              <li>Einschränkung der Verarbeitung (Art. 18) — auf Anfrage per E-Mail</li>
+              <li>Datenübertragbarkeit (Art. 20) — Export über den Chat-Export-Button</li>
+              <li>Widerspruch (Art. 21) — auf Anfrage per E-Mail</li>
+              <li>Widerruf der Einwilligung (Art. 7 Abs. 3) — jederzeit über den Button unten</li>
+            </ul>
+            <p style="margin-bottom:8px"><strong>Beschwerderecht (Art. 77 DSGVO):</strong> Sie haben das Recht, sich bei einer Datenschutz-Aufsichtsbehörde zu beschweren. Zuständig ist der Landesbeauftragte für Datenschutz und Informationsfreiheit Ihres Bundeslandes.</p>
+            <p><strong>KI-Kennzeichnung (EU AI Act Art. 52):</strong> AILIZA ist ein KI-System der Risikoklasse "Limited Risk". Antworten werden automatisch generiert und können Fehler enthalten. Bei wichtigen Entscheidungen ist eine menschliche Prüfung erforderlich.</p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Verarbeitungsverzeichnis (DSGVO Art. 30)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.8;overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:11px">
+              <thead><tr style="background:var(--surface-2)">
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Tätigkeit</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Zweck</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Rechtsgrundlage</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Kategorien</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Empfänger</th>
+                <th style="padding:6px 8px;border:1px solid var(--border);text-align:left">Löschfrist</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Chat-Anfragen (pseudonymisiert)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">KI-gestützte Beantwortung von Nutzerfragen</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Art. 6 Abs. 1a DSGVO (Einwilligung)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Keine personenbezogenen Daten nach Pseudonymisierung</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Groq Inc. (USA, SCC)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Sofort (kein serverseitiges Speichern)</td>
+                </tr>
+                <tr style="background:var(--surface-2)">
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Audit-Logs</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Sicherheitsprotokollierung, Compliance-Nachweis</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Art. 6 Abs. 1f DSGVO (berechtigtes Interesse)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Technische Metadaten (keine Inhalte, keine PII)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Keiner (intern)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">90 Tage</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Einwilligungsnachweis</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Nachweis der DSGVO-Einwilligung</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Art. 7 Abs. 1 DSGVO</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Zeitstempel (lokal, kein Name)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Keiner (lokal im Browser)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Bis Widerruf</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">Technische und Organisatorische Maßnahmen (TOM, DSGVO Art. 32)</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.8">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Pseudonymisierung</strong><br>
+                PII wird clientseitig vor jeder Übertragung durch Platzhalter ersetzt (Privacy by Design, Art. 25 DSGVO).
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Verschlüsselung</strong><br>
+                Alle Verbindungen erfolgen über HTTPS/TLS. Keine Daten im Klartext übertragen.
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Kill-Switch</strong><br>
+                Globaler Notausschalter deaktiviert alle externen LLM-Calls sofort (Fail-Closed).
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Minimale Datenspeicherung</strong><br>
+                Keine Klartextprompts im Server. Audit-Logs ohne Inhalte. 90-Tage-Retention.
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Governance-Pipeline</strong><br>
+                Jeder externe Call durchläuft: Klassifizierung → Policy-Check → Redaktion → Orchestrierung.
+              </div>
+              <div style="background:var(--accent-soft);border-radius:7px;padding:8px 12px">
+                <strong style="color:var(--accent)">Zugriffskontrolle</strong><br>
+                Rollenbasierte Authentifizierung (JWT + TOTP). Rate-Limiting gegen Missbrauch.
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="card">
-          <div class="card-h">Letzte Agent-Runs</div>
-          <div id="runs-list" style="margin-top:10px">
-            <div class="empty">Lädt…</div>
-          </div>
+          <div class="card-h">Einwilligung widerrufen</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Sie können Ihre Einwilligung jederzeit widerrufen (Art. 7 Abs. 3 DSGVO). Dies hat keine Auswirkung auf die Rechtmäßigkeit der bisherigen Verarbeitung. Nach dem Widerruf werden Sie beim nächsten Besuch erneut um Zustimmung gebeten.</p>
+          <button onclick="logout()" style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);padding:8px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Einwilligung widerrufen &amp; Abmelden</button>
         </div>
       </div>
     </div>
 
+    <div class="view" id="view-wissen">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Wissensbibliothek</div><div class="page-sub">Fertige Vorlagen und Prompts für KMU — einfach anklicken und loslegen</div></div></div>
+        <div class="wissen-cats" id="wissen-cats"></div>
+        <div class="wissen-grid" id="wissen-grid"></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-agb">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Nutzungsbedingungen</div><div class="page-sub">Allgemeine Geschäftsbedingungen (AGB) · Stand: Juni 2026</div></div></div>
+
+        <div class="card" style="margin-bottom:12px;background:#FFF9E6;border-color:#E8D9A0">
+          <div class="card-h" style="color:#7A6200">⚠ Beta-Version — Vorläufige Nutzungsbedingungen</div>
+          <p style="font-size:12px;color:#7A6200;margin-top:6px;line-height:1.6">AILIZA befindet sich in einer geschlossenen Testphase. Diese Nutzungsbedingungen gelten für die Testphase und werden nach Gründung der UG aktualisiert.</p>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--text-soft);line-height:1.9">
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 1 Anbieter und Geltungsbereich</p>
+            <p style="margin-bottom:12px">Anbieter des KI-Assistenten AILIZA ist Karola Fromm-Nasreldin (nachfolgend „Anbieter"), erreichbar unter Karofromm@gmail.com. Diese Nutzungsbedingungen gelten für alle Nutzerinnen und Nutzer, die AILIZA im Rahmen der Testphase verwenden.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 2 Leistungsbeschreibung</p>
+            <p style="margin-bottom:12px">AILIZA ist ein KI-gestützter Assistent für kleine und mittelständische Unternehmen (KMU). Das System unterstützt bei Aufgaben wie E-Mail-Entwürfen, Textzusammenfassungen, Übersetzungen und Recherchen. AILIZA nutzt externe KI-Sprachmodelle (Large Language Models). Die Nutzung erfolgt in der Testphase kostenlos und ohne Gewähr.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 3 Pflichten der Nutzerinnen und Nutzer</p>
+            <p style="margin-bottom:4px">Die Nutzung von AILIZA ist ausschließlich für legale Zwecke zulässig. Verboten ist insbesondere:</p>
+            <ul style="margin:0 0 12px 16px;line-height:2">
+              <li>Die Eingabe von sensiblen Personendaten Dritter ohne deren ausdrückliche Einwilligung</li>
+              <li>Die Nutzung zur Erstellung von irreführenden, täuschenden oder rechtswidrigen Inhalten</li>
+              <li>Die Umgehung technischer Schutzmaßnahmen (Kill-Switch, Rate-Limiting, Governance-Pipeline)</li>
+              <li>Die kommerzielle Weiterverwendung von AILIZA-Ausgaben ohne schriftliche Genehmigung des Anbieters</li>
+              <li>Die Nutzung durch Personen unter 16 Jahren</li>
+            </ul>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 4 KI-Transparenz (EU AI Act Art. 52)</p>
+            <p style="margin-bottom:12px">AILIZA ist ein KI-System der Risikoklasse „Limited Risk" gemäß EU AI Act. Alle Antworten werden automatisch durch ein KI-Sprachmodell generiert. Antworten können Fehler, Auslassungen oder Ungenauigkeiten enthalten. Sie sind <strong>nicht</strong> als Rechts-, Steuer- oder Medizinberatung zu verstehen. Bei wichtigen Entscheidungen ist stets eine menschliche Prüfung durch qualifizierte Fachkräfte erforderlich. Der KI-Charakter des Systems wird immer offengelegt (Art. 52 EU AI Act).</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 5 Haftungsausschluss</p>
+            <p style="margin-bottom:12px">Der Anbieter übernimmt keine Haftung für die Richtigkeit, Vollständigkeit oder Aktualität der von AILIZA generierten Inhalte. Die Nutzung erfolgt auf eigenes Risiko. Der Anbieter haftet nicht für Schäden, die durch die Verwendung von AILIZA-Ausgaben entstehen, sofern diese nicht auf grober Fahrlässigkeit oder Vorsatz des Anbieters beruhen. In der Testphase wird keine Verfügbarkeit oder Datenpersistenz garantiert.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 6 Datenschutz</p>
+            <p style="margin-bottom:12px">Die Verarbeitung personenbezogener Daten erfolgt gemäß der Datenschutzerklärung (siehe Impressum &amp; Datenschutz) und der DSGVO. Personenbezogene Daten werden vor der Übermittlung an externe KI-Anbieter automatisch pseudonymisiert.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 7 Änderungen der Nutzungsbedingungen</p>
+            <p style="margin-bottom:12px">Der Anbieter behält sich vor, diese Nutzungsbedingungen jederzeit zu ändern. Änderungen werden durch Aktualisierung auf dieser Seite bekanntgemacht. Die fortgesetzte Nutzung nach Änderungen gilt als Zustimmung.</p>
+
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 8 Anwendbares Recht und Gerichtsstand</p>
+            <p style="margin-bottom:0">Es gilt deutsches Recht unter Ausschluss des UN-Kaufrechts. Gerichtsstand ist der Sitz des Anbieters (wird nach UG-Gründung ergänzt).</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">Kontakt für Rechtsfragen</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0">Für Anfragen zu Datenschutz, Nutzungsrechten oder rechtlichen Fragen:</p>
+          <a href="mailto:Karofromm@gmail.com" style="color:var(--accent);font-size:13px;font-weight:600">Karofromm@gmail.com</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dsgvo-sidebar" id="dsgvo-sidebar">
+    <div class="dsgvo-sidebar-title">🔒 DSGVO-Schutz</div>
+    <div id="privacy-note" style="font-size:11px;color:var(--text-muted);line-height:1.5"></div>
+    <div id="privacy-items" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"><div class="dsgvo-sidebar-empty">Keine sensiblen Daten erkannt</div></div>
   </div>
 </div>
-
-<!-- ── PROJECT MODAL ── -->
 <div class="modal" id="proj-modal">
   <div class="modal-box">
     <div class="modal-h">Neues Projekt</div>
-    <div class="field">
-      <label>Name</label>
-      <input id="proj-name" type="text" placeholder="z.B. Kundenmailings Q2">
-    </div>
-    <div class="field">
-      <label>Beschreibung</label>
-      <textarea id="proj-desc" rows="3" placeholder="Worum geht es in diesem Projekt?"></textarea>
-    </div>
-    <div class="field">
-      <label>Priorität</label>
-      <select id="proj-prio">
-        <option>Hoch</option>
-        <option selected>Mittel</option>
-        <option>Niedrig</option>
-      </select>
-    </div>
-    <div class="modal-acts">
-      <button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button>
-      <button class="btn-primary" onclick="saveProject()">Erstellen</button>
-    </div>
+    <div class="field"><label>Name</label><input id="proj-name" type="text" placeholder="z.B. Kundenmailings Q2"></div>
+    <div class="field"><label>Beschreibung</label><textarea id="proj-desc" rows="3" placeholder="Worum geht es?"></textarea></div>
+    <div class="field"><label>Priorität</label><select id="proj-prio"><option>Hoch</option><option selected>Mittel</option><option>Niedrig</option></select></div>
+    <div class="modal-acts"><button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button><button class="btn-primary" onclick="saveProject()">Erstellen</button></div>
   </div>
 </div>
-
 <script>
-const API = "http://127.0.0.1:8001";
+// API-URL: aus config.js geladen (window.AILIZA_API), Fallback auf gleichen Host
+const API = window.AILIZA_API || "https://ailiza.onrender.com";
 
-const MODELS = {
-  groq: ["llama3-70b-8192","llama3-8b-8192","mixtral-8x7b-32768"],
-  anthropic: ["claude-haiku-4-5","claude-sonnet-4-6","claude-opus-4-6"],
-  openai: ["gpt-4o-mini","gpt-4o","gpt-3.5-turbo"],
-  mistral: ["mistral-small-latest","mistral-large-latest"],
-};
-
-const SKILLS = [
-  {ic:"✉️",n:"E-Mail verfassen",d:"Professionelle E-Mail",p:"Schreibe eine professionelle E-Mail: "},
+const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
+const SKILLS=[
+  {ic:"📧",n:"E-Mail schreiben",d:"Professionelle E-Mail",p:"Schreibe eine professionelle E-Mail: "},
   {ic:"📝",n:"Zusammenfassen",d:"Text zusammenfassen",p:"Fasse zusammen: "},
   {ic:"🌍",n:"Übersetzen",d:"DE/EN/FR/ES/IT",p:"Übersetze ins Englische: "},
   {ic:"✅",n:"Checkliste",d:"Strukturierte Liste",p:"Erstelle eine Checkliste für: "},
@@ -948,528 +661,520 @@ const SKILLS = [
   {ic:"🔒",n:"DSGVO-Check",d:"Datenschutz prüfen",p:"Ist das DSGVO-konform? "},
   {ic:"⚖️",n:"EU AI Act",d:"KI-Compliance",p:"Prüfe EU AI Act für: "},
 ];
-
-let chatHistory = JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
-let projects = JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
-let folders = JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
-let tools = JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
-let context = [];
-
-const PRIVACY_RULES = [
-  {level:"high", label:"Gesundheit", pattern:/\b(?:diagnose|krankheit|krank|patient|patientin|medikament|therapie|arzt|aerztin|klinik|blutdruck|diabetes|depression|schwanger|krankenversicherung)\b/gi},
-  {level:"high", label:"Religion", pattern:/\b(?:religion|kirche|muslim|christ|juedisch|jude|atheist)\b/gi},
-  {level:"high", label:"Politik/Gewerkschaft", pattern:/\b(?:partei|politisch|wahlentscheidung|gewerkschaft)\b/gi},
-  {level:"high", label:"Biometrie", pattern:/\b(?:fingerabdruck|gesichtserkennung|biometrisch|iris)\b/gi},
-  {level:"high", label:"Ausweis/Steuer-ID", pattern:/\b(?:ausweisnummer|reisepass|personalausweis|steuer-id|steueridentifikationsnummer|sozialversicherungsnummer)\b[\w .:-]*/gi},
-  {level:"high", label:"IBAN", pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
-  {level:"normal", label:"E-Mail", pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
-  {level:"normal", label:"Telefon", pattern:/\b(?:\+49|0)[0-9][0-9 ()\/.-]{6,}\b/g},
-  {level:"normal", label:"Name", pattern:/\b(?:mein name ist|ich heisse|ich heiße)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)?/g},
-  {level:"normal", label:"Adresse", pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:strasse|straße|weg|platz|allee)\s+\d+[a-z]?\b/gi},
-  {level:"normal", label:"Geburtsdatum", pattern:/\b(?:geburtsdatum|geboren am|geburtstag)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{2,4}\b/gi},
-  {level:"normal", label:"Firma", pattern:/\b(?:firma|arbeitgeber|unternehmen)\s*:?\s+[A-ZÄÖÜ][A-Za-z0-9ÄÖÜäöüß .&-]{2,}\b/g},
+let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
+let currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;
+let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
+let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
+let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
+let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
+let context=[];
+const PRIVACY_RULES=[
+  // ── ⚫ NIEMALS SENDEN (Zugangsdaten / Schlüssel) ──
+  {level:"secret",label:"API-Schlüssel",placeholder:"[API-Key]",pattern:/\b(?:sk-[\w\-]{15,}|gsk_[\w\-]{15,}|xai-[\w\-]{15,}|AIza[A-Za-z0-9_-]{35}|AKIA[A-Z0-9]{16})\b/g},
+  {level:"secret",label:"Zugangsdaten",placeholder:"[Passwort]",pattern:/\b(?:passwort|password|kennwort|geheimwort|pin)\s*[:=]\s*\S+/gi},
+  {level:"secret",label:"Bearer-Token",placeholder:"[Token]",pattern:/Bearer\s+[A-Za-z0-9._\-]{20,}/g},
+  // ── 🔴 VERBOTEN — Art. 9 DSGVO ──
+  {level:"forbidden",label:"Gesundheit",placeholder:"[Gesundheitsdaten]",pattern:/\b(?:diagnose|diagnosen|krankmeldung|krankmelderung|krankschreibung|krankschreibungen|krankheit|krankheiten|erkrank(?:ung|t|ungen)?|patient|patientin|patienten|medikament|medikamente|therapie|therapien|behandlung|behandlungen|arzt|ärzte|diabetes|depression|schwanger(?:schaft|schaften)?|behinderung|behinderungen|psychisch|psychische|pflegestufe|pflegestufen|krankenversicherung|allergie|allergien|allergi(?:sch|ker|sch)?|symptom|symptome|verlauf|migräne|kopfschmerz|kopfschmerzen|schmerz(?:en)?|fieber|husten|schnupfen|angststörung|angststörungen|burnout|stress|stressbelastung|stressoren|trauma|traumata|traumatisch|verletzung|verletzungen|blutdruck|operation|operationen|operativ|schwindel|schlafstörung|schlafstörungen|bewusstsein|koma|unfall|unfälle)\b/gi},
+  {level:"forbidden",label:"Herkunft",placeholder:"[Herkunft]",pattern:/\b(?:ethnisch(?:e[rns]?)?|rassisch(?:e[rns]?)?|hautfarbe|nationalität|migrationshintergrund|herkunftsland|herkunft|abstammung|ethnische\s+herkunft|nationale\s+herkunft|türkisch|deutsch|arabisch|afrikanisch|asiatisch|europäisch|osteuropäisch|migration|flüchtling|asylant|immigrant|einwanderer|auswanderer|diaspora|völkergruppe|volksstamm|stamm|clan|rasse|mischling|blutlinie|abstammung|ahnen|vorfahren)\b/gi},
+  {level:"forbidden",label:"Religion",placeholder:"[Religion]",pattern:/\b(?:religion|religionen|weltanschauung|glaube|glauben|glaubenssatz|konfession|konfessionen|kirchenmitglied|kirchensteuer|religiös|religiöse|religiösen|kirchlich|kirchliche|muslim|muslime|muslimisch|muslimische|islamisch|islamische|christlich|christliche|christ|christen|christentum|jüdisch|jüdische|jude|juden|buddhist|buddhisten|buddhistische|buddhistische|hindu|hindus|hinduistisch|atheist|atheisten|atheistische|agnostiker|agnostisch|agnostische|gläubig|gläubige|ungläubig|ungläubige|häretiker|ketzer|ketzerei|priestertum|priester|priesterschaft|pastor|pastoren|rabbi|rabbis|imam|imame|pfarre|pfarren|diözese|diözesen|bistum|bistümer|seelsorge|beichte|beichtgeheimnis|ablass|ablasshandel|monotheismus|polytheismus|pantheismus|deismus|theismus|theist|theisten|theistische|sakrament|sakramente|reliquie|reliquien|heiligkult|heiliger|heilige|heiligen|märtyrer|märtyrerin|märtyrerinnen|sünde|sünden|erbsünde|buße|reue|gnade|segen|fluch|vorsehung|karma|seele|seelen|seelenheil|unsterblichkeit|auferstehung|erlösung|heil|verdammnis|hölle|himmel|fegefeuer|nirwana|jenseits|reinkarnation)\b/gi},
+  {level:"forbidden",label:"Politisch",placeholder:"[Polit. Meinung]",pattern:/\b(?:partei(?:mitglied|zugehörigkeit|program)?|parteien|gewerkschaft(?:s(?:mitglied|zugehörigkeit|beitrag))?|gewerkschaften|politische?|politischen|politischer|politisches|politisch\s+(?:engagiert|kritisch|aktiv|motiviert|bewusst|aktiv|engagiert)|(?:politische?|politischen|politischer)\s+(?:meinung|überzeugung|haltung|einstellung|aktivität|aktivismus|engagement|ansicht|position|gegner|gegnerinnen|gegnerschaft|feind|feindschaft|verfolgung|unterdrückung|freiheit|recht|bewegung|aktion|aktivist|aktivisten|aktivis)|wähler|wählerschaft|wahl|wahlen|kandidat|kandidatin|kandidaten|wahlberechtigte|wahlprogramm|wahlkampf|wahlversprechen|ideologie|ideologien|ideologisch|ideologische|ideologischen|oppositionell|oppositionelle|regimekritisch|regimekritische|dissident|dissidenten|dissidenin|aktivist|aktivisten|aktivistisch|aktivistische|aktivismus|protestbewegung|protestbewegungen|protest|proteste|protestant|protestanten|protest\s+gegen|kritisch\s+gegen|kritisch\s+gegenüber|kritik\s+gegenüber|kritik\s+an|kritisch\s+eingestellt)\b/gi},
+  {level:"forbidden",label:"Biometrie",placeholder:"[Biometriedaten]",pattern:/\b(?:fingerabdrück?(?:e)?|fingerabdruck|iris(?:scan)?|irisse?|gesicht(?:serkennung|sanalyse|svergleich|sscan|smerkmale|sdaten|svermessung)?|retina(?:scan)?|retinae?|biometrisch|biometrische|stimm(?:erkennung|analyse)|stimmen?|venenscan|venen(?:muster|erkennung)|gesichtsmerkmale|gesichtsdaten|gesichtsvermessung|augeniris|netzhautscan|handvenen|handvenenmuster|dna-profil|dna-profile|gait-(?:recognition|analyse|analyse)|gang(?:muster|erkennung|analyse)|ohr(?:erkennung|vermessung|muster)|ohren(?:erkennung)?|palmprint|handflächenmuster|palmprint-erkennung|keystroke-verhalten|verhaltensbiometrie|stimmerkennung|spracherkennung|sprachanalyse|thermische\s+biometrie|thermovisuelle\s+infrarot|genprofil|genomsequenzierung|blutgruppe|bluttyp)\b/gi},
+  {level:"forbidden",label:"Sexualität",placeholder:"[Sexualdaten]",pattern:/\b(?:sexuell(?:e[rns]?)?|sexualität|sexualleben|sexualorientierung|geschlechtsidentität|geschlechtliche\s+identität|homosexuell|homosexualität|lesbisch|lesbe|schwul|bisexuell|bisexualität|transgender|transperson|transgeschlechtlich|queer|queerness|non.?binary|non.?binär|genderfluid|genderqueer|cisgender|sexuelle\s+orientierung|lgbtq|intersex|intersexualität|asexuell|demisexuell|pansexuell|erotik|erotisch|pornograph|eheliche\s+pflicht|intimität|intimbereich|genitalien|geschlechtsteil|phallus|penetration|koitus|anal|oral|fellatio|cunnilingus)\b/gi},
+  {level:"forbidden",label:"Genetik",placeholder:"[Genetische Daten]",pattern:/\b(?:genetisch(?:e[rns]?)?|dna(?:-test)?|dna-profil|gentest|erbkrankheit|erbkrankheiten|genom|genomsequenzierung|genotypisierung|haplogruppe|vererbung|erblich|hereditär|kongenital|genetische\s+variation|chromosom|allel|mutation|snp|polymorphismus|pentaplex|dna-marker|mikrosatelliten|familienanamnese|stammbaum|konsanguinität)\b/gi},
+  // ── 🔴 VERBOTEN — Art. 10 DSGVO ──
+  {level:"forbidden",label:"Strafrecht",placeholder:"[Strafrechtl. Daten]",pattern:/\b(?:vorstrafe[n]?|vorstrafen|straffälligkeit|straffällig|strafrechtlich|strafregister|strafanzeige|strafanzeigen|verurteil(?:t|ung|ungen)?|straftat|straftaten|straftat|ermittlungsverfahren|ermittlungsverfahren|führungszeugnis|führungszeugnisse|polizeilich(?:e[rns]?)?\s+(?:vorgang|vorgänge|akte|akten|ermittlung|ermittlungen)?|hausverbot|hausverbote|verdacht|betrugsverdacht|diebstahlverdacht|sexueller\s+missbrauch|sexuelle\s+missbrauch|betrug|betrüger|betrügerin|diebstahl|diebe|diebstahl|diebstähle|raub|räuber|körperverletzung|körperverletzungen|gefährliche\s+körperverletzung|mord|morde|mörder|mordversuche|totschlag|totschläge|vergewaltigung|vergewaltigungen|vergewaltiger|missbrauch|missbrauchter|missbrauchte|gewalt|gewalten|gewalttat|gewalttäter|gewalttäterin|häusliche\s+gewalt|strafvollzug|gefängnis|gefängnisse|freiheitsstrafe|geldstrafe|verurteilung|verurteilungen|angeklagter|angeklagte|angeklagten|beschuldigter|beschuldigte|verdächtige|täter|täterschaft|opfer|zeuge|zeugen|zeugin|belastungszeugnis|belastungszeugnisse|entlastungszeugnis|entlastungszeugnisse|führungszeugnis|führungszeugnisse|justizminister|staatsanwalt|staatsanwältin|staatsanwälte|richter|richterin|richterinnen|ankläger|anklagerin|anklägerinnen|verteidiger|verteidigerin|verteidigerinnen|gerichtsprozess|gerichtsprozesse|gerichtsverfahren|gerichtsverfahren|anklageschrift|anklageschriften|urteil|urteile|freispruch|freisprüche|revision|revisionen|berufung|berufungen|gnadengesuch|gnadengesuch|gnadenbitte|gnadenbitten|häftling|häftlinge|sträfling|sträflinge|knast|knasthaft|knastbruder|insasse|insassen|haft|haften|gefangenschaft|inhaftierung|inhaftierungen)\b/gi},
+  // ── 🟠 GESCHÄFTSVERTRAULICH ──
+  {level:"confidential",label:"Zugangsdaten",placeholder:"[Zugangsdaten]",pattern:/\b(?:benutzername|nutzername|username|loginname|anmeldename)\s*[:=]\s*\S+/gi},
+  {level:"confidential",label:"Gehalt",placeholder:"[Gehaltsdaten]",pattern:/\b(?:gehalt|lohn|brutto(?:gehalt|lohn)?|netto(?:gehalt|lohn)?|jahresgehalt|monatslohn|vergütung|honorar)\s*(?:[:=von]\s*)?(?:ca\.?\s*)?\d[\d.,:]*(?:\s+\d[\d.,:]*)*\s*(?:€|EUR|tsd\.?|k€)?/gi},
+  {level:"confidential",label:"Marge",placeholder:"[Kalk. Daten]",pattern:/\b(?:einkaufspreis|marge|deckungsbeitrag|kalkulation|rohertrag|aufschlag)\s*(?:[:=]\s*)?\d[\d.,\s]*(?:%|€|EUR)?/gi},
+  {level:"confidential",label:"Mahnwesen",placeholder:"[Mahndaten]",pattern:/\b(?:mahnung|mahnbescheid|inkasso(?:verfahren)?|zahlungsverzug|zwangsvollstreckung|pfändung)\b/gi},
+  // ── 🟡 KRITISCH (finanziell / Identifikation) ──
+  {level:"high",label:"IBAN",placeholder:"[IBAN]",pattern:/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b/g},
+  {level:"high",label:"BIC",placeholder:"[BIC]",pattern:/\b(?:BIC|SWIFT)[\s:]*[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/gi},
+  {level:"high",label:"Kreditkarte",placeholder:"[Kartennummer]",pattern:/\b(?:\d{4}[ \-]){3}\d{4}\b/g},
+  {level:"high",label:"Steuer-ID",placeholder:"[Steuer-ID]",pattern:/\b(?:Steuer(?:identifikations)?(?:nummer|nr\.?|-ID)|Steuernummer)\s*[:№]?\s*\d[\d \/]{8,14}/gi},
+  {level:"high",label:"USt-IdNr",placeholder:"[USt-IdNr]",pattern:/\bDE\d{9}\b/g},
+  {level:"high",label:"Ausweis-Nr.",placeholder:"[Ausweisnummer]",pattern:/\b(?:ausweis(?:nummer)?|personalausweis|reisepass(?:nummer)?|passport)\s*[:№]?\s*[A-Z0-9]{6,12}/gi},
+  {level:"high",label:"Versicherungs-Nr.",placeholder:"[Versicherungs-Nr.]",pattern:/\b[A-Z]\d{8}[A-Z]\d{3}\b|\b(?:versicherungsnummer|versicherungs-?nr\.?)\s*[:№]?\s*[^\n]+?(?=\s*(?:\n|$))/gi},
+  {level:"high",label:"PayPal",placeholder:"[PayPal-Konto]",pattern:/\b(?:paypal(?:konto|-konto)?|paypal\.me\/\S+)\b/gi},
+  // ── 🟢 SENSIBEL (personenbezogen) ──
+  {level:"normal",label:"E-Mail",placeholder:"[E-Mail]",pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi},
+  {level:"normal",label:"Telefon",placeholder:"[Telefon]",pattern:/(?:\+49|0)[\s.-]?[1-9]\d{2,}[\s()\/.-]*\d{2,}(?![\d])/g},
+  {level:"normal",label:"IP-Adresse",placeholder:"[IP-Adresse]",pattern:/\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g},
+  {level:"normal",label:"Firma",placeholder:"[Firma]",pattern:/\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+(?:&|best\s+of|[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)){0,3}\s+(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|UG(?:\s*\(haftungsbeschränkt\))?|AG|KG|OHG|GbR|e\.V\.|SE|Ltd\.?|Inc\.?|Corp\.?)\b/g},
+  {level:"normal",label:"Adresse",placeholder:"[Adresse]",pattern:/[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:straße|strasse|gasse|weg|platz|allee|ring|damm|ufer|dom|berg|hof|markt|graben|garten|steig|stieg|anger)\s+\d+[a-z]?(?:\/\d+[a-z]?)?/gi},
+  {level:"normal",label:"PLZ+Stadt",placeholder:"[Ort]",pattern:/\b\d{5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s-]{2,30}/g},
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:Herr(?:n)?|Frau|Dr\.|Prof\.)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/g},
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/\b(?:mein name ist|ich heiße|ich bin|my name is|i am|signed by|submitted by|contact person)\s*:?\s*[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-Za-zÄÖÜäöüß-]+){1,3}/gi},
+  // Name nach Grußformel (Signatur): Zeile NACH "Kind regards," / "Viele Grüße,"
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?<=(?:kind regards|best regards|sincerely|yours faithfully|mit freundlichen grüßen|viele grüße|herzliche grüße|beste grüße|mit besten grüßen|hochachtungsvoll)[,.]?\s*\n\s*)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-Za-zÄÖÜäöüß-]+){0,2}(?=\s{2,}|\n|$)/gi},
+  // Name nach Kontextwörtern (Kundin, Kunde, Person, etc.)
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?:Kundin|Kunde|Person|Kontakt|Antragsteller|Unterschrift|Signatur|Geschäftsführer|Leiter|Manager|Vertreter|Ansprechpartner)(?:in)?[:—\s]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
+  // Name nach "Name:" oder "Ansprechpartner:" (Form-Felder)
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?:Name|Ansprechpartner|Antragsteller|Bewerber|Kunde|Kundin|Person|Signatur|Unterschrift)\s*[:=]\s*[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
+  // Name in Adressblock (zwei Großbuchstaben-Wörter nach Ort/Platzhalter)
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?:\[Ort\]|\d{5}\s+[A-Z][\w\s-]+)\s*:?\s*\n\s*([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*)\s*(?:\n|$)/g},
+  {level:"normal",label:"Kundennummer",placeholder:"[Kundennummer]",pattern:/\b(?:Kundennummer|Kunden-?Nr\.?|Kd\.?-?Nr\.?)\s*[:№#]?\s*[A-Z0-9][\w\-]{2,19}/gi},
+  {level:"normal",label:"Referenz-Nr.",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnungs?(?:nummer|nr\.?)?|Auftragsnummer|Bestellnummer|Bestell(?:ung)?(?:s?nr\.?)?|Aktenzeichen|Vertragsnummer|Fallnummer|Angebot(?:s?nummer)?|Offertenummer)\s*[:\-#]?\s*[A-Z0-9][\w\-\/]{1,19}/gi},
+  {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
+  {level:"normal",label:"Datum",placeholder:"[Datum]",pattern:/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g},
+  // Familienstand + Lebensumstände (Diskriminierungsrisiko)
+  {level:"high",label:"Familienstand",placeholder:"[Familienstand]",pattern:/\b(?:familienstand|zivilstand|lebensumstände|lebensform|ehestatus|lebenspartnerschaft|eingetragene\s+partnerschaft)\s*[:=]?\s*[^\n]+?(?=\s*(?:\n|$))/gi},
+  // Alter/Geburtsdatum-Kontext (Diskriminierungsrisiko)
+  {level:"high",label:"Alter",placeholder:"[Alter]",pattern:/\b(?:alter|geburtsdatum|geb\.|geburtstag|jahrgang|geburtsort)\s*[:=]?\s*(?:\d{1,2}\.\d{1,2}\.\d{2,4}|\d{4}|\d{2}\s+(?:jahre?|j\.))/gi},
+  // ── Zusätzliche kritische Patterns ──
+  {level:"high",label:"CVV",placeholder:"[CVV]",pattern:/CVV\s*[:=]?\s*\d{3,4}/gi},
+  {level:"high",label:"TAN",placeholder:"[TAN]",pattern:/TAN\s*(?:Testwert)?[:=]?\s*\d{6,8}/gi},
+  {level:"secret",label:"Private Key",placeholder:"[Schlüssel]",pattern:/-----BEGIN\s+(?:RSA\s+)?(?:PRIVATE|TEST)\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+)?(?:PRIVATE|TEST)\s+KEY-----/gi},
+  {level:"high",label:"Benutzername",placeholder:"[Benutzername]",pattern:/(?:benutzername|username|account|login|kundenkonto)\s*[:=]\s*[\w.\-@]+/gi},
 ];
-
-// ── INIT ──
-function init(){
-  // Deadline
-  const days = Math.max(0, Math.round((new Date("2026-08-02") - new Date())/86400000));
-  document.getElementById("deadline-pill").textContent = days+" Tage bis EU AI Act";
-  document.getElementById("m-days").textContent = days;
-
-  updateModels();
-  renderRecent();
-  renderProjects();
-  renderProjectList();
-  renderFolders();
-  renderSkills();
-  renderTools();
-  loadHistory();
-  renderPrivacyMemory();
-  checkStatus();
-  setInterval(checkStatus, 15000);
+// Wörter die NIE als PII erkannt werden sollen
+const PII_STOPLIST=new Set(["AILIZA","KI","AI","EU","DSGVO","GmbH","UG","AG","KG","GbR","PDF","AGB","FAQ","CEO","CTO","CFO","HR","IT"]);
+// Ersetzt PII durch Platzhalter — gleiche Werte bekommen denselben Platzhalter (keine Duplikate)
+function redactText(text){
+  let out=text;
+  const map={}; // placeholder → original
+  const valueToPlaceholder={}; // original → placeholder (Duplikat-Schutz)
+  for(const rule of PRIVACY_RULES){
+    rule.pattern.lastIndex=0;
+    out=out.replace(rule.pattern,(match)=>{
+      const normalized=match.trim();
+      // Stoplist: nur skippen wenn der GESAMTE Match ein einzelnes Stoplist-Wort ist
+      if(PII_STOPLIST.has(normalized))return match;
+      // Gleicher Wert → gleicher Platzhalter
+      if(valueToPlaceholder[normalized])return valueToPlaceholder[normalized];
+      const base=rule.placeholder;
+      const sameType=Object.keys(map).filter(k=>k===base||k.startsWith(base.slice(0,-1)+"_"));
+      const ph=sameType.length>0?base.slice(0,-1)+"_"+(sameType.length+1)+"]":base;
+      map[ph]=normalized;
+      valueToPlaceholder[normalized]=ph;
+      return ph;
+    });
+    rule.pattern.lastIndex=0;
+  }
+  return {redacted:out,map};
 }
-
-function showView(name, el){
+function openSidebar(){
+  document.getElementById("sidebar").classList.add("open");
+  document.getElementById("sidebar-overlay").classList.add("open");
+}
+function closeSidebar(){
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("sidebar-overlay").classList.remove("open");
+}
+function init(){
+  const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
+  document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
+  document.getElementById("m-days").textContent=days;
+  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();
+  setInterval(checkStatus,15000);
+  // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
+  setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
+}
+function showView(name,el){
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
   document.getElementById("view-"+name).classList.add("active");
-  if(el) el.classList.add("active");
-  if(name==="status") loadStatus();
-  if(name==="projects") renderProjects();
-  if(name==="skills") renderSkills();
+  if(el)el.classList.add("active");
+  if(name==="status")loadStatus();
+  if(name==="projects")renderProjects();
+  if(name==="skills")renderSkills();
+  if(name==="wissen")renderWissen();
 }
-
 function updateModels(){
-  const p = document.getElementById("provider-sel").value;
-  const sel = document.getElementById("model-sel");
-  sel.innerHTML = MODELS[p].map(m=>`<option>${m}</option>`).join("");
-  document.getElementById("key-pop-provider").textContent =
-    p.charAt(0).toUpperCase()+p.slice(1);
-  const saved = localStorage.getItem("ailiza_key_"+p);
-  document.getElementById("key-pop-input").value = saved || "";
+  const p=document.getElementById("provider-sel").value;
+  document.getElementById("model-sel").innerHTML=MODELS[p].map(m=>`<option>${m}</option>`).join("");
+  document.getElementById("key-pop-provider").textContent=p.charAt(0).toUpperCase()+p.slice(1);
+  document.getElementById("key-pop-input").value=localStorage.getItem("ailiza_key_"+p)||"";
 }
-
-function toggleKeyPop(e){
-  if(e) e.stopPropagation();
-  document.getElementById("key-pop").classList.toggle("open");
-}
-function saveKey(){
-  const p = document.getElementById("provider-sel").value;
-  const k = document.getElementById("key-pop-input").value.trim();
-  if(k) localStorage.setItem("ailiza_key_"+p, k);
-  toggleKeyPop();
-}
-
-function toggleTool(name){
-  tools[name] = !tools[name];
-  localStorage.setItem("ailiza_tools", JSON.stringify(tools));
-  renderTools();
-}
-function renderTools(){
-  document.getElementById("tool-search").classList.toggle("active", tools.search);
-  document.getElementById("tool-auto").classList.toggle("active", tools.auto);
-}
-
-function escapeHtml(value){
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function normalizePrivacyValue(value){
-  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 90);
-}
-
-function detectPrivacyItems(currentInput=""){
-  const chunks = [];
-  chatHistory.forEach(m => {
-    if(m && m.content) chunks.push(m.content);
-  });
-  context.forEach(m => {
-    if(m && m.content) chunks.push(m.content);
-  });
-  if(currentInput && currentInput.trim()) chunks.push(currentInput);
-
-  const source = chunks.join("\n");
-  const seen = new Set();
-  const items = [];
-
-  for(const rule of PRIVACY_RULES){
-    rule.pattern.lastIndex = 0;
-    let match;
-    while((match = rule.pattern.exec(source)) !== null){
-      const value = normalizePrivacyValue(match[0]);
-      if(value.length < 2) continue;
-      const key = `${rule.level}:${rule.label}:${value.toLowerCase()}`;
-      if(!seen.has(key)){
-        seen.add(key);
-        items.push({level:rule.level, label:rule.label, value});
-      }
-      if(items.length >= 18) return items;
-      if(match.index === rule.pattern.lastIndex) rule.pattern.lastIndex++;
-    }
-  }
-
+function toggleKeyPop(e){if(e)e.stopPropagation();document.getElementById("key-pop").classList.toggle("open")}
+function saveKey(){const p=document.getElementById("provider-sel").value;const k=document.getElementById("key-pop-input").value.trim();if(k)localStorage.setItem("ailiza_key_"+p,k);toggleKeyPop()}
+function toggleTool(n){tools[n]=!tools[n];localStorage.setItem("ailiza_tools",JSON.stringify(tools));renderTools()}
+function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
+function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function detectPrivacyItems(inp=""){
+  // Nur aktuellen Input scannen (kein Chat-Verlauf — der ist bereits redaktiert)
+  const src=inp;
+  const seen=new Set();const items=[];
+  for(const r of PRIVACY_RULES){r.pattern.lastIndex=0;let m;while((m=r.pattern.exec(src))!==null){const v=m[0].trim().slice(0,90);const k=r.level+":"+r.label+":"+v.toLowerCase();if(!seen.has(k)&&v.length>1){seen.add(k);items.push({level:r.level,label:r.label,value:v})}if(items.length>=20)return items;if(m.index===r.pattern.lastIndex)r.pattern.lastIndex++}}
   return items;
 }
+function renderPrivacyMemory(inp=""){
+  // KI-Preview aktualisieren: zeige redaktierten Text
+  const preview=document.getElementById("kI-input-preview");
+  if(inp){
+    const {redacted}=redactText(inp);
+    preview.value=redacted;
+  }else{
+    preview.value="";
+  }
 
-function renderPrivacyMemory(currentInput=""){
-  const note = document.getElementById("privacy-note");
-  const list = document.getElementById("privacy-items");
-  if(!note || !list) return;
-
-  const items = detectPrivacyItems(currentInput);
-  const highCount = items.filter(item => item.level === "high").length;
-  const normalCount = items.filter(item => item.level === "normal").length;
-
+  const note=document.getElementById("privacy-note");
+  const list=document.getElementById("privacy-items");
+  const sidebar=document.getElementById("dsgvo-sidebar");
+  // Gehaltene Werte im Zwischenspeicher → große Blasen
+  const held=Object.entries(activeRedactionMap);
+  if(held.length){
+    sidebar&&sidebar.classList.add("visible");
+    note.textContent=`🔒 ${held.length} Wert${held.length>1?"e":""} gesichert — werden nach Antwort wieder eingefügt`;
+    list.innerHTML=held.map(([ph,val])=>{
+      const label=ph.replace(/^\[|\]$/g,"");
+      const rule=PRIVACY_RULES.find(r=>r.placeholder===ph||r.placeholder.startsWith("["+label));
+      const lvl=rule?rule.level:"normal";
+      const cls=lvl==="secret"?" secret":lvl==="forbidden"?" forbidden":lvl==="confidential"?" confidential":lvl==="high"?" high":"";
+      return`<div class="dsgvo-bubble${cls}"><span class="dsgvo-bubble-label">${escapeHtml(label)}</span><span class="dsgvo-bubble-value">${escapeHtml(val)}</span></div>`;
+    }).join("");
+    return;
+  }
+  // Kein aktiver Zwischenspeicher → Erkennung im Eingabefeld zeigen
+  const items=detectPrivacyItems(inp);
   if(!items.length){
-    note.textContent = "Keine sensiblen Daten erkannt";
-    list.innerHTML = '<span class="privacy-pill empty">Normal: leer</span>';
-    return;
+    sidebar&&sidebar.classList.remove("visible");
+    note.textContent="";list.innerHTML='<div class="dsgvo-sidebar-empty">Keine Daten erkannt</div>';return;
   }
-
-  note.textContent = `${highCount} hochsensibel, ${normalCount} normal`;
-  list.innerHTML = items.map(item => {
-    const levelText = item.level === "high" ? "Hochsensibel" : "Normal";
-    return `<span class="privacy-pill ${item.level}">${levelText}: ${escapeHtml(item.label)} - ${escapeHtml(item.value)}</span>`;
-  }).join("");
+  sidebar&&sidebar.classList.add("visible");
+  const s=items.filter(i=>i.level==="secret").length;const f=items.filter(i=>i.level==="forbidden").length;const c=items.filter(i=>i.level==="confidential").length;const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
+  const parts=[];if(s)parts.push(`${s} ⚫ niemals senden`);if(f)parts.push(`${f} 🔴 Art.9/10`);if(c)parts.push(`${c} 🟠 vertraulich`);if(h)parts.push(`${h} 🟡 kritisch`);if(n)parts.push(`${n} 🟢 sensibel`);
+  note.textContent=parts.join(" · ")+" — beim Einfügen (Strg+V) gesichert";
+  const lvlCls=l=>l==="secret"?" secret":l==="forbidden"?" forbidden":l==="confidential"?" confidential":l==="high"?" high":"";
+  list.innerHTML=items.map(i=>`<div class="dsgvo-bubble${lvlCls(i.level)}"><span class="dsgvo-bubble-label">${escapeHtml(i.label)}</span><span class="dsgvo-bubble-value">${escapeHtml(i.value)}</span></div>`).join("");
 }
-
-function quickPrompt(text){
-  const inp = document.getElementById("chat-input");
-  inp.value = text;
-  inp.focus();
-  autoResize(inp);
-  // Wenn vollständig → direkt senden
-  if(!text.endsWith(": ") && !text.endsWith("? ")) sendMessage();
-}
-
-function renderSkills(){
-  document.getElementById("skill-tiles").innerHTML = SKILLS.map(s=>`
-    <div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}');">
-      <div class="skill-ic">${s.ic}</div>
-      <div class="skill-n">${s.n}</div>
-      <div class="skill-d">${s.d}</div>
-    </div>`).join("");
-}
-
-function renderFolders(){
-  const list = document.getElementById("folder-list");
-  list.innerHTML = folders.map((f,i)=>`
-    <div class="side-list-item">
-      <span class="dot"></span>
-      <span class="side-list-text">${f}</span>
-      <span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span>
-    </div>`).join("");
-}
-function addFolder(){
-  const n = prompt("Ordnername:");
-  if(!n) return;
-  folders.push(n);
-  localStorage.setItem("ailiza_folders", JSON.stringify(folders));
-  renderFolders();
-}
-function deleteFolder(i){
-  folders.splice(i,1);
-  localStorage.setItem("ailiza_folders", JSON.stringify(folders));
-  renderFolders();
-}
-
+function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
+function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
+function renderFolders(){document.getElementById("folder-list").innerHTML=folders.map((f,i)=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${f}</span><span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span></div>`).join("")}
+function addFolder(){const n=prompt("Ordnername:");if(!n)return;folders.push(n);localStorage.setItem("ailiza_folders",JSON.stringify(folders));renderFolders()}
+function deleteFolder(i){folders.splice(i,1);localStorage.setItem("ailiza_folders",JSON.stringify(folders));renderFolders()}
 function renderRecent(){
-  const chats = JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-  const el = document.getElementById("recent-chats");
-  if(chats.length === 0){
-    el.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>';
-    return;
-  }
-  el.innerHTML = chats.slice(-10).reverse().map(c=>`
-    <div class="side-list-item" onclick="loadChat('${c.id}')">
-      <span class="dot"></span>
-      <span class="side-list-text">${c.name}</span>
-    </div>`).join("");
+  const chats=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const el=document.getElementById("recent-chats");
+  if(!chats.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>';return}
+  el.innerHTML=chats.slice().reverse().slice(0,15).map(c=>`<div class="side-list-item${c.id===currentChatId?' active':''}" onclick="loadChat('${c.id}')"><span class="dot"></span><span class="side-list-text">${escapeHtml(c.name)}</span></div>`).join("");
 }
-
 function loadChat(id){
-  const list = JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-  const chat = list.find(c=>c.id===id);
-  if(!chat) return;
-  chatHistory = chat.messages || [];
-  context = chatHistory.map(m=>({role: m.role==="ai"?"assistant":m.role, content:m.content}));
-  showView('chat', document.querySelector('.side-section .side-item'));
-  renderChat();
-  renderPrivacyMemory();
+  saveCurrentChat();
+  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const chat=list.find(c=>c.id===id);
+  if(!chat)return;
+  currentChatId=id;
+  localStorage.setItem("ailiza_current_chat_id",id);
+  chatHistory=chat.messages||[];
+  context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+  localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory));
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  renderChat();renderPrivacyMemory();renderRecent();
 }
-
 function newChat(){
   saveCurrentChat();
-  chatHistory = []; context = [];
-  localStorage.setItem("ailiza_chat", "[]");
-  renderChat();
+  currentChatId=Date.now().toString();
+  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  chatHistory=[];context=[];
+  localStorage.setItem("ailiza_chat","[]");
+  document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt(\'Schreibe eine E-Mail: \')">📧 E-Mail</div><div class="chip" onclick="quickPrompt(\'Übersetze: \')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt(\'Fasse zusammen: \')">📝 Zusammenfassen</div></div></div>';
   renderPrivacyMemory();
-  showView('chat', document.querySelector('.side-section .side-item'));
+  renderRecent();
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
+  document.querySelector(".side-section .side-item").classList.add("active");
+  document.getElementById("chat-input").value="";
+  document.getElementById("chat-input").focus();
 }
-
-function clearChat(){
-  if(!confirm("Chat-Verlauf wirklich löschen?")) return;
-  chatHistory = []; context = [];
-  localStorage.setItem("ailiza_chat", "[]");
-  renderChat();
-  renderPrivacyMemory();
-}
-
-function exportChat(){
-  const text = chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n");
-  const blob = new Blob([text], {type:"text/plain"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "ailiza-chat-"+Date.now()+".txt";
-  a.click();
-}
-
+function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");if(currentChatId){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));renderRecent()}renderChat();renderPrivacyMemory()}
+function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n")],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ailiza-chat-"+Date.now()+".txt";a.click()}
 function saveCurrentChat(){
-  if(chatHistory.length === 0) return;
-  const list = JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-  const id = Date.now().toString();
-  const name = (chatHistory.find(m=>m.role==="user")?.content || "Chat").slice(0,40);
-  list.push({id, name, messages: chatHistory});
-  localStorage.setItem("ailiza_chat_list", JSON.stringify(list.slice(-30)));
+  if(!chatHistory.length||!currentChatId)return;
+  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);
+  const idx=list.findIndex(c=>c.id===currentChatId);
+  if(idx>=0){list[idx]={id:currentChatId,name,messages:chatHistory}}
+  else{list.push({id:currentChatId,name,messages:chatHistory})}
+  localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
   renderRecent();
 }
-
 function renderChat(){
-  const inner = document.getElementById("chat-inner");
-  if(chatHistory.length === 0){
-    inner.innerHTML = `
-      <div class="welcome">
-        <div class="welcome-h">Was kann ich für Sie tun?</div>
-        <div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div>
-        <div class="welcome-chips">
-          <div class="chip" onclick="quickPrompt('Schreibe eine professionelle E-Mail mit Terminbestätigung an einen Kunden.')">✉️ E-Mail schreiben</div>
-          <div class="chip" onclick="quickPrompt('Übersetze ins Englische: ')">🌍 Übersetzen</div>
-          <div class="chip" onclick="quickPrompt('Fasse diesen Text zusammen: ')">📝 Zusammenfassen</div>
-          <div class="chip" onclick="quickPrompt('Welcher Tag ist heute?')">📅 Heutiges Datum</div>
-          <div class="chip" onclick="quickPrompt('Erstelle eine Checkliste für: ')">✅ Checkliste</div>
-        </div>
-      </div>`;
-    return;
-  }
-  inner.innerHTML = chatHistory.slice(-50).map(m=>renderMsg(m)).join("");
+  const inner=document.getElementById("chat-inner");
+  if(!chatHistory.length){inner.innerHTML=`<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt('Schreibe eine E-Mail: ')">📧 E-Mail</div><div class="chip" onclick="quickPrompt('Übersetze: ')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt('Fasse zusammen: ')">📝 Zusammenfassen</div></div></div>`;return}
+  const offset=Math.max(0,chatHistory.length-50);
+  inner.innerHTML=chatHistory.slice(-50).map((m,i)=>renderMsg(m,offset+i)).join("");
+  // Alle AI-Blasen sofort öffnen (History, kein Streaming)
+  inner.querySelectorAll(".bubble.ai").forEach(b=>b.classList.add("open"));
   scrollToBottom();
 }
-
-function renderMsg(m){
-  const text = (m.content||"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
-  if(m.role === "user"){
-    return `<div class="msg user"><div class="bubble user">${text}</div></div>`;
-  }
-  let tags = '<span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>';
-  if(m.warn) tags += `<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`;
-  const time = m.time ? new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) : "";
-  return `<div class="msg ai">
-    <div class="bubble ai">${text}</div>
-    <div class="msg-tags">${tags}</div>
-    <div class="msg-meta">AILIZA · ${time}</div>
-  </div>`;
+function renderMsg(m,idx){
+  const text=(m.content||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
+  const i=idx!==undefined?idx:chatHistory.indexOf(m);
+  if(m.role==="user")return`<div class="msg user"><div class="bubble user"><span class="bubble-text">${text}</span></div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
+  const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
+  const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
+  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
-
+function flyOutPiiBubbles(){
+  // PII-Blasen aus dem Panel nach rechts rausflöiegen lassen → bleiben als 🔒 Mini-Blase
+  document.querySelectorAll("#privacy-items .dsgvo-bubble").forEach((b,i)=>{
+    setTimeout(()=>{
+      b.classList.add("fly-out");
+      setTimeout(()=>{b.classList.remove("fly-out");b.classList.add("minimized");},600);
+    },i*80);
+  });
+}
+function streamAiBubble(el,text){
+  // Blase aufgehen lassen
+  requestAnimationFrame(()=>{el.classList.add("open")});
+  // Text zeichenweise eintippen
+  const raw=text.replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">");
+  let i=0;
+  el.innerHTML="";
+  const interval=setInterval(()=>{
+    i++;
+    el.innerHTML=(raw.slice(0,i)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
+    scrollToBottom();
+    if(i>=raw.length)clearInterval(interval);
+  },6);
+}
+function copyText(idx){
+  const m=chatHistory[idx];if(!m)return;
+  const txt=m.content||"";
+  const flash=()=>{
+    document.querySelectorAll(`.msg-act[data-copy="${idx}"]`).forEach(btn=>{
+      const orig=btn.textContent;btn.textContent="✓";setTimeout(()=>btn.textContent=orig,1200);
+    });
+  };
+  if(navigator.clipboard&&window.isSecureContext){
+    navigator.clipboard.writeText(txt).then(flash);
+  }else{
+    // Fallback für HTTP
+    const ta=document.createElement("textarea");ta.value=txt;
+    ta.style.cssText="position:fixed;opacity:0";document.body.appendChild(ta);
+    ta.select();document.execCommand("copy");document.body.removeChild(ta);flash();
+  }
+}
+function editUserMsg(idx){
+  const m=chatHistory[idx];if(!m||m.role!=="user")return;
+  // Blasen leeren bevor Text zurückgesetzt wird
+  activeRedactionMap={};
+  const inp=document.getElementById("chat-input");
+  inp.value=m.content||"";
+  autoResize(inp);inp.focus();
+  inp.selectionStart=inp.selectionEnd=inp.value.length;
+  renderPrivacyMemory(inp.value);
+}
 function loadHistory(){
-  if(chatHistory.length === 0) return;
-  context = chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+  if(!chatHistory.length)return;
+  if(!currentChatId){currentChatId=Date.now().toString();localStorage.setItem("ailiza_current_chat_id",currentChatId);}
+  context=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
   renderChat();
 }
-
-function scrollToBottom(){
-  const body = document.getElementById("chat-body");
-  body.scrollTop = body.scrollHeight;
-}
-
-function showTyping(){
-  const inner = document.getElementById("chat-inner");
-  if(document.getElementById("typing")) return;
-  const d = document.createElement("div");
-  d.id = "typing";
-  d.className = "msg ai";
-  d.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
-  inner.appendChild(d);
-  scrollToBottom();
-}
-function hideTyping(){ document.getElementById("typing")?.remove() }
-
+function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
+function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
+function hideTyping(){document.getElementById("typing")?.remove()}
+let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
-  const inp = document.getElementById("chat-input");
-  const text = inp.value.trim();
-  if(!text) return;
-  inp.value = ""; autoResize(inp);
-  document.getElementById("send-btn").disabled = true;
-
-  // Welcome entfernen wenn vorhanden
-  if(chatHistory.length === 0) document.getElementById("chat-inner").innerHTML = "";
-
-  chatHistory.push({role:"user", content:text, time:new Date().toISOString()});
-  document.getElementById("chat-inner").innerHTML += renderMsg({role:"user",content:text});
-  renderPrivacyMemory();
-  scrollToBottom();
-
-  const provider = document.getElementById("provider-sel").value;
-  const model = document.getElementById("model-sel").value;
-  const apiKey = localStorage.getItem("ailiza_key_"+provider) || "";
-
+  const inp=document.getElementById("chat-input");
+  const text=inp.value.trim();if(!text)return;
+  // Alle 5 Stufen werden redaktiert — kein harter Block mehr
+  const {redacted,map}=redactText(text);
+  const hasPii=Object.keys(map).length>0;
+  if(!hasPii){await _doSend(text,{});return;}
+  _pendingSendText=redacted;_pendingMap=map;
+  // Prüfen ob verbotene/geheime Kategorien enthalten
+  const rawItems=detectPrivacyItems(text);
+  const hasCritical=rawItems.some(i=>i.level==="secret"||i.level==="forbidden");
+  const banner=document.getElementById("pii-consent");
+  const btn=document.getElementById("pii-consent-btn");
+  const txtEl=document.querySelector(".pii-consent-text");
+  if(hasCritical){
+    const labels=[...new Set(rawItems.filter(i=>i.level==="secret"||i.level==="forbidden").map(i=>i.label))].join(", ");
+    txtEl.innerHTML=`🔴 <strong>Verbotene Daten erkannt (${labels}).</strong> Alle wurden durch Platzhalter ersetzt — die KI sieht <em>keine</em> echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span>`;
+    btn.textContent="Geschwärzt senden";
+  } else {
+    txtEl.innerHTML=`🔒 <strong>Sensible Daten erkannt.</strong> Vor dem Senden werden Name, Adresse, Telefon usw. automatisch durch Platzhalter ersetzt. Die KI sieht keine echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span>`;
+    btn.textContent="Verstanden & senden";
+  }
+  btn.style.display="";
+  if(!localStorage.getItem("ailiza_pii_consent")||hasCritical){
+    const ts=new Date().toLocaleString("de-DE");
+    document.getElementById("pii-consent-ts").textContent=ts;
+    if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{document.getElementById("pii-consent-ts").textContent=`${ts} · ${p.coords.latitude.toFixed(3)}°N ${p.coords.longitude.toFixed(3)}°E`;},()=>{});
+    banner.classList.add("show");return;
+  }
+  await _doSend(redacted,map);
+}
+async function approvePiiConsent(){
+  localStorage.setItem("ailiza_pii_consent","1");
+  localStorage.setItem("ailiza_pii_consent_ts",new Date().toISOString());
+  document.getElementById("pii-consent").classList.remove("show");
+  flyOutPiiBubbles();
+  await _doSend(_pendingSendText,_pendingMap);
+  _pendingSendText="";_pendingMap={};
+}
+function denyPiiConsent(){
+  document.getElementById("pii-consent").classList.remove("show");
+  _pendingSendText="";_pendingMap={};
+}
+async function _doSend(sendText,map){
+  const inp=document.getElementById("chat-input");
+  inp.value="";autoResize(inp);
+  document.getElementById("send-btn").disabled=true;
+  if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
+  // Blase zeigt den geschwärzten Text — Nutzer sieht Platzhalter statt echter Daten
+  chatHistory.push({role:"user",content:sendText,time:new Date().toISOString()});
+  Object.assign(activeRedactionMap,map);
+  const inner=document.getElementById("chat-inner");
+  inner.innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
+  flyOutPiiBubbles();
+  renderPrivacyMemory();scrollToBottom();
   showTyping();
-
   try{
-    // Versuche LLM-Chat wenn Key vorhanden
-    if(apiKey){
-      const r = await fetch(`${API}/llm/chat`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({message:text, provider, model, api_key:apiKey, context})
-      });
-      hideTyping();
-      if(r.ok){
-        const d = await r.json();
-        const reply = d.text || d.response || d.message || "(keine Antwort)";
-        addAiMessage(reply);
-        context.push({role:"user",content:text});
-        context.push({role:"assistant",content:reply});
-        if(context.length > 20) context = context.slice(-20);
-      } else {
-        // Fallback: Web-Suche
-        await runAgent(text);
-      }
-    } else if(tools.search){
-      await runAgent(text);
-    } else {
-      hideTyping();
-      addAiMessage("Bitte gib einen API-Key ein (🔑 unten) oder aktiviere die Web-Suche.", "Kein API-Key gesetzt");
-    }
-  } catch(e){
-    hideTyping();
-    addAiMessage("Backend nicht erreichbar. Bitte Server prüfen.", "Verbindungsfehler: "+e.message);
-  }
-
-  document.getElementById("send-btn").disabled = false;
-  inp.focus();
+    await runAgent(sendText,Object.keys(map).length>0?map:null);
+  }catch(e){hideTyping();activeRedactionMap={};renderPrivacyMemory();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
+  document.getElementById("send-btn").disabled=false;
+  document.getElementById("chat-input").focus();
 }
-
-async function runAgent(text){
-  const r = await fetch(`${API}/agent/run`,{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({task:text})
-  });
+async function runAgent(text,redactionMap){
+  // History ebenfalls schwärzen
+  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:redactText(m.content).redacted}));
+  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
   hideTyping();
-  if(!r.ok){
-    addAiMessage("Suche fehlgeschlagen.","HTTP "+r.status);
-    return;
-  }
-  const data = await r.json();
-  // Wenn Backend bereits einen LLM-zusammengefassten Text liefert
-  let answer = data.ai_response || "";
-  if(data.message && data.message !== "Agent run completed") answer = data.message;
-  if(!answer){
-    // Aus den Results extrahieren
-    if(data.results){
-      for(const res of data.results){
-        const sources = [res.result || {}, res.summary || {}];
-        for(const s of sources){
-          if(s.summary){ answer += s.summary + " "; }
-          else if(s.top_results && s.top_results.length){
-            const t = s.top_results[0];
-            answer += (t.title||"") + ": " + (t.content||"").slice(0,300) + " ";
-          }
-        }
-      }
+  if(!r.ok){activeRedactionMap={};renderPrivacyMemory();addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
+  const data=await r.json();
+  let answer=data.ai_response||"";
+  if(data.message&&data.message!=="Agent run completed")answer=data.message;
+  if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
+  if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
+  // Platzhalter in der Antwort wieder durch Originalwerte ersetzen
+  let reinserted=answer.trim();
+  if(Object.keys(activeRedactionMap).length>0){
+    for(const [ph,val] of Object.entries(activeRedactionMap)){
+      reinserted=reinserted.split(ph).join(val);
     }
+    // Blasen leeren nach Reinsertion
+    activeRedactionMap={};
   }
-  if(!answer.trim()) answer = "Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
-  addAiMessage(answer.trim());
+  const isDraft=data.status==="draft"||data.draft===true;
+  const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
+  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined);
 }
-
-function addAiMessage(text, warn){
-  const msg = {role:"ai", content:text, time:new Date().toISOString()};
-  if(warn) msg.warn = warn;
+function addAiMessage(text,warn,draftHint){
+  const msg={role:"ai",content:text,time:new Date().toISOString()};
+  if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;
   chatHistory.push(msg);
-  localStorage.setItem("ailiza_chat", JSON.stringify(chatHistory.slice(-100)));
-  document.getElementById("chat-inner").innerHTML += renderMsg(msg);
-  renderPrivacyMemory();
-  scrollToBottom();
+  localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));
+  saveCurrentChat();
+  const inner=document.getElementById("chat-inner");
+  inner.innerHTML+=renderMsg(msg,chatHistory.length-1);
+  // Letzte AI-Blase animiert öffnen + Text streamen
+  const bubbles=inner.querySelectorAll(".bubble.ai");
+  const last=bubbles[bubbles.length-1];
+  if(last){streamAiBubble(last,text);}
+  renderPrivacyMemory();scrollToBottom();
 }
+function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
+function handlePaste(e){
+  e.preventDefault();
+  const pasted=e.clipboardData.getData("text");
+  // Original-Text ins Feld einfügen (kein Schwärzen im Eingabefeld)
+  const el=e.target;
+  const start=el.selectionStart,end=el.selectionEnd;
+  el.value=el.value.slice(0,start)+pasted+el.value.slice(end);
+  el.selectionStart=el.selectionEnd=start+pasted.length;
+  autoResize(el);renderPrivacyMemory(el.value);
+}
+function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
+function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
+function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
+function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});localStorage.setItem("ailiza_projects",JSON.stringify(projects));closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
+function deleteProject(i){if(!confirm("Löschen?"))return;projects.splice(i,1);localStorage.setItem("ailiza_projects",JSON.stringify(projects));renderProjects();renderProjectList()}
+function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card"><div class="card-h">${p.name}</div><div class="card-desc">${p.desc||""}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${p.prio}</span><button class="meta-pill del" onclick="deleteProject(${i})">✕</button></div></div>`).join("")}
+function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${p.name}</span></div>`).join("")}
+async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
+async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
+document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 
-function handleKey(e){
-  if(e.key === "Enter" && !e.shiftKey){
-    e.preventDefault();
-    sendMessage();
-  }
+// ── Wissensbibliothek ──
+const WISSEN=[
+  // E-Mail & Kommunikation
+  {ic:"📧",cat:"E-Mail",title:"Professionelle Anfrage",desc:"Höfliche Anfrage an einen Lieferanten oder Partner",p:"Schreibe eine professionelle E-Mail-Anfrage an einen Lieferanten bezüglich: "},
+  {ic:"📧",cat:"E-Mail",title:"Angebot senden",desc:"Angebot an einen potenziellen Kunden",p:"Schreibe ein professionelles Angebot per E-Mail für folgende Leistung: "},
+  {ic:"📧",cat:"E-Mail",title:"Terminbestätigung",desc:"Bestätigung eines vereinbarten Termins",p:"Schreibe eine Terminbestätigungs-E-Mail für folgenden Termin: "},
+  {ic:"📧",cat:"E-Mail",title:"Absage höflich",desc:"Höfliche Absage eines Angebots oder Termins",p:"Schreibe eine höfliche Absage-E-Mail für: "},
+  {ic:"📧",cat:"E-Mail",title:"Reklamation",desc:"Reklamation bei einem Lieferanten einreichen",p:"Schreibe eine sachliche Reklamations-E-Mail wegen: "},
+  {ic:"📧",cat:"E-Mail",title:"Mahnung (1. Stufe)",desc:"Erste freundliche Zahlungserinnerung",p:"Schreibe eine erste freundliche Zahlungserinnerung für eine Rechnung über: "},
+  {ic:"📧",cat:"E-Mail",title:"Mahnung (2. Stufe)",desc:"Zweite Mahnung mit Fristsetzung",p:"Schreibe eine zweite Mahnung mit Fristsetzung für eine offene Rechnung über: "},
+  {ic:"📧",cat:"E-Mail",title:"Bewerbungsantwort",desc:"Antwort auf eine Bewerbung",p:"Schreibe eine Antwort auf eine Bewerbung — Einladung zum Vorstellungsgespräch für die Stelle: "},
+  // Verträge & Recht
+  {ic:"⚖️",cat:"Recht",title:"DSGVO-Check",desc:"Text auf Datenschutzkonformität prüfen",p:"Prüfe folgenden Text auf DSGVO-Konformität und liste konkrete Probleme auf: "},
+  {ic:"⚖️",cat:"Recht",title:"AGB-Klausel prüfen",desc:"AGB-Klausel auf Unwirksamkeit prüfen",p:"Prüfe folgende AGB-Klausel auf rechtliche Unwirksamkeit nach deutschem Recht: "},
+  {ic:"⚖️",cat:"Recht",title:"Kündigung Lieferant",desc:"Kündigung eines Lieferantenvertrags",p:"Schreibe eine formgerechte Kündigung eines Lieferantenvertrags. Begründung: "},
+  {ic:"⚖️",cat:"Recht",title:"EU AI Act Check",desc:"Prüfung ob KI-Einsatz konform ist",p:"Prüfe folgenden KI-Einsatz auf Konformität mit dem EU AI Act: "},
+  // Finanzen
+  {ic:"💶",cat:"Finanzen",title:"Rechnungstext",desc:"Professionellen Rechnungsbegleittext erstellen",p:"Schreibe einen professionellen Begleittext zu einer Rechnung für folgende Leistung: "},
+  {ic:"💶",cat:"Finanzen",title:"Preiserhöhung erklären",desc:"Preiserhöhung gegenüber Kunden kommunizieren",p:"Schreibe ein Anschreiben zur Ankündigung einer Preiserhöhung um X% ab dem Datum Y. Begründung: "},
+  {ic:"💶",cat:"Finanzen",title:"Kostenübersicht",desc:"Kosten und Nutzen einer Investition gegenüberstellen",p:"Erstelle eine strukturierte Kosten-Nutzen-Übersicht für folgende Investition: "},
+  {ic:"💶",cat:"Finanzen",title:"Zahlungsbedingungen",desc:"Zahlungsbedingungen für Angebote formulieren",p:"Formuliere klare Zahlungsbedingungen für mein Angebot. Rahmenbedingungen: "},
+  // Marketing
+  {ic:"📣",cat:"Marketing",title:"Social-Media-Post",desc:"Professioneller Post für LinkedIn oder Instagram",p:"Schreibe einen professionellen LinkedIn-Post über: "},
+  {ic:"📣",cat:"Marketing",title:"Produktbeschreibung",desc:"Überzeugende Produktbeschreibung",p:"Schreibe eine überzeugende Produktbeschreibung für: "},
+  {ic:"📣",cat:"Marketing",title:"Pressemitteilung",desc:"Einfache Pressemitteilung für lokale Medien",p:"Schreibe eine kurze Pressemitteilung über: "},
+  {ic:"📣",cat:"Marketing",title:"Newsletter-Text",desc:"Newsletter-Beitrag für Kunden",p:"Schreibe einen Newsletter-Beitrag für unsere Kunden über: "},
+  // Personal & HR
+  {ic:"👤",cat:"Personal",title:"Stellenausschreibung",desc:"Stellenausschreibung formulieren",p:"Schreibe eine ansprechende Stellenausschreibung für folgende Position: "},
+  {ic:"👤",cat:"Personal",title:"Arbeitszeugnis",desc:"Wohlwollendes Arbeitszeugnis erstellen",p:"Schreibe ein wohlwollendes Arbeitszeugnis für einen Mitarbeiter der folgenden Position: "},
+  {ic:"👤",cat:"Personal",title:"Abmahnung",desc:"Formgerechte Abmahnung erstellen",p:"Schreibe eine formgerechte Abmahnung wegen folgenden Sachverhalts: "},
+  {ic:"👤",cat:"Personal",title:"Einarbeitsplan",desc:"Einarbeitungsplan für neuen Mitarbeiter",p:"Erstelle einen strukturierten Einarbeitungsplan für eine neue Mitarbeiterin / einen neuen Mitarbeiter in der Rolle: "},
+  // Übersetzungen
+  {ic:"🌍",cat:"Übersetzen",title:"Deutsch → Englisch",desc:"Professionelle Übersetzung ins Englische",p:"Übersetze folgenden Text professionell ins Englische: "},
+  {ic:"🌍",cat:"Übersetzen",title:"Deutsch → Türkisch",desc:"Übersetzung ins Türkische",p:"Übersetze folgenden Text ins Türkische: "},
+  {ic:"🌍",cat:"Übersetzen",title:"Deutsch → Arabisch",desc:"Übersetzung ins Arabische",p:"Übersetze folgenden Text ins Arabische: "},
+  {ic:"🌍",cat:"Übersetzen",title:"Englisch → Deutsch",desc:"Englischen Text eingedeutscht",p:"Übersetze folgenden englischen Text ins Deutsche: "},
+  // Zusammenfassen
+  {ic:"📝",cat:"Zusammenfassen",title:"Meeting-Protokoll",desc:"Notizen in ein Protokoll umwandeln",p:"Erstelle ein strukturiertes Meeting-Protokoll aus folgenden Notizen: "},
+  {ic:"📝",cat:"Zusammenfassen",title:"Vertrag zusammenfassen",desc:"Vertrag auf das Wesentliche kürzen",p:"Fasse folgenden Vertrag auf die wichtigsten Punkte zusammen und hebe Risiken hervor: "},
+  {ic:"📝",cat:"Zusammenfassen",title:"E-Mail-Thread",desc:"Langen E-Mail-Verlauf zusammenfassen",p:"Fasse folgenden E-Mail-Verlauf kurz zusammen und nenne die wichtigsten Handlungspunkte: "},
+  {ic:"📝",cat:"Zusammenfassen",title:"Checkliste erstellen",desc:"Aufgaben als Checkliste strukturieren",p:"Erstelle eine strukturierte Checkliste für: "},
+];
+let wissenCat="Alle";
+function renderWissen(){
+  const cats=["Alle",...new Set(WISSEN.map(w=>w.cat))];
+  document.getElementById("wissen-cats").innerHTML=cats.map(c=>`<button class="wissen-cat-btn${c===wissenCat?" active":""}" onclick="setWissenCat('${c}')">${c}</button>`).join("");
+  const filtered=wissenCat==="Alle"?WISSEN:WISSEN.filter(w=>w.cat===wissenCat);
+  document.getElementById("wissen-grid").innerHTML=filtered.map(w=>`<div class="wissen-card" onclick="useWissen(${JSON.stringify(w.p).replace(/"/g,'&quot;')})"><div class="wissen-card-ic">${w.ic}</div><div class="wissen-card-title">${w.title}</div><div class="wissen-card-desc">${w.desc}</div><span class="wissen-card-cat">${w.cat}</span></div>`).join("");
 }
-function autoResize(el){
-  el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, 140) + "px";
+function setWissenCat(cat){wissenCat=cat;renderWissen()}
+function useWissen(prompt){
+  // Wechsle zum Chat und füge Prompt ein
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
+  document.querySelector(".side-section .side-item").classList.add("active");
+  const inp=document.getElementById("chat-input");
+  inp.value=prompt;autoResize(inp);inp.focus();
+  inp.selectionStart=inp.selectionEnd=inp.value.length;
 }
-
-// ── PROJECTS ──
-function openProjModal(){ document.getElementById("proj-modal").classList.add("open") }
-function closeProjModal(){ document.getElementById("proj-modal").classList.remove("open") }
-function saveProject(){
-  const name = document.getElementById("proj-name").value.trim();
-  if(!name) return;
-  projects.push({
-    id:Date.now(),
-    name,
-    desc:document.getElementById("proj-desc").value,
-    prio:document.getElementById("proj-prio").value,
-    created:new Date().toISOString(),
-    tasks:[],
-    chats:[]
-  });
-  localStorage.setItem("ailiza_projects", JSON.stringify(projects));
-  closeProjModal();
-  renderProjects();
-  renderProjectList();
-  document.getElementById("proj-name").value = "";
-  document.getElementById("proj-desc").value = "";
-}
-function deleteProject(i){
-  if(!confirm("Projekt wirklich löschen?")) return;
-  projects.splice(i,1);
-  localStorage.setItem("ailiza_projects", JSON.stringify(projects));
-  renderProjects();
-  renderProjectList();
-}
-function renderProjects(){
-  document.getElementById("proj-count").textContent = projects.length;
-  const grid = document.getElementById("proj-grid");
-  if(projects.length === 0){
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">Noch keine Projekte. Erstelle eines, um Aufgaben und Chats zu gruppieren.</div>';
-    return;
-  }
-  grid.innerHTML = projects.map((p,i)=>`
-    <div class="card">
-      <div class="card-h">${p.name}</div>
-      <div class="card-desc">${p.desc || "Keine Beschreibung"}</div>
-      <div class="card-meta">
-        <span class="meta-pill ${p.prio==='Hoch'?'hi':''}">${p.prio}</span>
-        <span class="meta-pill">${new Date(p.created).toLocaleDateString('de-DE')}</span>
-        <span class="meta-pill">${(p.chats||[]).length} Chats</span>
-        <button class="meta-pill del" onclick="deleteProject(${i})">✕</button>
-      </div>
-    </div>`).join("");
-}
-function renderProjectList(){
-  const el = document.getElementById("proj-list");
-  if(projects.length === 0){
-    el.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';
-    return;
-  }
-  el.innerHTML = projects.slice(-8).map(p=>`
-    <div class="side-list-item">
-      <span class="dot"></span>
-      <span class="side-list-text">${p.name}</span>
-    </div>`).join("");
-}
-
-// ── STATUS ──
-async function checkStatus(){
-  const b = document.getElementById("conn-status");
+// ── DSGVO Art. 17 — Datenlöschung ──
+async function deleteMyData(){
+  if(!confirm("Alle Ihre Daten werden unwiderruflich gelöscht — Chat-Verlauf, Projekte, Einstellungen und Serverdaten.\n\nFortfahren?"))return;
+  const msg=document.getElementById("delete-data-msg");
+  msg.style.display="block";msg.style.color="var(--text-muted)";msg.textContent="Wird gelöscht…";
+  // Lokale Daten löschen
+  ["ailiza_chat","ailiza_chat_list","ailiza_current_chat_id","ailiza_projects","ailiza_folders","ailiza_tools","ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
+  chatHistory=[];context=[];currentChatId=null;projects=[];
+  // Server-Daten löschen
   try{
-    const r = await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});
-    if(r.ok){ b.textContent = "● System aktiv"; b.className = "status-dot status-ok"; }
-  } catch{ b.textContent = "○ Offline"; b.className = "status-dot status-off"; }
+    const r=await fetch(`${API}/user/delete-data`,{method:"POST",headers:{"Content-Type":"application/json"}});
+    const data=await r.json().catch(()=>({}));
+    if(r.ok){msg.style.color="var(--ok)";msg.textContent="✓ "+( data.message||"Alle Daten wurden gelöscht.");}
+    else{msg.style.color="var(--warn)";msg.textContent="Lokale Daten gelöscht. Serverfehler: "+(data.detail||r.status);}
+  }catch{msg.style.color="var(--warn)";msg.textContent="Lokale Daten gelöscht. Server nicht erreichbar.";}
+  // Seite neu laden nach Datenlöschung
+  setTimeout(()=>{location.reload();},2000);
 }
-async function loadStatus(){
-  try{
-    const [ar,ap] = await Promise.all([
-      fetch(`${API}/agent/runs`).then(r=>r.json()),
-      fetch(`${API}/approvals`).then(r=>r.json())
-    ]);
-    const runs = Array.isArray(ar) ? ar : [];
-    const apprs = Array.isArray(ap) ? ap : [];
-    document.getElementById("m-runs").textContent = runs.length;
-    document.getElementById("m-appr").textContent = apprs.length;
-    document.getElementById("runs-list").innerHTML = runs.length === 0
-      ? '<div class="empty">Keine Runs</div>'
-      : runs.slice(0,10).map(r=>`
-        <div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px;align-items:center">
-          <span style="width:6px;height:6px;border-radius:50%;background:${r.status==='completed'?'var(--accent)':'var(--warn)'}"></span>
-          <span style="flex:1">${(r.task||"").slice(0,80)}</span>
-          <span style="color:var(--text-muted);font-size:11px">${r.status}</span>
-        </div>`).join("");
-  } catch{}
-}
+// ── Auth (Login deaktiviert — kommt später) ──
+function authHeaders(){return{"Content-Type":"application/json"};}
+// App direkt starten
+if(localStorage.getItem("ailiza_consent")==="1"){init();}
 
-// Click outside to close key pop
-document.addEventListener("click", e=>{
-  const pop = document.getElementById("key-pop");
-  if(pop.classList.contains("open") && !pop.contains(e.target)
-     && !e.target.closest("button[onclick*='toggleKeyPop']")){
-    pop.classList.remove("open");
-  }
-});
-
-init();
+// else: Consent-Screen bleibt sichtbar
 </script>
 </body>
 </html>
