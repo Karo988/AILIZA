@@ -790,11 +790,11 @@ function detectPrivacyItems(inp=""){
   return items;
 }
 function renderPrivacyMemory(inp=""){
-  // KI-Preview aktualisieren: zeige redaktierten Text
+  // Phase 1.3: Backend macht Redaction, kein Frontend-Preview mehr
   const preview=document.getElementById("kI-input-preview");
   if(inp){
-    const {redacted}=redactText(inp);
-    preview.value=redacted;
+    // Zeige rohen Text - Backend-Redaction passiert bei Send
+    preview.value=inp;
   }else{
     preview.value="";
   }
