@@ -1,6 +1,6 @@
 # Phase 1 & 1.1 & 1.2 Implementation Status
 
-**Status:** Bereit für kontrollierte Testumgebung und Governance-Review.  
+**Status:** Phase 1.2 Complete. Alle Tests grün (52/52). Bereit für kontrollierte Testumgebung und Governance-Review.  
 **Nicht produktionsreif. Nicht zertifiziert.**
 
 **Datum:** 2026-07-01  
@@ -8,7 +8,8 @@
 **Commits:**
 - `07bda1a` - Phase 1: Core Implementation
 - `16a39dc` - Phase 1.1: High-Risk Context Blockade
-- (Phase 1.2: Commit pending)
+- `9ee89d5` - Phase 1.2: PolicyEngine integration in run_agent() flow
+- `1a09405` - fix(tests): correct test cases for German-focused PII detection
 
 ---
 
@@ -322,14 +323,23 @@ write_audit_entry(
 - ✅ All decision paths (RED/ORANGE/YELLOW/GREEN)
 - ✅ Reason code normalization
 - ✅ Audit logging correctness
+- ✅ German-language test coverage (52 tests total)
+- ✅ Art. 9 special categories (health, religion, etc.)
+- ✅ Third-country transfer rules (data-class dependent)
 
 ### Test Execution
 ```bash
 cd apps/backend
+# All tests (52 passing)
+pytest tests/test_phase1_implementation.py tests/test_phase1_2_integration.py -v
+
+# Individual test suites
 pytest tests/test_phase1_implementation.py -v
 pytest tests/test_phase1_implementation.py::TestHighRiskContexts -v
 pytest tests/test_phase1_2_integration.py -v
 ```
+
+**Latest Results:** ✅ 52 passed in 0.16s
 
 ---
 
@@ -353,9 +363,17 @@ Before production use:
 
 ## 📞 Contact & Status
 
-**Status:** Phase 1.2 Integration Complete  
+**Status:** ✅ Phase 1.2 Complete (All Tests Green: 52/52)
 **Next Phase:** Phase 2 (Provider Governance, Admin UI)  
 **Certification:** Not yet, Phase 1 is foundational layer only
+
+**Implementation Highlights:**
+- ✅ PolicyEngine fully integrated in run_agent() flow
+- ✅ All decision paths tested (RED/ORANGE/YELLOW/GREEN)
+- ✅ German-language PII detection and Art. 9 compliance checks
+- ✅ High-risk context blockade (8 context types)
+- ✅ Legal hold and retention with audit trail
+- ✅ Normalized reason codes (no freetext logging)
 
 **Important Note:**
 > This implementation is ready for controlled test environments and governance review. It is NOT production-ready and NOT certified for legal compliance. Use only for evaluation and development. AILIZA development team must conduct security review, legal review, and obtain certifications before production deployment.
@@ -368,6 +386,6 @@ Before production use:
 |-------|---------|----------|--------|
 | 1.0 | 07bda1a | Core: PII, Policy, Approval, Legal Hold, Retention | ✅ |
 | 1.1 | 16a39dc | High-Risk Blockade: 8 context types | ✅ |
-| 1.2 | pending | Integration: run_agent() flow, real-world tests | ✅ |
+| 1.2 | 9ee89d5, 1a09405 | Integration: run_agent() flow, real-world tests, all tests green | ✅ |
 | 2.0 | — | Provider Governance, Admin UI, Certification | 📅 |
 
