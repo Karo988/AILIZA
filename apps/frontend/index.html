@@ -712,10 +712,16 @@ const PRIVACY_RULES=[
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?:Kundin|Kunde|Person|Kontakt|Antragsteller|Unterschrift|Signatur|Geschäftsführer|Leiter|Manager|Vertreter|Ansprechpartner)(?:in)?[:—\s]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
   // Name nach "Name:" oder "Ansprechpartner:" (Form-Felder)
   {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?:Name|Ansprechpartner|Antragsteller|Bewerber|Kunde|Kundin|Person|Signatur|Unterschrift)\s*[:=]\s*[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*/gi},
+  // Name in Adressblock (zwei Großbuchstaben-Wörter nach Ort/Platzhalter)
+  {level:"normal",label:"Name",placeholder:"[Name]",pattern:/(?:\[Ort\]|\d{5}\s+[A-Z][\w\s-]+)\s*:?\s*\n\s*([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)*)\s*(?:\n|$)/g},
   {level:"normal",label:"Kundennummer",placeholder:"[Kundennummer]",pattern:/\b(?:Kundennummer|Kunden-?Nr\.?|Kd\.?-?Nr\.?)\s*[:№#]?\s*[A-Z0-9][\w\-]{2,19}/gi},
   {level:"normal",label:"Referenz-Nr.",placeholder:"[Referenz-Nr.]",pattern:/\b(?:Rechnungs?(?:nummer|nr\.?)?|Auftragsnummer|Bestellnummer|Bestell(?:ung)?(?:s?nr\.?)?|Aktenzeichen|Vertragsnummer|Fallnummer|Angebot(?:s?nummer)?|Offertenummer)\s*[:\-#]?\s*[A-Z0-9][\w\-\/]{1,19}/gi},
   {level:"normal",label:"Betrag",placeholder:"[Wert]",pattern:/€\s*\d+(?:[.,]\d{1,2})?(?:\s*EUR)?|\b\d+(?:[.,]\d{2})\s*(?:€|EUR)/g},
   {level:"normal",label:"Datum",placeholder:"[Datum]",pattern:/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g},
+  // Familienstand + Lebensumstände (Diskriminierungsrisiko)
+  {level:"high",label:"Familienstand",placeholder:"[Familienstand]",pattern:/\b(?:familienstand|zivilstand|lebensumstände|lebensform|ehestatus|alleinerziehend|verheiratet|ledig|verwitwet|geschieden|getrennt|lebenspartnerschaft|eingetragene\s+partnerschaft)\s*[:=]?\s*[A-Za-zäöüß\s-]+/gi},
+  // Alter/Geburtsdatum-Kontext (Diskriminierungsrisiko)
+  {level:"high",label:"Alter",placeholder:"[Alter]",pattern:/\b(?:alter|geburtsdatum|geb\.|geburtstag|jahrgang|geburtsort)\s*[:=]?\s*(?:\d{1,2}\.\d{1,2}\.\d{2,4}|\d{4}|\d{2}\s+(?:jahre?|j\.))/gi},
   // ── Zusätzliche kritische Patterns ──
   {level:"high",label:"CVV",placeholder:"[CVV]",pattern:/CVV\s*[:=]?\s*\d{3,4}/gi},
   {level:"high",label:"TAN",placeholder:"[TAN]",pattern:/TAN\s*(?:Testwert)?[:=]?\s*\d{6,8}/gi},
