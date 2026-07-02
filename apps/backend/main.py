@@ -103,6 +103,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Alle Governance-abhängigen Endpoints werden durch enforce_kill_switch() geblockt.
     # ── Ende Gate 10 ─────────────────────────────────────────────────────────
 
+    # ── Gate 11: Testmodus darf nie in Produktion aktiv sein (Freigabe Stufe 1, P-A) ──
+    try:
+        from .kill_switch import enforce_test_mode_not_in_production
+    except ImportError:
+        from kill_switch import enforce_test_mode_not_in_production
+    enforce_test_mode_not_in_production()  # raised RuntimeError -> Start abgebrochen
+    # ── Ende Gate 11 ─────────────────────────────────────────────────────────
+
     # ── Secret-Key-Prüfung: Hard-Fail wenn zu schwach ───────────────────────
     _secret_key = os.getenv("AILIZA_SECRET_KEY", "")
     if len(_secret_key) < 32:

@@ -23,6 +23,15 @@ try:
 except ImportError:
     from governance.data_governance import DataClass
 
+try:
+    from ..kill_switch import is_test_mode
+except ImportError:
+    from kill_switch import is_test_mode
+
+# Datenklassen, die unter der Testmodus-Ausnahme (Haertung 2, Freigabe Stufe 1
+# P-A) als "keine personenbezogenen/sensiblen/vertraulichen Daten" gelten.
+_TEST_EXEMPT_DATA_CLASSES = {DataClass.PUBLIC, DataClass.SYNTHETIC, DataClass.DEMO}
+
 
 class TransferBasis(str, Enum):
     """DSGVO Art. 44–46 Transferbasis fuer Drittlandtransfers."""
@@ -72,7 +81,8 @@ _PROFILES: dict[str, ProviderProfile] = {
         transfer_basis=TransferBasis.SCC,
         avv_signed=False,               # ⚠ DPA noch zu unterzeichnen
         allowed_data_classes=[
-            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.PUBLIC, DataClass.SYNTHETIC, DataClass.DEMO,
+            DataClass.INTERNAL, DataClass.CONFIDENTIAL,
             # Nach Redaction erlaubt — data_matrix prüft redaction_applied=True
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
@@ -93,7 +103,8 @@ _PROFILES: dict[str, ProviderProfile] = {
         transfer_basis=TransferBasis.SCC,
         avv_signed=False,               # ⚠ DPA noch zu unterzeichnen
         allowed_data_classes=[
-            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.PUBLIC, DataClass.SYNTHETIC, DataClass.DEMO,
+            DataClass.INTERNAL, DataClass.CONFIDENTIAL,
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
         allowed_use_cases=["kmu_assistant", "summarization", "classification", "text_generation"],
@@ -114,7 +125,8 @@ _PROFILES: dict[str, ProviderProfile] = {
         transfer_basis=TransferBasis.SCC,
         avv_signed=False,               # ⚠ Commercial API Terms prüfen
         allowed_data_classes=[
-            DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.PUBLIC, DataClass.SYNTHETIC, DataClass.DEMO,
+            DataClass.INTERNAL, DataClass.CONFIDENTIAL,
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
         allowed_use_cases=["kmu_assistant", "summarization", "code_assist", "classification", "text_generation"],
@@ -175,6 +187,17 @@ def check_provider_policy(
     Prueft ob ein Provider fuer gegebene Datenklassen und Use Case zugelassen ist.
     Gibt (allowed: bool, reason: str) zurueck.
     Fail-closed: unbekannt oder inaktiv → (False, reason).
+
+    AVV-Gate (Freigabe Stufe 1, P-A): Provider ohne unterzeichneten AVV
+    (avv_signed=False) werden blockiert. Ausnahme NUR wenn alle drei gelten:
+      1. Testmodus ist serverseitig aktiv (AILIZA_TEST_MODE, nie aus Request),
+      2. alle uebergebenen Datenklassen sind in _TEST_EXEMPT_DATA_CLASSES
+         (PUBLIC/SYNTHETIC/DEMO) — diese werden nie von classify() aus
+         Nutzertext vergeben, sondern nur von vertrauenswuerdigem Testcode,
+      3. (wird vom Aufrufer sichergestellt, siehe _governance_pre_check /
+         RedactionEngineV2: erkennt die Klassifikation PERSONAL/HR/FINANCIAL/
+         SPECIAL_CATEGORY/... in den uebergebenen data_classes, greift Punkt 2
+         ohnehin nicht — Haertung 2).
     """
     profile = _PROFILES.get(provider_id)
     if profile is None:
@@ -187,12 +210,27 @@ def check_provider_policy(
         return False, f"Provider '{provider_id}': kein Drittland-Transfermechanismus (DSGVO Art. 44)."
     if not profile.allows_use_case(use_case):
         return False, f"Provider '{provider_id}': Use Case '{use_case}' nicht freigegeben."
+
+    used_test_exception = False
+    if not profile.avv_signed:
+        test_exempt = bool(data_classes) and all(dc in _TEST_EXEMPT_DATA_CLASSES for dc in data_classes)
+        if test_exempt and is_test_mode():
+            used_test_exception = True  # weiter zur Datenklassen-Pruefung
+        else:
+            return False, (
+                f"Provider '{provider_id}': kein AVV/DPA unterzeichnet (DSGVO Art. 28). "
+                f"Keine Verarbeitung personenbezogener Daten erlaubt."
+            )
+
     forbidden = [dc for dc in data_classes if dc not in profile.allowed_data_classes]
     if forbidden:
         names = [dc.value for dc in forbidden]
         return False, (f"Provider '{provider_id}': Datenklassen nicht erlaubt: "
                        f"{', '.join(names)}. Kein AVV oder Transfer-Basis fehlt.")
-    return True, "ok"
+    # Marker "ok:no_avv_test_exception" statt "ok" wenn die AVV-Testmodus-
+    # Ausnahme gegriffen hat — Aufrufer (Orchestrator) nutzt das fuer Audit
+    # und Transparenzhinweis ("Testmodus / nicht produktiv").
+    return True, ("ok:no_avv_test_exception" if used_test_exception else "ok")
 
 
 def get_profile(provider_id: str) -> ProviderProfile | None:

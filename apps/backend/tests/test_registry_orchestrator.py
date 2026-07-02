@@ -28,6 +28,9 @@ def _make_orchestrator(monkeypatch, providers: dict):
     monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
     monkeypatch.setenv("GROQ_API_KEY", "fake")
     monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    # Ohne unterzeichneten AVV blockt check_provider_policy() seit Freigabe
+    # Stufe 1 (P-A) auch PUBLIC-Daten, ausser im Testmodus.
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
 
     from apps.backend.providers.orchestrator import ProviderOrchestrator
     return ProviderOrchestrator(providers=providers)
@@ -201,6 +204,7 @@ class TestOrchestratorRegistryIntegration:
         """public_data muss mit freigegebenem Provider funktionieren."""
         monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
         monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         import apps.backend.registry.registry_loader as rl
         rl._registry = None  # echte Registry laden
 
@@ -214,6 +218,7 @@ class TestOrchestratorRegistryIntegration:
         monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
         monkeypatch.setenv("GROQ_API_KEY", "fake")
         monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         import apps.backend.registry.registry_loader as rl
         rl._registry = None
 
@@ -335,6 +340,7 @@ class TestRoutingRulesIntegration:
         """AILIZA ROUTING RULE muss im Log erscheinen."""
         monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
         monkeypatch.setenv("GROQ_API_KEY", "fake")
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         import apps.backend.registry.registry_loader as rl
         rl._registry = None
 

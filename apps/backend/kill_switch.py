@@ -113,6 +113,37 @@ def is_action_allowed(action: str) -> bool:
         return False
 
 
+def is_test_mode() -> bool:
+    """
+    True nur wenn AILIZA_TEST_MODE serverseitig gesetzt ist (Env oder DB-Flag).
+    Wird NIEMALS aus Request-Parametern, Headern oder Client-Payload gelesen —
+    nur aus Server-Konfiguration. Fail-closed: bei Unklarheit False.
+    """
+    raw = os.getenv("AILIZA_TEST_MODE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def is_production_env() -> bool:
+    """True wenn AILIZA_ENV=production gesetzt ist (Server-Konfiguration)."""
+    raw = os.getenv("AILIZA_ENV", "").strip().lower()
+    return raw == "production"
+
+
+def enforce_test_mode_not_in_production() -> None:
+    """
+    Startup-Guard: Verweigert den Start, wenn AILIZA_TEST_MODE=true UND
+    AILIZA_ENV=production gleichzeitig gesetzt sind. Setzt technisch durch,
+    dass der Testmodus (und damit die AVV-Ausnahme in provider_profiles.py)
+    nie in einer produktiv markierten Umgebung aktiv sein kann.
+    """
+    if is_test_mode() and is_production_env():
+        raise RuntimeError(
+            "AILIZA_TEST_MODE=true ist zusammen mit AILIZA_ENV=production nicht "
+            "zulaessig. Testmodus darf niemals in einer produktiven Umgebung "
+            "aktiv sein (Freigabe Stufe 1, P-A, Haertung 1). Start abgebrochen."
+        )
+
+
 def kill_switch_metadata() -> dict[str, Any]:
     """Audit-Metadaten ohne Inhalt (nur Status und Modus)."""
     return {

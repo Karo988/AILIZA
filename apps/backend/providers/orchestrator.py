@@ -175,6 +175,32 @@ class ProviderOrchestrator:
             allowed = reg_allowed and legacy_allowed
             reason = reg_reason if not reg_allowed else (legacy_reason if not legacy_allowed else "ok")
 
+            # AVV-Testmodus-Ausnahme genutzt? (Freigabe Stufe 1, P-A) — auditieren
+            no_avv_test_exception = allowed and legacy_reason == "ok:no_avv_test_exception"
+            if no_avv_test_exception:
+                print(
+                    f"AILIZA AVV TEST EXCEPTION USED | provider={pid} "
+                    f"model={getattr(prov, 'model', 'unknown')} test_mode=true "
+                    f"no_avv_test_exception=true",
+                    flush=True,
+                )
+                try:
+                    from ..database import write_audit_entry
+                except ImportError:
+                    from database import write_audit_entry
+                try:
+                    write_audit_entry(
+                        action="provider.avv_test_exception_used",
+                        metadata={
+                            "provider": pid,
+                            "model": getattr(prov, "model", "unknown"),
+                            "test_mode": True,
+                            "no_avv_test_exception": True,
+                        },
+                    )
+                except Exception:
+                    pass  # Audit-Fehler darf Provider-Auswahl nicht blockieren
+
             # Priorität aus AILIZA_PROVIDER_ORDER (0-basiert; nicht gelistet → 999)
             order_priority = provider_order.index(pid) if pid in provider_order else 999
 
