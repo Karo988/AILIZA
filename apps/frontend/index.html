@@ -377,8 +377,8 @@ body{
             <button class="input-send" id="send-btn" onclick="sendMessage()">↑</button>
           </div>
           <div class="kI-preview-container">
-            <div class="kI-preview-label">🔒 KI erhält:</div>
-            <textarea class="kI-preview-field" id="kI-input-preview" readonly placeholder="Hier siehst du, was die KI von deinem Text erhält (mit Platzhaltern statt Originaldaten)"></textarea>
+            <div class="kI-preview-label">✏️ Dein Eingabetext (ungeprüft):</div>
+            <textarea class="kI-preview-field" id="kI-input-preview" readonly placeholder="Deine Eingabe wird erst beim Senden vom Server geprüft und geschwärzt — diese Box zeigt keine Vorschau der KI-Version"></textarea>
           </div>
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
@@ -713,7 +713,22 @@ async function redactWithBackend(text, context=null){
         requires_human_review:false
       };
     }
-    return await response.json();
+    const body=await response.json();
+    // Fail-closed: HTTP 200 allein ist kein Beweis für eine gültige,
+    // vollständige Antwort. Ohne die Pflichtfelder wird NICHTS gesendet.
+    const KNOWN_DECISIONS=["safe_output","safe_output_with_redactions","requires_human_review","security_block","technical_block"];
+    const isValid=body&&typeof body.safe_text==="string"&&typeof body.decision==="string"&&KNOWN_DECISIONS.includes(body.decision);
+    if(!isValid){
+      console.error("❌ Policy-Redaction: unerwartete/unvollständige Antwort",body);
+      return{
+        decision:"technical_block",
+        safe_text:"[BLOCKIERT: Sicherheitsprüfung lieferte ungültige Antwort]",
+        user_message_de:"Das System hat eine unerwartete Antwort geliefert. Bitte versuchen Sie später erneut.",
+        can_send_to_llm:false,
+        requires_human_review:false
+      };
+    }
+    return body;
   }catch(error){
     console.error("❌ Policy-Redaction API error:",error);
     return{
@@ -790,10 +805,13 @@ function detectPrivacyItems(inp=""){
   return items;
 }
 function renderPrivacyMemory(inp=""){
-  // Phase 1.3: Backend macht Redaction, kein Frontend-Preview mehr
+  // Phase 1.3 / Hotfix 2026-07: Diese Box zeigt bewusst den ROHEN Eingabetext,
+  // NICHT was tatsächlich an die KI geht — echte Redaction passiert
+  // ausschließlich serverseitig bei Send (redactWithBackend/policy-redact).
+  // Label und Placeholder in der HTML sind entsprechend als "ungeprüft"
+  // beschriftet, um kein falsches Sicherheitsgefühl zu erzeugen.
   const preview=document.getElementById("kI-input-preview");
   if(inp){
-    // Zeige rohen Text - Backend-Redaction passiert bei Send
     preview.value=inp;
   }else{
     preview.value="";
