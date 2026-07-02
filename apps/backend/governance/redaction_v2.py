@@ -187,7 +187,7 @@ class RedactionEngineV2:
         return found
 
     def _redact_violet_sections(self, text: str, violet_categories: dict[str, list]) -> str:
-        """Schwärzt ganze Sektionen mit Art. 9-Daten"""
+        """Schwärzt ganze Sektionen mit Art. 9-Daten - AGGRESSIV"""
         for category in violet_categories.keys():
             category_label = {
                 "health": "Gesundheit",
@@ -201,10 +201,11 @@ class RedactionEngineV2:
                 "criminal": "Strafrechtliche Informationen",
             }.get(category, category)
 
-            # Ersetze Zeilen mit Art. 9-Daten
+            # AGGRESSIV: Ersetze ganze Zeilen + folgende Zeilen mit Details
+            # Findet "Gesundheit: ..." und ersetzt komplett
             text = re.sub(
-                rf"(?:{category_label}:[^\n]*(?:\n|$))",
-                f"{category_label}: [GESCHWAERZT: besonders sensible Daten]\n",
+                rf"(?:{category_label}:[^\n]*(?:\n(?:\s+[^\n]*)*)?(?:\n|$))",
+                f"[GESCHWAERZT: {category_label} - Art. 9 DSGVO - Datenkategorie nicht extern verarbeitbar]\n",
                 text,
                 flags=re.IGNORECASE,
             )
