@@ -2577,7 +2577,7 @@ class PolicyRedactRequest(BaseModel):
     detected_categories: set[str] | None = None
 
 class PolicyRedactResponse(BaseModel):
-    """Response: Schicht 1 (ALLE sehen)"""
+    """Response: Schicht 1 (ALLE sehen) + Versionsmarker für Debugging"""
     decision: str
     risk_level: str
     safe_text: str
@@ -2586,6 +2586,10 @@ class PolicyRedactResponse(BaseModel):
     requires_human_review: bool
     documentation_required: bool = False
     admin_only: dict[str, Any] | None = None  # Nur Admin (serverseitig gefiltert)
+
+    # Versionsmarker für Debugging (zeigt dass RedactionEngineV2 aktiv ist)
+    redaction_engine: str = "RedactionEngineV2"
+    policy_version: str = "1.3.3"
 
 def contains_secret(text: str) -> bool:
     """Prüft auf Geheimnisse: API-Keys, Tokens, etc."""
@@ -2665,6 +2669,7 @@ def policy_redact(
     """
     try:
         text = request.text or ""
+        logger.info(f"🔍 /api/policy-redact called | text_len={len(text)} | engine=RedactionEngineV2")
 
         # ─────────────────────────────────────────────────────────
         # 1. SICHERHEITS-CHECKS
@@ -2732,6 +2737,7 @@ def policy_redact(
         # Redaction durchführen
         redaction_engine = RedactionEngineV2()
         redaction_result = redaction_engine.redact(text, request.detected_categories)
+        logger.info(f"✅ RedactionEngineV2 completed | risk_level={redaction_result.level.value} | pii_count={redaction_result.pii_replaced}")
 
         # ─────────────────────────────────────────────────────────
         # 3. ENTSCHEIDUNG TREFFEN (AILIZA-Regel: nicht blockieren)
@@ -2787,6 +2793,7 @@ def policy_redact(
         # 7. RESPONSE
         # ─────────────────────────────────────────────────────────
 
+        logger.info(f"📤 PolicyRedact response | decision={decision} | risk_level={risk_level} | can_send_to_llm={can_send_to_llm}")
         return PolicyRedactResponse(
             decision=decision,
             risk_level=risk_level,
