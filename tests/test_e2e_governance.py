@@ -91,13 +91,15 @@ class TestNormalAllowedRequest:
         assert result.allowed
         assert result.decision in (PolicyDecision.ALLOW, PolicyDecision.ALLOW_WITH_NOTICE)
 
-    def test_provider_policy_groq_public_allowed(self):
-        """Groq darf PUBLIC-Daten verarbeiten."""
+    def test_provider_policy_groq_public_allowed(self, monkeypatch):
+        """Groq darf PUBLIC-Daten nur mit serverseitigem Testmodus verarbeiten
+        (ohne unterzeichneten AVV — Freigabe Stufe 1, P-A)."""
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         from apps.backend.providers.provider_profiles import check_provider_policy
         from apps.backend.governance.data_governance import DataClass
         allowed, reason = check_provider_policy("groq", [DataClass.PUBLIC])
         assert allowed
-        assert reason == "ok"
+        assert reason == "ok:no_avv_test_exception"
 
     def test_audit_entry_written_on_llm_call(self, client):
         """Nach einem Agentenlauf wird ein Audit-Eintrag geschrieben (kein Inhalt)."""

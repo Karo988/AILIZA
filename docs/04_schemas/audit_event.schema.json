@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditVaultEntry",
+  "description": "Einzelner Eintrag im AILIZA Audit-Vault. Kein Inhalt, nur Entscheidungsmetadaten.",
+  "type": "object",
+  "required": ["sequence", "event_type", "timestamp_iso", "actor_id", "previous_hash", "entry_hash"],
+  "additionalProperties": false,
+  "properties": {
+    "sequence":      { "type": "integer", "minimum": 1 },
+    "event_type":    { "type": "string", "minLength": 1 },
+    "timestamp_iso": { "type": "string", "format": "date-time" },
+    "actor_id":      { "type": "string", "minLength": 1 },
+    "previous_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "entry_hash":    { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

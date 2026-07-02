@@ -35,6 +35,12 @@ class DataClass(str, Enum):
     LEGAL = "legal"
     INTELLECTUAL_PROPERTY = "intellectual_property"
     SECURITY_SENSITIVE = "security_sensitive"
+    # SYNTHETIC/DEMO: NIEMALS von classify() aus Text vergeben — nur von
+    # vertrauenswuerdigem Testcode explizit gesetzt (z.B. Fixture-Daten ohne
+    # Personenbezug). Dient der AVV-Testmodus-Ausnahme in provider_profiles.py
+    # (Freigabe Stufe 1, P-A).
+    SYNTHETIC = "synthetic"
+    DEMO = "demo"
 
 
 class DataTarget(str, Enum):
@@ -52,6 +58,8 @@ class DataTarget(str, Enum):
 
 # Reihenfolge von niedrig nach hoch. Strengste (hoechste) Klasse gewinnt.
 RISK_ORDER: list[DataClass] = [
+    DataClass.SYNTHETIC,
+    DataClass.DEMO,
     DataClass.PUBLIC,
     DataClass.INTERNAL,
     DataClass.CONFIDENTIAL,

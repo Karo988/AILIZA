@@ -93,19 +93,42 @@ class TestDataMatrix:
 # ── 2. Provider-Profile ────────────────────────────────────────────────────────
 
 class TestProviderProfiles:
-    def test_groq_allows_public(self):
+    """
+    Stand Freigabe Stufe 1 (P-A, 2026-07-02): Groq/OpenAI/Anthropic haben
+    avv_signed=False. Ohne unterzeichneten AVV (DSGVO Art. 28) duerfen sie
+    KEINE Datenklasse mehr verarbeiten, ausser der serverseitige Testmodus
+    ist aktiv UND die Datenklasse ist PUBLIC/SYNTHETIC/DEMO (siehe
+    test_avv_test_mode.py fuer die volle Akzeptanztabelle). Diese Tests
+    pruefen ausschliesslich das AVV-unabhaengige Verhalten (Credentials/
+    Special-Category-Block, Use-Case-Gate, lokaler Provider).
+    """
+
+    def test_groq_blocks_public_without_avv_or_test_mode(self, monkeypatch):
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
+        allowed, reason = check_provider_policy("groq", [DataClass.PUBLIC])
+        assert not allowed
+        assert "AVV" in reason or "avv" in reason.lower()
+
+    def test_groq_allows_public_with_test_mode(self, monkeypatch):
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         allowed, reason = check_provider_policy("groq", [DataClass.PUBLIC])
         assert allowed, reason
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
 
-    def test_groq_blocks_personal_data_without_avv(self):
-        """Ohne unterzeichneten AVV muss Groq PERSONAL_DATA ablehnen (DSGVO Art. 28)."""
+    def test_groq_blocks_personal_data_without_avv(self, monkeypatch):
+        """Ohne unterzeichneten AVV darf Groq PERSONAL_DATA nicht mehr
+        verarbeiten (Freigabe Stufe 1, P-A) — auch nicht im Testmodus, da
+        PERSONAL_DATA keine exempte Klasse ist (Haertung 2)."""
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         allowed, reason = check_provider_policy("groq", [DataClass.PERSONAL_DATA])
         assert not allowed
-        assert "avv" in reason.lower() or "nicht erlaubt" in reason.lower() or "verboten" in reason.lower()
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
 
-    def test_groq_blocks_hr_without_avv(self):
+    def test_groq_blocks_hr_without_avv(self, monkeypatch):
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         allowed, reason = check_provider_policy("groq", [DataClass.HR])
         assert not allowed
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
 
     def test_groq_blocks_credentials(self):
         allowed, _ = check_provider_policy("groq", [DataClass.CREDENTIALS])
@@ -115,8 +138,8 @@ class TestProviderProfiles:
         allowed, _ = check_provider_policy("groq", [DataClass.SPECIAL_CATEGORY])
         assert not allowed
 
-    def test_anthropic_blocks_personal_data_without_avv(self):
-        """Ohne AVV auch Anthropic blockt PERSONAL_DATA (DSGVO Art. 28)."""
+    def test_anthropic_blocks_personal_data_without_avv(self, monkeypatch):
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
         allowed, reason = check_provider_policy("anthropic", [DataClass.PERSONAL_DATA])
         assert not allowed
 
@@ -125,10 +148,13 @@ class TestProviderProfiles:
             allowed, _ = check_provider_policy("local", [dc])
             assert allowed, f"local should allow {dc}"
 
-    def test_groq_allows_text_generation(self):
-        """Groq muss text_generation als Use Case erlauben (Schreibaufgaben)."""
+    def test_groq_allows_text_generation_with_test_mode(self, monkeypatch):
+        """Groq muss text_generation als Use Case erlauben (Schreibaufgaben) —
+        AVV-Gate greift unabhaengig davon fuer PUBLIC ohne Testmodus."""
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         allowed, reason = check_provider_policy("groq", [DataClass.PUBLIC], use_case="text_generation")
         assert allowed, reason
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
 
     def test_openai_profile_exists_and_active(self):
         from apps.backend.providers.provider_profiles import get_profile
@@ -137,12 +163,14 @@ class TestProviderProfiles:
         assert profile.active is True
         assert not profile.admin_disabled
 
-    def test_openai_allows_text_generation(self):
+    def test_openai_allows_text_generation_with_test_mode(self, monkeypatch):
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
         allowed, reason = check_provider_policy("openai", [DataClass.PUBLIC], use_case="text_generation")
         assert allowed, reason
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
 
-    def test_openai_blocks_personal_data_without_avv(self):
-        """Ohne AVV blockt OpenAI ebenfalls PERSONAL_DATA (DSGVO Art. 28)."""
+    def test_openai_blocks_personal_data_without_avv(self, monkeypatch):
+        monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
         allowed, reason = check_provider_policy("openai", [DataClass.PERSONAL_DATA])
         assert not allowed
 
@@ -195,6 +223,8 @@ class TestProviderFailover:
         monkeypatch.setenv("GROQ_API_KEY", "fake")
         monkeypatch.setenv("OPENAI_API_KEY", "fake")
         monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        # PUBLIC-Daten ohne unterzeichneten AVV nur im Testmodus erlaubt (P-A)
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
 
         orch = ProviderOrchestrator(providers={"groq": FakeGroq(), "openai": FakeOpenAI()})
         result = orch.generate([{"role": "user", "content": "Schreibe eine E-Mail"}])
@@ -240,6 +270,7 @@ class TestProviderFailover:
 
         monkeypatch.setenv("OPENAI_API_KEY", "fake")
         monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
 
         orch = ProviderOrchestrator(providers={"openai": FakeProvider()})
         result = orch.generate([{"role": "user", "content": "Schreibe eine E-Mail"}])
@@ -262,6 +293,7 @@ class TestProviderFailover:
 
         monkeypatch.setenv("OPENAI_API_KEY", "fake")
         monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
 
         orch = ProviderOrchestrator(providers={"openai": FailProvider()})
         with pytest.raises(AILIZAError) as exc_info:

@@ -5,6 +5,8 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 import json
 import os
 import re
+import uuid
+import logging
 from datetime import datetime
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -104,6 +106,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # damit Health/Status-Endpoints erreichbar bleiben für Monitoring.
         # Alle Governance-abhängigen Endpoints werden durch enforce_kill_switch() geblockt.
     # ── Ende Gate 10 ─────────────────────────────────────────────────────────
+
+    # ── Gate 11: Testmodus darf nie in Produktion aktiv sein (Freigabe Stufe 1, P-A) ──
+    try:
+        from .kill_switch import enforce_test_mode_not_in_production
+    except ImportError:
+        from kill_switch import enforce_test_mode_not_in_production
+    enforce_test_mode_not_in_production()  # raised RuntimeError -> Start abgebrochen
+    # ── Ende Gate 11 ─────────────────────────────────────────────────────────
 
     # ── Secret-Key-Prüfung: Hard-Fail wenn zu schwach ───────────────────────
     _secret_key = os.getenv("AILIZA_SECRET_KEY", "")
@@ -263,6 +273,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 _limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
 app.state.limiter = _limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -853,12 +865,6 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
 _orchestrator = ProviderOrchestrator()
 
 
-def _is_redacted(text: str) -> bool:
-    """Checkt, ob Text bereits Platzhalter enthält — dann wurde Frontend-Schwärzung angewendet."""
-    import re
-    return bool(re.search(r'\[[^\]]+\]', text))
-
-
 def _compliance_pre_check(
     task: str,
     tenant_id: str,
@@ -975,13 +981,16 @@ def _governance_pre_check(
     _provider_ok, _ = check_provider_policy("groq", data_classes)
     provider_profile_active = _provider_ok
 
-    # Wenn Frontend schon redaktiert hat (Platzhalter sichtbar), dann redaction_applied=True
-    already_redacted = _is_redacted(task)
+    # M3 (Merge-Auftrag Stufe 1×main): Eine Client-Behauptung "schon geschwaerzt"
+    # (z.B. Text enthaelt zufaellig eckige Klammern) darf die serverseitige
+    # Klassifikation/Redaction NIEMALS ueberspringen. redaction_applied ist an
+    # dieser Stelle IMMER False — echte Redaction passiert unten serverseitig
+    # via RedactionEngineV2, nie basierend auf einer Client-Behauptung.
 
     decision = check_data_target(
         data_classes=data_classes,
         target=DataTarget.EXTERNAL_LLM,
-        redaction_applied=already_redacted,
+        redaction_applied=False,
         approval_given=False,
         provider_profile_active=provider_profile_active,
     )
@@ -1004,9 +1013,14 @@ def _governance_pre_check(
     if decision in (PolicyDecision.APPROVAL_REQUIRED, PolicyDecision.REDACT_REQUIRED):
         # Governance-Regel: Redacten → als Entwurf weiterlaufen (nicht stoppen).
         # APPROVAL_REQUIRED und REDACT_REQUIRED werden gleich behandelt:
-        # lokale Pseudonymisierung, dann weiter, Ergebnis als Entwurf markieren.
-        redacted = redact(task, classification)
-        redacted_task = redacted.redacted_text
+        # Phase 1.3 / F12-Fix: RedactionEngineV2 statt der alten redaction.py —
+        # sonst wird die neue Schwaerzung (z.B. aus /api/policy-redact) hier
+        # stillschweigend durch die alte, weniger aggressive Engine ersetzt.
+        from .governance.redaction_v2 import RedactionEngineV2
+        engine = RedactionEngineV2()
+        redaction_result = engine.redact(task)
+        redacted_task = redaction_result.redacted_text
+        reinsertion_map = redaction_result.reinsertion_map
         is_draft = decision == PolicyDecision.APPROVAL_REQUIRED
         dc_names = [c.value for c in data_classes]
         approval_id: int | None = None
@@ -1041,7 +1055,7 @@ def _governance_pre_check(
             "decision": "allow_with_notice",
             "task": redacted_task,
             # reinsertion_map: NUR lokal im RAM — NIEMALS loggen oder persistieren
-            "reinsertion_map": redacted.reinsertion_map,
+            "reinsertion_map": reinsertion_map,
             "notice": notice,
             "is_draft": is_draft,
             "approval_id": approval_id,
@@ -1076,12 +1090,13 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
     ]
     try:
         answer = _orchestrator.generate(messages, context=context)
-        _prov = getattr(_orchestrator, "default_provider", "unknown")
-        _model = getattr(
-            _orchestrator.providers.get(_prov), "model", "unknown"
-        )
+        # Tatsaechlich genutzter Provider (nicht der angenommene default_provider) —
+        # Freigabe Stufe 1, E3-Zusatzpatch: kein stiller Wechsel.
+        _prov = getattr(_orchestrator, "last_provider_id", None) or getattr(_orchestrator, "default_provider", "unknown")
+        _model = getattr(_orchestrator, "last_model", None) or "unknown"
         print(
-            f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)}",
+            f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)} "
+            f"failover_occurred={getattr(_orchestrator, 'last_failover_occurred', False)}",
             flush=True,
         )
         return answer, None
@@ -1261,10 +1276,16 @@ def run_agent(
             flush=True,
         )
         answer, error_code, provider_errors = _ask_llm_directly(effective_task, history=payload.history)
+        # Tatsaechlich genutzter Provider (Freigabe Stufe 1, E3-Zusatzpatch) —
+        # _orchestrator ist ein Modul-Singleton, direkt nach dem Call gueltig.
+        _used_provider = getattr(_orchestrator, "last_provider_id", None)
+        _used_model = getattr(_orchestrator, "last_model", None)
+        _failover_occurred = getattr(_orchestrator, "last_failover_occurred", False)
         print(
             f"AILIZA WRITING TASK | direct_llm_called=True "
             f"answer_chars={len(answer) if answer else 0} "
-            f"error={error_code}",
+            f"error={error_code} provider={_used_provider} model={_used_model} "
+            f"failover_occurred={_failover_occurred}",
             flush=True,
         )
         if answer is not None:
@@ -1281,6 +1302,9 @@ def run_agent(
                 "web_search": False,
                 "redaction_applied": bool(reinsertion_map),
                 "reinsertion_used": bool(reinsertion_map),
+                "provider_used": _used_provider,
+                "model_used": _used_model,
+                "failover_occurred": _failover_occurred,
                 "tenant_id": tenant,
             }
             if governance_is_draft:
@@ -2405,6 +2429,275 @@ def delete_messenger_binding(
     write_audit_entry(action="admin.messenger.binding_deleted",
                       metadata={"deleted_by": _admin.user_id})
     return {"status": "deleted", "chat_id": chat_id}
+
+
+
+class PolicyRedactRequest(BaseModel):
+    """Request für Policy + Redaction"""
+    text: str = Field(..., min_length=0, max_length=100000)
+    context: str | None = None  # employment, credit, general
+    detected_categories: set[str] | None = None
+
+class PolicyRedactResponse(BaseModel):
+    """Response: Schicht 1 (ALLE sehen) + Versionsmarker für Debugging"""
+    decision: str
+    risk_level: str
+    safe_text: str
+    user_message_de: str
+    can_send_to_llm: bool
+    requires_human_review: bool
+    documentation_required: bool = False
+    admin_only: dict[str, Any] | None = None  # Nur Admin (serverseitig gefiltert)
+
+    # Versionsmarker für Debugging (zeigt dass RedactionEngineV2 aktiv ist)
+    redaction_engine: str = "RedactionEngineV2"
+    policy_version: str = "1.3.3"
+
+def contains_secret(text: str) -> bool:
+    """Prüft auf Geheimnisse: API-Keys, Tokens, etc."""
+    secret_patterns = [
+        r"\bsk-[\w\-]{15,}\b",  # OpenAI
+        r"\bgsk_[\w\-]{15,}\b",  # Groq
+        r"\beyJ[\w\-\.]+\b",     # JWT
+        r"\bBearer\s+[A-Za-z0-9._\-]{20,}\b",  # Bearer Token
+    ]
+    for pattern in secret_patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
+def detect_prompt_injection(text: str) -> bool:
+    """Prüft auf bekannte Prompt-Injection Muster"""
+    injection_patterns = [
+        r"ignore.*instruction",
+        r"forget.*system.*prompt",
+        r"new.*instruction.*:",
+        r"act.*as.*",
+    ]
+    text_lower = text.lower()
+    for pattern in injection_patterns:
+        if re.search(pattern, text_lower):
+            return True
+    return False
+
+def map_risk_to_user_message(level: str) -> str:
+    """Nutzer-freundliche Meldungen (keine technischen Details)"""
+    messages = {
+        "green": "Ihre Anfrage wurde verarbeitet.",
+        "yellow": "Ihre persönlichen Daten wurden geschützt. Sie können mit dieser bereinigten Fassung weitermachen.",
+        "orange": "Diese Anfrage erfordert eine Genehmigung. Bitte wenden Sie sich an einen Administrator.",
+        "red": "Sicherheitsrelevante Angaben wurden entfernt. Die bereinigte Fassung kann genutzt werden.",
+        "violet": "Besonders sensible Daten wurden geschützt. Sie können mit den übrigen Angaben weitermachen.",
+        "black": "Diese Entscheidung kann nicht automatisch getroffen werden. Sie müssen einen Mensch manuell überprüfen und dokumentieren.",
+        "critical": "Es wurde ein Datenschutzverstoß erkannt. Bitte kontaktieren Sie den Datenschutz."
+    }
+    return messages.get(level, "Ihre Anfrage wurde verarbeitet.")
+
+def build_escalation_info(risk_level: str, violations: list[str] = None) -> dict[str, Any] | None:
+    """Eskalations-Infos nur für Admin"""
+    if risk_level == "black":
+        return {
+            "severity": "high_risk",
+            "reason": "Hochrisiko-automatisierte Entscheidung erkannt",
+            "required_action": "Menschliche Prüfung + Dokumentation",
+            "legal_reference": "Art. 22 DSGVO, EU AI Act Art. 6",
+            "contact": "dpo@ailiza.de"
+        }
+
+    if risk_level == "critical":
+        return {
+            "severity": "critical",
+            "reason": "DSGVO-Verstoß erkannt",
+            "violations": violations or [],
+            "required_action": "Sofortige Analyse + Dokumentation",
+            "contact": "dpo@ailiza.de"
+        }
+
+    return None
+
+@app.post("/api/policy-redact", response_model=PolicyRedactResponse)
+def policy_redact(
+    request: PolicyRedactRequest,
+    current_user: TokenData | None = Depends(get_current_user),
+) -> PolicyRedactResponse:
+    """
+    Phase 1.3: Backend Policy + Redaction (Einzige Quelle der Wahrheit)
+
+    SICHERHEIT:
+    1. Originaldaten werden NICHT zurückgegeben
+    2. admin_only wird SERVERSEITIG gefiltert (nur Admin)
+    3. Bei Fehler: technical_block
+    4. Secrets → security_block (nicht technical_block)
+    """
+    try:
+        text = request.text or ""
+        logger.info(f"🔍 /api/policy-redact called | text_len={len(text)} | engine=RedactionEngineV2")
+
+        # ─────────────────────────────────────────────────────────
+        # 1. SICHERHEITS-CHECKS
+        # ─────────────────────────────────────────────────────────
+
+        # Geheimnis erkannt?
+        if contains_secret(text):
+            admin_block = None
+            if current_user and current_user.role == "admin":
+                admin_block = {
+                    "escalation_info": {
+                        "severity": "security",
+                        "security_finding": "SECRET_DETECTED",
+                        "reason": "API-Key, Token oder Geheimnis im Text erkannt",
+                        "required_action": "Geheimnis widerrufen/rotieren",
+                        "contact": "security@ailiza.de"
+                    }
+                }
+
+            return PolicyRedactResponse(
+                decision="security_block",
+                risk_level="critical",
+                safe_text="[BLOCKIERT: Sicherheitsverstoß erkannt]",
+                user_message_de="Ihre Anfrage enthält einen Sicherheitsfund (z.B. API-Key). Dieser wurde entfernt.",
+                can_send_to_llm=False,
+                requires_human_review=False,
+                documentation_required=False,
+                admin_only=admin_block
+            )
+
+        # Prompt-Injection erkannt?
+        if detect_prompt_injection(text):
+            admin_block = None
+            if current_user and current_user.role == "admin":
+                admin_block = {
+                    "escalation_info": {
+                        "severity": "security",
+                        "security_finding": "PROMPT_INJECTION_DETECTED",
+                        "reason": "Angriffsmuster in Text erkannt",
+                        "required_action": "Security-Analyse durchführen",
+                        "contact": "security@ailiza.de"
+                    }
+                }
+
+            return PolicyRedactResponse(
+                decision="security_block",
+                risk_level="critical",
+                safe_text="[BLOCKIERT: Sicherheitsverstoß erkannt]",
+                user_message_de="Ihre Anfrage enthält ein Angriffsmuster. Bitte kontaktieren Sie Support.",
+                can_send_to_llm=False,
+                requires_human_review=False,
+                documentation_required=False,
+                admin_only=admin_block
+            )
+
+        # ─────────────────────────────────────────────────────────
+        # 2. POLICY + REDACTION
+        # ─────────────────────────────────────────────────────────
+
+        try:
+            from .governance.redaction_v2 import RedactionEngineV2
+        except ImportError:
+            from governance.redaction_v2 import RedactionEngineV2
+
+        # Redaction durchführen
+        redaction_engine = RedactionEngineV2()
+        redaction_result = redaction_engine.redact(text, request.detected_categories)
+        logger.info(f"✅ RedactionEngineV2 completed | risk_level={redaction_result.level.value} | pii_count={redaction_result.pii_replaced}")
+
+        # ─────────────────────────────────────────────────────────
+        # 3. ENTSCHEIDUNG TREFFEN (AILIZA-Regel: nicht blockieren)
+        # ─────────────────────────────────────────────────────────
+
+        risk_level = redaction_result.level.value
+
+        if risk_level == "green":
+            decision = "safe_output"
+        elif risk_level == "yellow":
+            decision = "safe_output_with_redactions"
+        elif risk_level == "orange":
+            decision = "requires_human_review"
+        elif risk_level in ["red", "violet"]:
+            decision = "safe_output_with_redactions"
+        elif risk_level == "black":
+            decision = "requires_human_review"
+        elif risk_level == "critical":
+            decision = "requires_human_review"
+        else:
+            decision = "safe_output"
+
+        # ─────────────────────────────────────────────────────────
+        # 4. CAN_SEND_TO_LLM (nur Green/Yellow + transparent)
+        # ─────────────────────────────────────────────────────────
+
+        can_send_to_llm = (
+            decision == "safe_output" and risk_level in ["green"]
+        ) or (
+            decision == "safe_output_with_redactions" and
+            risk_level == "yellow"
+        )
+
+        # ─────────────────────────────────────────────────────────
+        # 5. NUTZER-MELDUNG
+        # ─────────────────────────────────────────────────────────
+
+        user_message = map_risk_to_user_message(risk_level)
+
+        # ─────────────────────────────────────────────────────────
+        # 6. ADMIN-BLOCK (serverseitig gefiltert)
+        # ─────────────────────────────────────────────────────────
+
+        admin_only = None
+        if current_user and current_user.role == "admin":
+            admin_only = {
+                "gdpr_reason_codes": [],  # TODO: aus policy_result
+                "ai_act_risk": "unknown",  # TODO: aus ai_act_evaluator
+                "escalation_info": build_escalation_info(risk_level, redaction_result.violations)
+            }
+
+        # ─────────────────────────────────────────────────────────
+        # 7. RESPONSE
+        # ─────────────────────────────────────────────────────────
+
+        logger.info(f"📤 PolicyRedact response | decision={decision} | risk_level={risk_level} | can_send_to_llm={can_send_to_llm}")
+        return PolicyRedactResponse(
+            decision=decision,
+            risk_level=risk_level,
+            safe_text=redaction_result.redacted_text,
+            user_message_de=user_message,
+            can_send_to_llm=can_send_to_llm,
+            requires_human_review=decision in ["requires_human_review"],
+            documentation_required=risk_level in ["black", "critical"],
+            admin_only=admin_only
+        )
+
+    except Exception as e:
+        # PII-frei loggen (Freigabe Stufe 1, P-G): nur Exception-Typ + Korrelations-ID,
+        # niemals str(e) — die Rohmeldung kann Nutzertext/PII enthalten (z.B. Regex-
+        # oder Parsing-Fehler, die den verarbeiteten Text im Message-Text zitieren).
+        _corr_id = uuid.uuid4().hex[:12]
+        logger.error(f"❌ Policy-Redaction error | correlation_id={_corr_id} | type={type(e).__name__}")
+        # TECHNICAL_BLOCK: Systemfehler
+        admin_only = None
+        if current_user and current_user.role == "admin":
+            admin_only = {
+                "escalation_info": {
+                    "severity": "system_error",
+                    "reason": "Policy-Engine error",
+                    "error_type": type(e).__name__,
+                    "correlation_id": _corr_id,
+                    "contact": "support@ailiza.de"
+                }
+            }
+
+        return PolicyRedactResponse(
+            decision="technical_block",
+            risk_level="critical",
+            safe_text="[BLOCKIERT: Sicherheitsprüfung nicht verfügbar]",
+            user_message_de="Das System ist gerade nicht verfügbar. Bitte versuchen Sie später erneut.",
+            can_send_to_llm=False,
+            requires_human_review=False,
+            documentation_required=False,
+            admin_only=admin_only
+        )
+
+
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 

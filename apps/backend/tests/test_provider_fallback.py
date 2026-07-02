@@ -18,6 +18,10 @@ os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("AILIZA_EXTERNAL_LLM_ENABLED", "true")
 os.environ.setdefault("GROQ_API_KEY", "test-groq-key")
 os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
+# Diese Datei testet Failover-Mechanik mit PUBLIC-Daten (kein PII). Ohne
+# unterzeichneten AVV (DSGVO Art. 28) blockt check_provider_policy() seit
+# Freigabe Stufe 1 (P-A) auch PUBLIC-Daten, ausser im Testmodus.
+os.environ.setdefault("AILIZA_TEST_MODE", "true")
 
 import pytest
 from apps.backend.errors import AILIZAError
