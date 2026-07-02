@@ -373,12 +373,13 @@ body{
         </div>
         <div class="input-box">
           <div class="input-row">
-            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)" onpaste="handlePaste(event)"></textarea>
+            <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);onChatInputChanged()" onpaste="handlePaste(event)"></textarea>
+            <button class="input-send" id="preview-btn" onclick="previewRedaction()" title="Prüfen: zeigt, was geschwärzt wird, bevor gesendet wird">🔍</button>
             <button class="input-send" id="send-btn" onclick="sendMessage()">↑</button>
           </div>
           <div class="kI-preview-container">
-            <div class="kI-preview-label">✏️ Dein Eingabetext (ungeprüft):</div>
-            <textarea class="kI-preview-field" id="kI-input-preview" readonly placeholder="Deine Eingabe wird erst beim Senden vom Server geprüft und geschwärzt — diese Box zeigt keine Vorschau der KI-Version"></textarea>
+            <div class="kI-preview-label" id="kI-preview-label">✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird</div>
+            <textarea class="kI-preview-field" id="kI-input-preview" readonly placeholder="Noch nicht geprüft — klick auf 🔍 neben dem Senden-Button, um zu sehen was an die KI geht"></textarea>
           </div>
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
@@ -797,55 +798,100 @@ function saveKey(){const p=document.getElementById("provider-sel").value;const k
 function toggleTool(n){tools[n]=!tools[n];localStorage.setItem("ailiza_tools",JSON.stringify(tools));renderTools()}
 function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
 function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
-function detectPrivacyItems(inp=""){
-  // Nur aktuellen Input scannen (kein Chat-Verlauf — der ist bereits redaktiert)
-  const src=inp;
-  const seen=new Set();const items=[];
-  for(const r of PRIVACY_RULES){r.pattern.lastIndex=0;let m;while((m=r.pattern.exec(src))!==null){const v=m[0].trim().slice(0,90);const k=r.level+":"+r.label+":"+v.toLowerCase();if(!seen.has(k)&&v.length>1){seen.add(k);items.push({level:r.level,label:r.label,value:v})}if(items.length>=20)return items;if(m.index===r.pattern.lastIndex)r.pattern.lastIndex++}}
-  return items;
-}
-function renderPrivacyMemory(inp=""){
-  // Phase 1.3 / Hotfix 2026-07: Diese Box zeigt bewusst den ROHEN Eingabetext,
-  // NICHT was tatsächlich an die KI geht — echte Redaction passiert
-  // ausschließlich serverseitig bei Send (redactWithBackend/policy-redact).
-  // Label und Placeholder in der HTML sind entsprechend als "ungeprüft"
-  // beschriftet, um kein falsches Sicherheitsgefühl zu erzeugen.
-  const preview=document.getElementById("kI-input-preview");
-  if(inp){
-    preview.value=inp;
-  }else{
-    preview.value="";
-  }
+// Hotfix 2026-07: Das alte, browser-eigene PRIVACY_RULES-Erkennungssystem
+// wurde in Phase 1.3 abgeschafft (unsicher, eigene abweichende Regeln) —
+// aber der Code, der es benutzte, wurde nicht mit entfernt und stuerzte bei
+// jedem Tastendruck ab (PRIVACY_RULES war nicht mehr definiert), was auch
+// das eigentliche Senden blockierte. Ersetzt durch: EIN System (Server),
+// per Vorschau-Button abgerufen — siehe previewRedaction() unten.
+let _lastPreview=null;   // {inputText, policyResult} — Cache fuer Senden ohne Doppel-Call
+let _previewStale=true;  // true = Text hat sich seit letzter Vorschau geaendert
 
+function onChatInputChanged(){
+  _previewStale=true;
+  const label=document.getElementById("kI-preview-label");
+  if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
+}
+
+function lvlCls(l){return l==="secret"?" secret":l==="forbidden"?" forbidden":l==="confidential"?" confidential":l==="high"?" high":""}
+
+function renderDetectedBubbles(items){
   const note=document.getElementById("privacy-note");
   const list=document.getElementById("privacy-items");
   const sidebar=document.getElementById("dsgvo-sidebar");
-  // Gehaltene Werte im Zwischenspeicher → große Blasen
-  const held=Object.entries(activeRedactionMap);
-  if(held.length){
-    sidebar&&sidebar.classList.add("visible");
-    note.textContent=`🔒 ${held.length} Wert${held.length>1?"e":""} gesichert — werden nach Antwort wieder eingefügt`;
-    list.innerHTML=held.map(([ph,val])=>{
-      const label=ph.replace(/^\[|\]$/g,"");
-      const rule=PRIVACY_RULES.find(r=>r.placeholder===ph||r.placeholder.startsWith("["+label));
-      const lvl=rule?rule.level:"normal";
-      const cls=lvl==="secret"?" secret":lvl==="forbidden"?" forbidden":lvl==="confidential"?" confidential":lvl==="high"?" high":"";
-      return`<div class="dsgvo-bubble${cls}"><span class="dsgvo-bubble-label">${escapeHtml(label)}</span><span class="dsgvo-bubble-value">${escapeHtml(val)}</span></div>`;
-    }).join("");
-    return;
-  }
-  // Kein aktiver Zwischenspeicher → Erkennung im Eingabefeld zeigen
-  const items=detectPrivacyItems(inp);
-  if(!items.length){
+  if(!items||!items.length){
     sidebar&&sidebar.classList.remove("visible");
-    note.textContent="";list.innerHTML='<div class="dsgvo-sidebar-empty">Keine Daten erkannt</div>';return;
+    note.textContent="";list.innerHTML='<div class="dsgvo-sidebar-empty">Keine Daten erkannt</div>';
+    return;
   }
   sidebar&&sidebar.classList.add("visible");
   const s=items.filter(i=>i.level==="secret").length;const f=items.filter(i=>i.level==="forbidden").length;const c=items.filter(i=>i.level==="confidential").length;const h=items.filter(i=>i.level==="high").length;const n=items.filter(i=>i.level==="normal").length;
   const parts=[];if(s)parts.push(`${s} ⚫ niemals senden`);if(f)parts.push(`${f} 🔴 Art.9/10`);if(c)parts.push(`${c} 🟠 vertraulich`);if(h)parts.push(`${h} 🟡 kritisch`);if(n)parts.push(`${n} 🟢 sensibel`);
-  note.textContent=parts.join(" · ")+" — beim Einfügen (Strg+V) gesichert";
-  const lvlCls=l=>l==="secret"?" secret":l==="forbidden"?" forbidden":l==="confidential"?" confidential":l==="high"?" high":"";
-  list.innerHTML=items.map(i=>`<div class="dsgvo-bubble${lvlCls(i.level)}"><span class="dsgvo-bubble-label">${escapeHtml(i.label)}</span><span class="dsgvo-bubble-value">${escapeHtml(i.value)}</span></div>`).join("");
+  note.textContent=parts.join(" · ");
+  list.innerHTML=items.map(i=>`<div class="dsgvo-bubble${lvlCls(i.level)}"><span class="dsgvo-bubble-label">${escapeHtml(i.label)}</span></div>`).join("");
+}
+
+function renderHeldBubbles(){
+  // Waehrend die KI antwortet: Werte im Zwischenspeicher (fuer Reinsertion
+  // nach der Antwort) als Blasen zeigen. Level unbekannt an dieser Stelle
+  // (kommt nicht aus der Vorschau-Antwort) -> neutral als "high" markiert,
+  // da alles was im Zwischenspeicher liegt bereits als schuetzenswert galt.
+  const note=document.getElementById("privacy-note");
+  const list=document.getElementById("privacy-items");
+  const sidebar=document.getElementById("dsgvo-sidebar");
+  const held=Object.entries(activeRedactionMap);
+  if(!held.length)return false;
+  sidebar&&sidebar.classList.add("visible");
+  note.textContent=`🔒 ${held.length} Wert${held.length>1?"e":""} gesichert — werden nach Antwort wieder eingefügt`;
+  list.innerHTML=held.map(([ph,val])=>{
+    const label=ph.replace(/^\[|\]$/g,"");
+    return`<div class="dsgvo-bubble high"><span class="dsgvo-bubble-label">${escapeHtml(label)}</span><span class="dsgvo-bubble-value">${escapeHtml(val)}</span></div>`;
+  }).join("");
+  return true;
+}
+
+function renderPrivacyMemory(inp=""){
+  // Zeigt entweder die "gehaltenen" Werte (waehrend KI antwortet) oder
+  // faellt zurueck auf leer — die eigentliche Erkennung passiert jetzt
+  // ausschliesslich ueber previewRedaction() (echter Server-Call).
+  if(renderHeldBubbles())return;
+  const note=document.getElementById("privacy-note");
+  const list=document.getElementById("privacy-items");
+  const sidebar=document.getElementById("dsgvo-sidebar");
+  sidebar&&sidebar.classList.remove("visible");
+  note.textContent="";
+  list.innerHTML='<div class="dsgvo-sidebar-empty">Keine Daten erkannt</div>';
+}
+
+async function previewRedaction(){
+  const inp=document.getElementById("chat-input");
+  const text=inp.value.trim();
+  const preview=document.getElementById("kI-input-preview");
+  const label=document.getElementById("kI-preview-label");
+  if(!text){
+    preview.value="";
+    if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
+    renderDetectedBubbles([]);
+    return;
+  }
+  const btn=document.getElementById("preview-btn");
+  if(btn){btn.disabled=true;btn.textContent="⏳";}
+  try{
+    const policyResult=await redactWithBackend(text);
+    _lastPreview={inputText:text,policyResult};
+    _previewStale=false;
+    preview.value=policyResult.safe_text||"";
+    if(label){
+      if(policyResult.decision==="security_block"||policyResult.decision==="technical_block"){
+        label.textContent="🚫 Geprüft: "+(policyResult.user_message_de||"Blockiert");
+      }else{
+        label.textContent="✅ Geprüft — so geht es an die KI:";
+      }
+    }
+    renderDetectedBubbles(policyResult.detected_items||[]);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="🔍";}
+  }
 }
 function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
 function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
@@ -980,8 +1026,17 @@ let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Phase 1.3: Backend PolicyEngine (einzige Quelle der Wahrheit)
-  const policyResult=await redactWithBackend(text);
+  // Vorschau wiederverwenden wenn vorhanden, aktuell und derselbe Text
+  // (Server entlasten — kein doppelter Aufruf). Sonst frisch pruefen:
+  // Senden funktioniert auch OHNE vorherigen Klick auf 🔍 (Fail-closed
+  // bleibt immer aktiv, Vorschau ist reiner Komfort/Transparenz-Schritt).
+  let policyResult;
+  if(_lastPreview&&!_previewStale&&_lastPreview.inputText===text){
+    policyResult=_lastPreview.policyResult;
+  }else{
+    policyResult=await redactWithBackend(text);
+  }
+  _lastPreview=null;_previewStale=true;
   // Sicherheitsprüfung vom Backend
   if(policyResult.decision==="security_block"||policyResult.decision==="technical_block"){
     alert(policyResult.user_message_de);
@@ -995,6 +1050,9 @@ async function sendMessage(){
   }
   // safe_output oder safe_output_with_redactions — weitermachen mit Backend-Schwärzung
   const safeText=policyResult.safe_text;
+  document.getElementById("kI-input-preview").value="";
+  const label=document.getElementById("kI-preview-label");
+  if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
   await _doSend(safeText,{});
   if(policyResult.admin_only){
     showAdminPanel(policyResult.admin_only);

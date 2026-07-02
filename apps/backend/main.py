@@ -2449,6 +2449,10 @@ class PolicyRedactResponse(BaseModel):
     documentation_required: bool = False
     admin_only: dict[str, Any] | None = None  # Nur Admin (serverseitig gefiltert)
 
+    # Fuer die farbigen Erkennungs-Blasen im Frontend (Vorschau-Button):
+    # NUR Kategorie-Label + Risikostufe, NIEMALS Originalwerte.
+    detected_items: list[dict[str, str]] = Field(default_factory=list)
+
     # Versionsmarker für Debugging (zeigt dass RedactionEngineV2 aktiv ist)
     redaction_engine: str = "RedactionEngineV2"
     policy_version: str = "1.3.3"
@@ -2492,6 +2496,65 @@ def map_risk_to_user_message(level: str) -> str:
         "critical": "Es wurde ein Datenschutzverstoß erkannt. Bitte kontaktieren Sie den Datenschutz."
     }
     return messages.get(level, "Ihre Anfrage wurde verarbeitet.")
+
+def build_detected_items(redaction_result: Any) -> list[dict[str, str]]:
+    """
+    Baut die Liste fuer die farbigen Erkennungs-Blasen im Frontend.
+    NUR Kategorie-Label + Risikostufe (5-Farben-System: secret/forbidden/
+    confidential/high/normal) — NIEMALS Originalwerte, die verlassen den
+    Server hier nicht.
+    """
+    # Normale PII-Typen -> Farbstufe (gleiches 5-Stufen-Schema wie das
+    # fruehere Frontend-PRIVACY_RULES-System, jetzt aber aus echten
+    # Server-Erkennungen statt einer zweiten, abweichenden Regel-Liste)
+    pii_type_level = {
+        "name": "normal", "name_field": "normal", "name_standalone_line": "normal",
+        "email": "normal", "phone": "normal", "address": "normal", "postal_city": "normal",
+        "birthdate": "confidential", "reference": "confidential",
+        "iban": "high", "card": "high",
+    }
+    pii_type_label = {
+        "name": "Name", "name_field": "Name", "name_standalone_line": "Name",
+        "email": "E-Mail", "phone": "Telefon", "address": "Adresse", "postal_city": "Ort",
+        "birthdate": "Geburtsdatum", "reference": "Referenznummer",
+        "iban": "IBAN", "card": "Kartennummer",
+    }
+    violet_category_label = {
+        "health": "Gesundheit", "religion": "Religion/Weltanschauung",
+        "politics": "Politische Meinung", "sexual": "Sexualdaten/Familienstand",
+        "ethnic": "Herkunft", "biometric": "Biometrische Daten",
+        "union": "Gewerkschaftsbezug", "genetic": "Genetische Daten",
+        "criminal": "Strafrechtliche Informationen",
+    }
+
+    items: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for pii_type in set(redaction_result.replacements.values()):
+        if "secret" in pii_type:
+            level, label = "secret", "Geheimnis"
+        else:
+            level = pii_type_level.get(pii_type, "normal")
+            label = pii_type_label.get(pii_type, pii_type.title())
+        key = (level, label)
+        if key not in seen:
+            seen.add(key)
+            items.append({"level": level, "label": label})
+
+    for category in redaction_result.pii_categories:
+        label = violet_category_label.get(category, category)
+        key = ("forbidden", label)
+        if key not in seen:
+            seen.add(key)
+            items.append({"level": "forbidden", "label": label})
+
+    if redaction_result.level.value == "black":
+        key = ("forbidden", "Automatisierte Entscheidung")
+        if key not in seen:
+            items.append({"level": "forbidden", "label": "Automatisierte Entscheidung"})
+
+    return items
+
 
 def build_escalation_info(risk_level: str, violations: list[str] = None) -> dict[str, Any] | None:
     """Eskalations-Infos nur für Admin"""
@@ -2655,6 +2718,7 @@ def policy_redact(
         # 7. RESPONSE
         # ─────────────────────────────────────────────────────────
 
+        detected_items = build_detected_items(redaction_result)
         logger.info(f"📤 PolicyRedact response | decision={decision} | risk_level={risk_level} | can_send_to_llm={can_send_to_llm}")
         return PolicyRedactResponse(
             decision=decision,
@@ -2664,7 +2728,8 @@ def policy_redact(
             can_send_to_llm=can_send_to_llm,
             requires_human_review=decision in ["requires_human_review"],
             documentation_required=risk_level in ["black", "critical"],
-            admin_only=admin_only
+            admin_only=admin_only,
+            detected_items=detected_items
         )
 
     except Exception as e:
