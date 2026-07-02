@@ -391,8 +391,11 @@ def _run_agent(task: str, tenant_id: str) -> str:
         if fast:
             return fast
 
-    llm_enabled = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").lower() == "true"
-    if not llm_enabled:
+    try:
+        from ..kill_switch import is_external_llm_enabled
+    except ImportError:
+        from kill_switch import is_external_llm_enabled
+    if not is_external_llm_enabled():
         return "Externe KI ist derzeit deaktiviert. Fuer einfache Fragen stehe ich lokal zur Verfuegung."
 
     try:

@@ -984,9 +984,12 @@ def ready() -> dict[str, Any]:
     except Exception:
         checks["database"] = "error"
 
-    # Kill-Switch-Status
-    kill_switch_env = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").lower()
-    checks["kill_switch"] = "enabled" if kill_switch_env == "true" else "disabled"
+    # Kill-Switch-Status (zentrale Funktion — beruecksichtigt DB-Flag + Operation-Mode)
+    try:
+        from .kill_switch import is_external_llm_enabled as _ready_ext_enabled
+    except ImportError:
+        from kill_switch import is_external_llm_enabled as _ready_ext_enabled
+    checks["kill_switch"] = "enabled" if _ready_ext_enabled() else "disabled"
 
     # Scheduler (APScheduler im lifespan gestartet)
     checks["scheduler"] = "running"
