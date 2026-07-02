@@ -48,13 +48,65 @@ class RedactionEngineV2:
     """Neue Redaction-Engine mit regelkonformer Ausgabe"""
 
     # Pattern für verschiedene PII-Typen (vereinfacht)
+    # Reihenfolge ist wichtig: strukturierte/spezifische Muster (IBAN, Karte) VOR
+    # loseren Mustern (Telefon), sonst kann Telefon mitten in eine IBAN matchen
+    # und sie nur teilweise zerstoeren (Incident 2026-07, Amun-Brief).
+    # WICHTIG: Ausschliesslich [ \t] oder woertliches Leerzeichen statt \s
+    # verwenden, wenn "gleiche Zeile" gemeint ist. \s matcht auch \n — in
+    # einer Zeichenklasse oder Wiederholung ohne Obergrenze kann das ueber
+    # Zeilen-/Absatzgrenzen hinweg "fressen" und dabei benachbarte, bereits
+    # geschwaerzte Abschnitte oder Folgezeilen mit zerstoeren/verschlucken
+    # (Incident 2026-07, Amun-Brief: sowohl bei Telefon/IBAN-Kollision als
+    # auch bei Violett-Sektionen und Namensfeldern beobachtet).
     PATTERNS = {
-        "name": re.compile(r"\b(?:Herr(?:n)?|Frau|Dr\.|Prof\.)\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s-]+", re.IGNORECASE),
+        "name": re.compile(
+            # (?i:...) nur um die Anrede — der Name selbst MUSS grossgeschrieben
+            # sein (case-sensitiv), sonst frisst IGNORECASE beliebigen
+            # kleingeschriebenen Folgetext als vermeintlich "weiteres Namenswort"
+            # (gleiche Fehlerklasse wie bei "reference", Incident 2026-07).
+            r"\b(?i:Herr(?:n)?|Frau|Dr\.|Prof\.)[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+"
+            r"(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
+        ),
+        "name_field": re.compile(
+            r"(?i:Name|Ansprechpartner|Antragsteller|Bewerber(?:in)?|Kunde|Kundin)[ \t]*:[ \t]*"
+            r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
+        ),
+        "name_standalone_line": re.compile(
+            r"^[A-ZÄÖÜ][a-zäöüß\-]+[ \t]+[A-ZÄÖÜ][a-zäöüß\-]+$", re.MULTILINE,
+        ),
         "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
-        "phone": re.compile(r"(?:\+49|0)[\s.\-]?[1-9]\d{2,}[\s()./\-]*\d{2,}(?!\d)", re.IGNORECASE),
+        "birthdate": re.compile(
+            r"\b(?:Geburtsdatum|geb\.)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}", re.IGNORECASE,
+        ),
         "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
         "card": re.compile(r"\b(?:\d{4}[\s\-]?){3}\d{4}\b"),
-        "reference": re.compile(r"\b[A-Z]{2,3}-\d{4}-\d{3,4}\b"),  # HR-2026-117
+        "address": re.compile(
+            # Kein IGNORECASE: Strassenname ist im Deutschen konventionell
+            # grossgeschrieben — case-sensitiv verhindert Ueberdehnung auf
+            # zufaellige kleingeschriebene Wortteile wie "unterwegs" (enthaelt
+            # "weg" als Teilstring). Nicht-gieriges *? vor dem Suffix, damit
+            # die Suffix-Gruppe zuverlaessig genau an der richtigen Stelle
+            # matcht statt sich auf Backtracking zu verlassen.
+            r"\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]*?(?:stra(?:ße|sse)|gasse|weg|platz|allee|ring|damm|ufer)"
+            r"[ \t]+\d+[a-z]?(?:/\d+[a-z]?)?",
+        ),
+        "postal_city": re.compile(
+            r"\b\d{5}[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+){0,3}",
+        ),
+        "reference": re.compile(
+            # (?i:...) beschraenkt Gross-/Kleinschreibungs-Toleranz auf die
+            # Schluesselwoerter — die Nummer selbst MUSS mit Grossbuchstabe/
+            # Ziffer beginnen (case-sensitiv), sonst matcht z.B. "Bestellung"
+            # + IGNORECASE das "en" in "Bestellungen" als vermeintliche
+            # Nummer (Incident 2026-07, Amun-Brief).
+            r"(?i:Rechnung(?:s(?:nummer)?)?|Rechnungs-?Nr\.?|Kundennummer|Kunden-?Nr\.?"
+            r"|Auftrag(?:s(?:nummer)?)?|Auftrags-?Nr\.?|Bestellung(?:s(?:nummer)?)?|Bestell-?Nr\.?"
+            r"|Aktenzeichen|Az\.?|Vertrag(?:s(?:nummer)?)?|Vertrags-?Nr\.?|Fall(?:nummer)?|Fall-?Nr\.?"
+            r"|Ticket-?(?:Nr\.?|Nummer)?|Bewerbung(?:s(?:nummer)?)?|Bewerbungs-?Nr\.?)"
+            r"[ \t]*[:\-#]?[ \t]*[A-Z0-9][\w\-/]{1,19}"
+            r"|\b[A-Z]{2,3}-\d{4}-\d{3,4}\b",  # HR-2026-117 (auch ohne Label)
+        ),
+        "phone": re.compile(r"(?:\+49|0)[ \t.\-]?[1-9]\d{2,}[ \t()./\-]*\d{2,}(?!\d)", re.IGNORECASE),
         "secret_openai": re.compile(r"\bsk-[\w\-]{15,}\b"),
         "secret_groq": re.compile(r"\bgsk_[\w\-]{15,}\b"),
         "secret_jwt": re.compile(r"\beyJ[\w\-\.]+\b"),
@@ -70,7 +122,7 @@ class RedactionEngineV2:
         "ethnic": ["herkunft", "ethni", "rasse", "abstammung", "nationalität"],
         "biometric": ["fingerabdruck", "gesichtserkennung", "biometrisch", "gesichtsanalyse"],
         "union": ["gewerkschafts", "tarifvertrag", "betriebsrat"],
-        "genetic": ["genetisch", "dna", "chromosom", "gen"],
+        "genetic": ["genetisch", "dna", "chromosom", "genom"],
         "criminal": ["strafrechtlich", "verurteilung", "strafregister"],
     }
 
@@ -173,44 +225,66 @@ class RedactionEngineV2:
         return text
 
     def _find_violet_sections(self, text: str) -> dict[str, list[str]]:
-        """Findet Art. 9-Sektionen (VIOLETT)"""
+        """
+        Findet Art. 9-Sektionen (VIOLETT).
+
+        Nutzt Wortgrenzen (\\b) statt naiver Teilstring-Suche — sonst matchen
+        kurze/generische Schluesselwoerter (z.B. ehemals "gen") versehentlich
+        innerhalb unverwandter Woerter (z.B. "Bestellun-gen", "fol-gen-de").
+        """
         found = {}
-        text_lower = text.lower()
 
         for category, keywords in self.VIOLET_KEYWORDS.items():
             for keyword in keywords:
-                if keyword in text_lower:
+                if re.search(rf"\b{re.escape(keyword)}", text, re.IGNORECASE):
                     if category not in found:
                         found[category] = []
                     found[category].append(keyword)
 
         return found
 
+    _VIOLET_CATEGORY_LABELS = {
+        "health": "Gesundheit",
+        "religion": "Religion/Weltanschauung",
+        "politics": "Politische Meinung",
+        "sexual": "Sexualdaten/Familienstand",
+        "ethnic": "Herkunft",
+        "biometric": "Biometrische Daten",
+        "union": "Gewerkschaftsbezug",
+        "genetic": "Genetische Daten",
+        "criminal": "Strafrechtliche Informationen",
+    }
+
     def _redact_violet_sections(self, text: str, violet_categories: dict[str, list]) -> str:
-        """Schwärzt ganze Sektionen mit Art. 9-Daten - AGGRESSIV"""
-        for category in violet_categories.keys():
-            category_label = {
-                "health": "Gesundheit",
-                "religion": "Religion/Weltanschauung",
-                "politics": "Politische Meinung",
-                "sexual": "Sexualdaten/Familienstand",
-                "ethnic": "Herkunft",
-                "biometric": "Biometrische Daten",
-                "union": "Gewerkschaftsbezug",
-                "genetic": "Genetische Daten",
-                "criminal": "Strafrechtliche Informationen",
-            }.get(category, category)
+        """
+        Schwärzt Zeilen mit Art. 9-Daten - AGGRESSIV, aber zeilenscharf.
 
-            # AGGRESSIV: Ersetze ganze Zeilen + folgende Zeilen mit Details
-            # Findet "Gesundheit: ..." und ersetzt komplett
-            text = re.sub(
-                rf"(?:{category_label}:[^\n]*(?:\n(?:\s+[^\n]*)*)?(?:\n|$))",
-                f"[GESCHWAERZT: {category_label} - Art. 9 DSGVO - Datenkategorie nicht extern verarbeitbar]\n",
-                text,
-                flags=re.IGNORECASE,
+        Fruehere Version nutzte eine mehrzeilige Regex mit `\\s+` als
+        "Folgezeilen"-Muster — `\\s` matcht auch `\\n`, wodurch das Muster
+        durch Absatzgrenzen hindurch bis zum Ende des Dokuments "fressen"
+        konnte und dabei bereits geschwaerzte SCHWARZ-Abschnitte mit
+        wegloeschte (Incident 2026-07, Amun-Brief-Vorfall). Fix: Ersetzt
+        ausschliesslich die EINZELNE Zeile, die eines der tatsaechlich
+        erkannten Schluesselwoerter enthaelt — nie mehr, nie weniger.
+        Ausserdem unabhaengig vom exakten Feldbezeichner im Dokument (z.B.
+        "Religion:" vs. Code-Label "Religion/Weltanschauung:" — vorher ein
+        stiller Mismatch, der die Zeile komplett unredaktiert liess).
+        """
+        lines = text.split("\n")
+        for category, matched_keywords in violet_categories.items():
+            category_label = self._VIOLET_CATEGORY_LABELS.get(category, category)
+            kw_pattern = re.compile(
+                "|".join(re.escape(kw) for kw in set(matched_keywords)), re.IGNORECASE,
             )
+            placeholder_line = (
+                f"[GESCHWAERZT: {category_label} - Art. 9 DSGVO - "
+                f"Datenkategorie nicht extern verarbeitbar]"
+            )
+            for i, line in enumerate(lines):
+                if kw_pattern.search(line):
+                    lines[i] = placeholder_line
 
-        return text
+        return "\n".join(lines)
 
     def _remove_secrets(self, text: str) -> str:
         """Entfernt Secrets komplett (keine Redaction)"""
@@ -259,10 +333,15 @@ class RedactionEngineV2:
         """Normalisiert PII-Typ zu Platzhalter-Label (ohne Zähler)"""
         labels = {
             "name": "Name",
+            "name_field": "Name",
+            "name_standalone_line": "Name",
             "email": "E-Mail",
+            "birthdate": "Geburtsdatum",
             "phone": "Telefon",
             "iban": "IBAN",
             "card": "Kartennummer",
+            "address": "Adresse",
+            "postal_city": "Ort",
             "reference": "Referenznummer",
         }
         return labels.get(pii_type, pii_type.title())
