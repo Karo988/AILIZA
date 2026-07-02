@@ -1296,12 +1296,13 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
     ]
     try:
         answer = _orchestrator.generate(messages, context=context)
-        _prov = getattr(_orchestrator, "default_provider", "unknown")
-        _model = getattr(
-            _orchestrator.providers.get(_prov), "model", "unknown"
-        )
+        # Tatsaechlich genutzter Provider (nicht der angenommene default_provider) —
+        # Freigabe Stufe 1, E3-Zusatzpatch: kein stiller Wechsel.
+        _prov = getattr(_orchestrator, "last_provider_id", None) or getattr(_orchestrator, "default_provider", "unknown")
+        _model = getattr(_orchestrator, "last_model", None) or "unknown"
         print(
-            f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)}",
+            f"AILIZA LLM | provider={_prov} model={_model} result=ok chars={len(answer)} "
+            f"failover_occurred={getattr(_orchestrator, 'last_failover_occurred', False)}",
             flush=True,
         )
         return answer, None
@@ -1499,10 +1500,16 @@ def run_agent(
             flush=True,
         )
         answer, error_code, provider_errors = _ask_llm_directly(effective_task)
+        # Tatsaechlich genutzter Provider (Freigabe Stufe 1, E3-Zusatzpatch) —
+        # _orchestrator ist ein Modul-Singleton, direkt nach dem Call gueltig.
+        _used_provider = getattr(_orchestrator, "last_provider_id", None)
+        _used_model = getattr(_orchestrator, "last_model", None)
+        _failover_occurred = getattr(_orchestrator, "last_failover_occurred", False)
         print(
             f"AILIZA WRITING TASK | direct_llm_called=True "
             f"answer_chars={len(answer) if answer else 0} "
-            f"error={error_code}",
+            f"error={error_code} provider={_used_provider} model={_used_model} "
+            f"failover_occurred={_failover_occurred}",
             flush=True,
         )
         if answer is not None:
@@ -1519,6 +1526,9 @@ def run_agent(
                 "web_search": False,
                 "redaction_applied": bool(reinsertion_map),
                 "reinsertion_used": bool(reinsertion_map),
+                "provider_used": _used_provider,
+                "model_used": _used_model,
+                "failover_occurred": _failover_occurred,
                 "tenant_id": tenant,
             }
             if governance_is_draft:

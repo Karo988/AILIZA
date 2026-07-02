@@ -97,6 +97,14 @@ class ProviderOrchestrator:
             providers = _p
         self.providers = providers
         self.default_provider = default_provider
+        # Transparenz ueber den zuletzt tatsaechlich genutzten Provider
+        # (Freigabe Stufe 1, E3-Zusatzpatch) — vom Aufrufer nach generate()
+        # auslesbar, damit Response-Metadaten den echten Provider zeigen
+        # statt eines angenommenen default_provider.
+        self.last_provider_id: str | None = None
+        self.last_model: str | None = None
+        self.last_failover_occurred: bool = False
+        self.last_failover_from: list[str] = []
 
     # ── Registry-Check ─────────────────────────────────────────────────────────
 
@@ -328,6 +336,7 @@ class ProviderOrchestrator:
         # Ursachen je Provider sammeln — für verständliche all_providers_failed-Meldung
         failure_reasons: list[str] = []
         last_exc: AILIZAError | None = None
+        failed_pids: list[str] = []  # Freigabe Stufe 1, E3-Zusatzpatch: Transparenz
 
         for pid, provider in candidates:
             tokens_in = sum(provider.count_tokens(m.get("content", "")) for m in messages)
@@ -336,11 +345,39 @@ class ProviderOrchestrator:
             try:
                 result = provider.generate(messages, context)
                 tokens_out = provider.count_tokens(result)
+                model_name = getattr(provider, "model", "unknown")
                 print(
                     f"AILIZA PROVIDER OK | provider={pid} "
-                    f"model={getattr(provider, 'model', 'unknown')}",
+                    f"model={model_name}",
                     flush=True,
                 )
+                self.last_provider_id = pid
+                self.last_model = model_name
+                self.last_failover_occurred = bool(failed_pids)
+                self.last_failover_from = list(failed_pids)
+                if failed_pids:
+                    # Failover fand statt — kein stiller Wechsel: auditieren.
+                    print(
+                        f"AILIZA FAILOVER | failover_from={failed_pids} "
+                        f"failover_to={pid} model={model_name}",
+                        flush=True,
+                    )
+                    try:
+                        from ..database import write_audit_entry
+                    except ImportError:
+                        from database import write_audit_entry
+                    try:
+                        write_audit_entry(
+                            action="provider.failover",
+                            metadata={
+                                "failover_from": failed_pids,
+                                "failover_to": pid,
+                                "model": model_name,
+                            },
+                            tenant_id=tenant_id,
+                        )
+                    except Exception:
+                        pass  # Audit-Fehler darf Antwort nicht blockieren
                 return result
             except AILIZAError as exc:
                 error_type = exc.code
@@ -349,12 +386,14 @@ class ProviderOrchestrator:
                 reason_parts = exc.safe_alternatives or []
                 reason_summary = reason_parts[0] if reason_parts else exc.code
                 failure_reasons.append(f"{pid}: {reason_summary}")
+                failed_pids.append(pid)
                 print(f"AILIZA PROVIDER FAIL | provider={pid} code={exc.code} — trying next", flush=True)
                 last_exc = exc
             except Exception as exc:  # noqa: BLE001
                 error_type = type(exc).__name__
                 tokens_out = 0
                 failure_reasons.append(f"{pid}: {error_type}")
+                failed_pids.append(pid)
                 print(f"AILIZA PROVIDER FAIL | provider={pid} type={error_type} — trying next", flush=True)
                 last_exc = AILIZAError.from_code("internal_error")
             finally:
