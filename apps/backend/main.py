@@ -1209,9 +1209,12 @@ def _governance_pre_check(
     if decision in (PolicyDecision.APPROVAL_REQUIRED, PolicyDecision.REDACT_REQUIRED):
         # Governance-Regel: Redacten → als Entwurf weiterlaufen (nicht stoppen).
         # APPROVAL_REQUIRED und REDACT_REQUIRED werden gleich behandelt:
-        # lokale Pseudonymisierung, dann weiter, Ergebnis als Entwurf markieren.
-        redacted = redact(task, classification)
-        redacted_task = redacted.redacted_text
+        # Phase 1.3: Nutze RedactionEngineV2 (nicht die alte redaction.py)
+        from .governance.redaction_v2 import RedactionEngineV2
+        engine = RedactionEngineV2()
+        redaction_result = engine.redact(task)
+        redacted_task = redaction_result.redacted_text
+        reinsertion_map = redaction_result.reinsertion_map
         is_draft = decision == PolicyDecision.APPROVAL_REQUIRED
         dc_names = [c.value for c in data_classes]
         approval_id: int | None = None
@@ -1246,7 +1249,7 @@ def _governance_pre_check(
             "decision": "allow_with_notice",
             "task": redacted_task,
             # reinsertion_map: NUR lokal im RAM — NIEMALS loggen oder persistieren
-            "reinsertion_map": redacted.reinsertion_map,
+            "reinsertion_map": reinsertion_map,
             "notice": notice,
             "is_draft": is_draft,
             "approval_id": approval_id,
