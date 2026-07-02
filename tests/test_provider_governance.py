@@ -22,19 +22,26 @@ def test_unknown_provider_blocked():
     assert "nicht registriert" in reason.lower() or "unbekannt" in reason.lower()
 
 
-def test_groq_public_allowed():
+def test_groq_public_allowed(monkeypatch):
+    """Ohne unterzeichneten AVV (DSGVO Art. 28) nur mit serverseitigem
+    Testmodus erlaubt (Freigabe Stufe 1, P-A)."""
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
     from apps.backend.providers.provider_profiles import check_provider_policy
     from apps.backend.governance.data_governance import DataClass
     allowed, reason = check_provider_policy("groq", [DataClass.PUBLIC])
     assert allowed
-    assert reason == "ok"
+    assert reason == "ok:no_avv_test_exception"
 
 
-def test_groq_internal_allowed():
+def test_groq_internal_blocked_without_avv(monkeypatch):
+    """INTERNAL ist keine Testmodus-Ausnahme-Klasse (nur PUBLIC/SYNTHETIC/
+    DEMO) — bleibt auch mit Testmodus blockiert ohne AVV (Freigabe Stufe 1,
+    P-A). Strenger als die vormalige, main-eigene Vereinfachung."""
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
     from apps.backend.providers.provider_profiles import check_provider_policy
     from apps.backend.governance.data_governance import DataClass
     allowed, _ = check_provider_policy("groq", [DataClass.INTERNAL])
-    assert allowed
+    assert not allowed
 
 
 def test_groq_confidential_blocked():
@@ -42,7 +49,7 @@ def test_groq_confidential_blocked():
     from apps.backend.governance.data_governance import DataClass
     allowed, reason = check_provider_policy("groq", [DataClass.CONFIDENTIAL])
     assert not allowed
-    assert "confidential" in reason.lower() or "nicht erlaubt" in reason.lower()
+    assert "avv" in reason.lower() or "dpa" in reason.lower()
 
 
 def test_groq_credentials_blocked():
@@ -59,7 +66,9 @@ def test_groq_personal_data_blocked():
     assert not allowed
 
 
-def test_anthropic_public_allowed():
+def test_anthropic_public_allowed(monkeypatch):
+    """Ohne AVV nur mit Testmodus erlaubt (Freigabe Stufe 1, P-A)."""
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
     from apps.backend.providers.provider_profiles import check_provider_policy
     from apps.backend.governance.data_governance import DataClass
     allowed, _ = check_provider_policy("anthropic", [DataClass.PUBLIC])
@@ -147,7 +156,9 @@ def test_provider_with_none_transfer_basis_blocked():
 
 
 # ── Use-Case-Check ────────────────────────────────────────────────────────────
-def test_use_case_allowed():
+def test_use_case_allowed(monkeypatch):
+    """Ohne AVV nur mit Testmodus erlaubt (Freigabe Stufe 1, P-A)."""
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
     from apps.backend.providers.provider_profiles import check_provider_policy
     from apps.backend.governance.data_governance import DataClass
     allowed, _ = check_provider_policy("groq", [DataClass.PUBLIC], use_case="kmu_assistant")

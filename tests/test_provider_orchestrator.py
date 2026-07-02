@@ -34,6 +34,9 @@ def test_generate_blocked_when_kill_switch_off(monkeypatch):
 
 def test_generate_with_mock(monkeypatch):
     monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+    # Ohne unterzeichneten AVV nur mit serverseitigem Testmodus erlaubt
+    # (Freigabe Stufe 1, P-A) — generate() klassifiziert PUBLIC per Default.
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
     import importlib
     from apps.backend import kill_switch
     importlib.reload(kill_switch)
