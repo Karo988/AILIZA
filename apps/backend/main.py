@@ -5,6 +5,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 import json
 import os
 import re
+import uuid
 from datetime import datetime
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -2820,7 +2821,11 @@ def policy_redact(
         )
 
     except Exception as e:
-        logger.error(f"❌ Policy-Redaction error: {e}")
+        # PII-frei loggen (Freigabe Stufe 1, P-G): nur Exception-Typ + Korrelations-ID,
+        # niemals str(e) — die Rohmeldung kann Nutzertext/PII enthalten (z.B. Regex-
+        # oder Parsing-Fehler, die den verarbeiteten Text im Message-Text zitieren).
+        _corr_id = uuid.uuid4().hex[:12]
+        logger.error(f"❌ Policy-Redaction error | correlation_id={_corr_id} | type={type(e).__name__}")
         # TECHNICAL_BLOCK: Systemfehler
         admin_only = None
         if current_user and current_user.role == "admin":
@@ -2828,7 +2833,8 @@ def policy_redact(
                 "escalation_info": {
                     "severity": "system_error",
                     "reason": "Policy-Engine error",
-                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "correlation_id": _corr_id,
                     "contact": "support@ailiza.de"
                 }
             }
