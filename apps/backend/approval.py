@@ -1,181 +1,235 @@
 """
-Approval Workflow: Two-phase approval for special category data.
+AILIZA Approval-System
+======================
+Risikoabschätzung und Approval-Gate mit Rollenprüfung.
 
-Phase 1: approve_request() → Admin reviews metadata + redacted_preview, sets decision
-Phase 2: resubmit_after_approval() → User re-submits original task, full policy re-check
+Risikolevel:
+  low             — Auto-Approve (kein menschliches Eingreifen nötig)
+  medium          — require_approval (jeder authorisierte Nutzer)
+  high            — require_approval (erhöhte Rollen)
+  safety_critical — require_approval (nur security_lead / operations_lead / owner)
+  person_decision — require_approval (nur privacy / legal / owner) — DSGVO Art. 22
 
-redacted_preview contains ONLY the actual validated and truncated text. Never full payload.
-
-Status: Bereit für kontrollierte Testumgebung und Governance-Review.
-Nicht produktionsreif. Nicht zertifiziert.
+Rollenmatrix für Approval-Freigaben:
+  safety_critical : security_lead, operations_lead, owner
+  person_decision : privacy, legal, owner
+  provider_avv    : admin, privacy, legal, owner
+  memory_write    : admin, owner
+  default/high    : admin, owner
+  medium/low      : admin, manager, owner
 """
+from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Optional, Tuple
+import re
+from dataclasses import asdict, dataclass
 from enum import Enum
-import uuid
+from typing import Any
+from urllib.parse import urlparse
 
 
-class ApprovalDecisionCode(Enum):
-    """Whitelist of approval decision reasons."""
-    BUSINESS_NEED = "business_need"
-    LEGAL_OBLIGATION = "legal_obligation"
-    USER_EXPLICIT_CONSENT = "user_explicit_consent"
-    UNNECESSARY_DATA = "unnecessary_data"
-    POLICY_VIOLATION = "policy_violation"
-    RISK_TOO_HIGH = "risk_too_high"
+class ApprovalStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    AUTO = "auto"
 
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    SAFETY_CRITICAL = "safety_critical"
+    PERSON_DECISION = "person_decision"
+
+
+# Rollen die für ein Approval-Gate freigeben dürfen
+APPROVAL_ROLES: dict[str, list[str]] = {
+    RiskLevel.SAFETY_CRITICAL.value: ["security_lead", "operations_lead", "owner"],
+    RiskLevel.PERSON_DECISION.value: ["privacy", "legal", "owner"],
+    "provider_avv":                  ["admin", "privacy", "legal", "owner"],
+    "memory_write":                  ["admin", "owner"],
+    RiskLevel.HIGH.value:            ["admin", "owner"],
+    RiskLevel.MEDIUM.value:          ["admin", "manager", "owner"],
+    RiskLevel.LOW.value:             ["admin", "manager", "user", "owner"],
+}
+
+# Timeout in Sekunden je Risikolevel (danach: Auto-Reject, nicht Auto-Approve)
+APPROVAL_TIMEOUT_SECONDS: dict[str, int] = {
+    RiskLevel.SAFETY_CRITICAL.value: 300,   # 5 Minuten
+    RiskLevel.PERSON_DECISION.value: 600,   # 10 Minuten
+    RiskLevel.HIGH.value:            1800,  # 30 Minuten
+    RiskLevel.MEDIUM.value:          3600,  # 1 Stunde
+    RiskLevel.LOW.value:             0,     # Auto (kein Timeout)
+}
+
+
+@dataclass(frozen=True)
+class RiskResult:
+    risky: bool
+    reason: str
+    risk_level: str
+    tool: str
+    input_summary: str      # NIEMALS im Audit loggen — nur intern für Risikoentscheid
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def required_approver_roles(self) -> list[str]:
+        return APPROVAL_ROLES.get(self.risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
+
+    def approval_timeout(self) -> int:
+        return APPROVAL_TIMEOUT_SECONDS.get(self.risk_level, 1800)
+
+
+def can_approve(risk_level: str, approver_role: str) -> bool:
+    """Prueft ob eine Rolle einen Approval für das gegebene Risikolevel freigeben darf."""
+    allowed = APPROVAL_ROLES.get(risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
+    return approver_role in allowed
+
+
+TRUSTED_DOMAINS: set[str] = {
+    "wikipedia.org",
+    "www.wikipedia.org",
+    "github.com",
+    "raw.githubusercontent.com",
+    "docs.python.org",
+    "pypi.org",
+    "stackoverflow.com",
+    "arxiv.org",
+    "news.ycombinator.com",
+}
+
+COMPLEX_QUERY_THRESHOLD = 120
+
+RISKY_QUERY_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\b(hack|exploit|vulnerability|CVE-\d+|bypass|injection)\b", re.I),
+    re.compile(r"\b(credit.?card|ssn|social.?security|bank.?account)\b", re.I),
+    re.compile(r"\b(darkweb|dark.?net|tor.?browser)\b", re.I),
+]
+
+# Crowd-Control / Massennachricht — Safety-Critical
+_MASS_NOTIFY_PATTERNS = re.compile(
+    r"\b(alle\s+Besucher|alle\s+Teilnehmer|alle\s+Gäste|Massennachricht"
+    r"|all\s+(?:visitors|attendees|guests)|mass\s+(?:notify|message|push)"
+    r"|broadcast\s+to\s+all|push\s+notification\s+(?:to\s+all|\d{4,}))\b",
+    re.I,
+)
+
+# Personenentscheidungs-Kontext
+_PERSON_DECISION_PATTERNS = re.compile(
+    r"\b(Personalentscheidung|Mitarbeiterbewertung|Kündigung|Personalplanung"
+    r"|automated\s+(?:decision|evaluation)|staff\s+(?:decision|evaluation)"
+    r"|employee\s+termination|performance\s+decision)\b",
+    re.I,
+)
+
+
+def assess_fetch_risk(url: str) -> RiskResult:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return RiskResult(True, "URL host is missing", RiskLevel.HIGH.value, "fetch", "<no-url>")
+    if host in TRUSTED_DOMAINS:
+        return RiskResult(False, f"Trusted domain: {host}", RiskLevel.LOW.value, "fetch", "<url-host-only>")
+    return RiskResult(True, f"Unknown domain: {host}", RiskLevel.MEDIUM.value, "fetch", "<url-host-only>")
+
+
+def assess_search_risk(query: str) -> RiskResult:
+    if _MASS_NOTIFY_PATTERNS.search(query):
+        return RiskResult(
+            True, "Mass notification detected — Safety-Critical gate required",
+            RiskLevel.SAFETY_CRITICAL.value, "search", "<query-length-only>",
+        )
+    if _PERSON_DECISION_PATTERNS.search(query):
+        return RiskResult(
+            True, "Automated person decision detected — human approval required (DSGVO Art. 22)",
+            RiskLevel.PERSON_DECISION.value, "search", "<query-length-only>",
+        )
+    if len(query) > COMPLEX_QUERY_THRESHOLD:
+        return RiskResult(
+            True, f"Complex query ({len(query)} characters)",
+            RiskLevel.MEDIUM.value, "search", "<query-length-only>",
+        )
+    for pattern in RISKY_QUERY_PATTERNS:
+        if pattern.search(query):
+            return RiskResult(
+                True, "Query contains potentially risky terms",
+                RiskLevel.HIGH.value, "search", "<query-length-only>",
+            )
+    return RiskResult(False, "Query is low risk", RiskLevel.LOW.value, "search", "<query-length-only>")
+
+
+def assess_risk(tool: str, params: dict[str, Any]) -> RiskResult:
+    if tool == "fetch":
+        return assess_fetch_risk(str(params.get("url", "")))
+    if tool == "search":
+        return assess_search_risk(str(params.get("query", "")))
+    return RiskResult(True, f"Unknown tool: {tool}", RiskLevel.HIGH.value, tool, "<params-unknown>")
+
+
+# ── Approval Preview (kein Execute) ──────────────────────────────────────────
 
 @dataclass
-class ApprovalRequest:
-    """Approval request record. Stores ONLY metadata + redacted preview."""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    request_id: str = ""  # FK to task request
-    pii_categories: list[str] = field(default_factory=list)
-    data_class: str = ""  # "high" | "confidential" | "forbidden"
-    highest_risk_level: str = ""
-    redacted_preview: Optional[str] = None  # ACTUAL safe preview text, max 500 chars
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    expires_at: datetime = field(default_factory=lambda: datetime.utcnow() + timedelta(hours=24))
-    decision: Optional[str] = None  # "approved" | "rejected" | "pending"
-    decision_reason_code: Optional[str] = None  # ApprovalDecisionCode value
-    decided_by_user_id: Optional[str] = None
-    decided_at: Optional[datetime] = None
-
-
-def assert_no_pii(text: str, max_len: int = 500) -> Tuple[bool, Optional[str]]:
+class ApprovalPreview:
     """
-    Validate text contains no secrets/special categories.
-    Return (is_safe, truncated_text) or (False, None).
-
-    This is the ACTUAL validation that redacted_preview stores.
+    Vorschau einer geplanten Aktion OHNE Ausführung.
+    Enthält alle Informationen die ein Mensch zur Freigabe braucht.
+    KEINE Secrets, KEIN vollständiger Input, KEIN Stack-Trace.
     """
-    from policies.pii_taxonomy import PIITaxonomy
-
-    # Check for secrets (always unsafe)
-    if PIITaxonomy.detect_secrets(text):
-        return (False, None)
-
-    # Check for special categories (always unsafe in preview)
-    if PIITaxonomy.detect_special_categories(text):
-        return (False, None)
-
-    # Truncate and return
-    truncated = text[:max_len] if len(text) > max_len else text
-    return (True, truncated)
+    action: str                    # Was soll passieren
+    target_system: str             # Wo soll es passieren
+    data_class: str                # Welche Datenklasse ist betroffen
+    risk_level: str                # Risikoeinschätzung
+    reason: str                    # Warum braucht es eine Freigabe
+    safe_alternative: str          # Was passiert bei Ablehnung
+    required_role: str             # Wer darf freigeben
+    capability_id: str | None      # Welche Capability ist betroffen
+    provider_id: str | None        # Welcher Provider wird genutzt
+    approval_timeout_seconds: int  # Wie lange ist die Freigabe gültig
+    preview_only: bool = True      # Sicherheitsfeld: darf NICHT ausgeführt werden
 
 
-class ApprovalWorkflow:
-    """Two-phase approval workflow."""
+def create_approval_preview(
+    action: str,
+    tool: str,
+    params: dict[str, Any],
+    data_class: str = "unknown",
+    capability_id: str | None = None,
+    provider_id: str | None = None,
+    safe_alternative: str = "Aktion abbrechen oder lokal verarbeiten",
+) -> ApprovalPreview:
+    """
+    Erstellt eine Approval-Vorschau ohne die Aktion auszuführen.
+    Darf nur an den Nutzer/Admin gezeigt werden — nie ausführen.
+    """
+    risk = assess_risk(tool, params)
+    required_role = APPROVAL_ROLES.get(risk.risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
+    role_str = ", ".join(required_role)
 
-    @staticmethod
-    def generate_approval_request(
-        request_id: str,
-        pii_categories: list[str],
-        data_class: str,
-        highest_risk_level: str,
-        redacted_text: str,
-    ) -> Optional[ApprovalRequest]:
-        """
-        Create approval request. Validates redacted_text, stores safe preview.
+    target = "extern"
+    if tool == "fetch":
+        host = ""
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(str(params.get("url", ""))).hostname or "unbekannt"
+        except Exception:
+            host = "unbekannt"
+        target = f"URL-Abruf: {host}"
+    elif tool == "search":
+        target = "Web-Suche (Tavily)"
+    elif tool == "llm_call":
+        target = f"LLM-Provider: {provider_id or 'unbekannt'}"
 
-        Args:
-            request_id: Task request ID
-            pii_categories: Detected PII categories
-            data_class: "high" | "confidential" | "forbidden"
-            highest_risk_level: Risk escalation level
-            redacted_text: The REDACTED (already safe) version of text
-
-        Returns:
-            ApprovalRequest with redacted_preview set to validated text, or None if validation fails
-        """
-
-        # Validate and truncate the redacted text
-        is_safe, safe_preview = assert_no_pii(redacted_text, max_len=500)
-        if not is_safe:
-            # Validation failed - do not create approval request
-            return None
-
-        approval = ApprovalRequest(
-            request_id=request_id,
-            pii_categories=pii_categories,
-            data_class=data_class,
-            highest_risk_level=highest_risk_level,
-            redacted_preview=safe_preview,  # Store ONLY the validated, truncated text
-            decision="pending",
-        )
-        return approval
-
-    @staticmethod
-    def approve_request(
-        approval_id: str,
-        user_id: str,
-        reason_code: str,
-        db_session=None,
-    ) -> bool:
-        """
-        Admin approves or rejects an approval request.
-
-        Args:
-            approval_id: Approval request ID
-            user_id: Admin user ID
-            reason_code: ApprovalDecisionCode value
-            db_session: Database session
-
-        Returns:
-            True if approved, False if rejected
-        """
-
-        # Validate reason code
-        valid_codes = [code.value for code in ApprovalDecisionCode]
-        if reason_code not in valid_codes:
-            raise ValueError(f"Invalid reason code: {reason_code}")
-
-        # Update approval record
-        if db_session:
-            # UPDATE approval SET decision='approved', decided_by=user_id, decided_at=now()
-            # (In actual implementation, this queries the DB)
-            pass
-
-        return True
-
-    @staticmethod
-    def resubmit_after_approval(
-        approval_id: str,
-        original_task: str,
-        user_id: str,
-        policy_check_fn=None,
-        db_session=None,
-    ) -> dict:
-        """
-        User re-submits original task AFTER approval.
-        Runs FULL policy-check again (no original task is stored in approval).
-
-        Args:
-            approval_id: Reference to approval request
-            original_task: FULL original task text (user must provide)
-            user_id: User ID
-            policy_check_fn: Function(task, user_id) -> PolicyDecision
-            db_session: Database session
-
-        Returns:
-            Decision dict with result of full re-check
-        """
-
-        # Verify approval exists and is approved
-        if db_session:
-            # Query approval from DB, check decision=='approved'
-            pass
-
-        # Run FULL policy check on original task
-        if policy_check_fn:
-            decision = policy_check_fn(original_task, user_id)
-            return {
-                "approval_id": approval_id,
-                "policy_decision": decision.decision,
-                "risk_level": decision.risk_level,
-                "message": decision.message,
-            }
-
-        return {"error": "policy_check_fn not provided"}
+    return ApprovalPreview(
+        action=action,
+        target_system=target,
+        data_class=data_class,
+        risk_level=risk.risk_level,
+        reason=risk.reason,
+        safe_alternative=safe_alternative,
+        required_role=role_str,
+        capability_id=capability_id,
+        provider_id=provider_id,
+        approval_timeout_seconds=risk.approval_timeout(),
+        preview_only=True,
+    )

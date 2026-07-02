@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python:*)",
+      "Bash(uvicorn:*)",
+      "Bash(pip install:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(**/.env)",
+      "Bash(curl:*)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "env": {
+    "AILIZA_EXTERNAL_LLM_ENABLED": "false",
+    "AILIZA_DEFAULT_TENANT_ID": "default"
+  }
+}

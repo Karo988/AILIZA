@@ -1,15 +1,71 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import "./App.css"
 import DashboardCard from "./components/DashboardCard"
-import ApprovalsPage from "./components/ApprovalsPage"
-import PreStagingPage from "./components/PreStagingPage"
+import LoginPage from "./components/LoginPage"
+import AgentChat from "./components/AgentChat"
+import { getSession, logout, apiFetch } from "./api"
 
 function App() {
+  const [session, setSession] = useState(null)
   const [activePage, setActivePage] = useState("Dashboard")
-  const [taskInput, setTaskInput] = useState("")
-const [agentResult, setAgentResult] = useState(null)
+  const [auditLogs, setAuditLogs] = useState([])
+  const [chatSessions, setChatSessions] = useState([{ id: Date.now(), title: "Neuer Chat", messages: [] }])
+  const [activeChatId, setActiveChatId] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 900)
 
-  const pages = ["Dashboard", "Freigaben", "Staging", "Governance", "Audit", "Agenten", "Einstellungen"]
+  const activeChat = chatSessions.find(s => s.id === activeChatId) || chatSessions[0]
+
+  function closeSidebar() {
+    if (window.innerWidth <= 900) setSidebarOpen(false)
+  }
+
+  function newChat() {
+    const id = Date.now()
+    setChatSessions(prev => [{ id, title: "Neuer Chat", messages: [] }, ...prev])
+    setActiveChatId(id)
+    setActivePage("Dashboard")
+    closeSidebar()
+  }
+
+  function updateChat(id, messages) {
+    setChatSessions(prev => prev.map(s => {
+      if (s.id !== id) return s
+      const firstUserMsg = messages.find(m => m.role === "user")
+      const title = firstUserMsg ? firstUserMsg.content.slice(0, 40) : "Neuer Chat"
+      return { ...s, messages, title }
+    }))
+  }
+
+  // Session prüfen beim Start
+  useEffect(() => {
+    getSession().then((s) => setSession(s || false))
+  }, [])
+
+  // Audit-Logs laden wenn eingeloggt
+  useEffect(() => {
+    if (!session) return
+    apiFetch("/audit-logs?limit=20")
+      .then((data) => {
+        if (Array.isArray(data)) setAuditLogs(data)
+      })
+      .catch(() => {})
+  }, [session])
+
+  function handleLogin(data) {
+    setSession({ user_id: data.user_id, role: data.role, tenant_id: "default" })
+  }
+
+  // Noch nicht geprüft — kurz warten
+  if (session === null) {
+    return <div className="loading-screen">AILIZA wird geladen …</div>
+  }
+
+  // Nicht eingeloggt → Login-Seite
+  if (session === false) {
+    return <LoginPage onLogin={handleLogin} />
+  }
+
+  const pages = ["Dashboard", "Governance", "Audit", "Agenten", "Einstellungen"]
 
   const dashboardData = [
     { title: "Frontend", value: "Online", detail: "Vite UI aktiv", color: "blue" },
@@ -25,26 +81,6 @@ const [agentResult, setAgentResult] = useState(null)
     ["Monitoring-Agent", "Online", "Health Checks, Warnungen, Systemüberwachung"],
   ]
 
-  const auditLogs = [
-    ["14:02", "Agent gestartet", "Runtime-Agent initialisiert"],
-    ["14:05", "Governance-Prüfung bestanden", "EU-AI-Act Gate erfolgreich"],
-    ["14:07", "Audit-Eintrag erstellt", "Aktion nachvollziehbar protokolliert"],
-    ["14:15", "Compliance-Check bestanden", "DSGVO-Status aktiv"],
-  ]
-  function startAgentDemo() {
-  if (!taskInput.trim()) {
-    return
-  }
-
-  setAgentResult({
-    title: "Demo-Agentenlauf abgeschlossen",
-    risk: "Mittel",
-    status: "Governance-Prüfung bestanden",
-    summary:
-      "Die Aufgabe wurde simuliert durch Governance-Agent, Audit-Agent und Runtime-Agent geprüft. Es wurden keine kritischen Compliance-Verstöße erkannt.",
-  })
-}
-
   function PageHeader({ label, title, text }) {
     return (
       <div className="page-header">
@@ -56,14 +92,6 @@ const [agentResult, setAgentResult] = useState(null)
   }
 
   function renderPage() {
-    if (activePage === "Freigaben") {
-      return <ApprovalsPage />
-    }
-
-    if (activePage === "Staging") {
-      return <PreStagingPage />
-    }
-
     if (activePage === "Dashboard") {
       return (
         <>
@@ -72,39 +100,22 @@ const [agentResult, setAgentResult] = useState(null)
             title="Governance Dashboard"
             text="EU-KI-Gesetz- und DSGVO-konformes autonomes Agentensystem."
           />
-
           <div className="kpi-grid">
             <div className="kpi-card"><p className="kpi-label">Agenten</p><p className="kpi-value">4</p></div>
             <div className="kpi-card"><p className="kpi-label">Compliance</p><p className="kpi-value">98%</p></div>
-            <div className="kpi-card"><p className="kpi-label">Audit Logs</p><p className="kpi-value">324</p></div>
-            <div className="kpi-card"><p className="kpi-label">Workflows</p><p className="kpi-value">12</p></div>
+            <div className="kpi-card"><p className="kpi-label">Audit Logs</p><p className="kpi-value">{auditLogs.length}</p></div>
+            <div className="kpi-card"><p className="kpi-label">Nutzer</p><p className="kpi-value">{session.user_id}</p></div>
           </div>
-          <div className="demo-runner">
-  <h2>Agentenlauf simulieren</h2>
-  <p>
-    Gib eine Beispielaufgabe ein und starte einen simulierten Governance-Check.
-  </p>
-
-  <textarea
-    value={taskInput}
-    onChange={(event) => setTaskInput(event.target.value)}
-    placeholder="Beispiel: Prüfe ein Dokument auf DSGVO- und EU-AI-Act-Konformität."
-  />
-
-  <button onClick={startAgentDemo}>
-    Agent starten
-  </button>
-
-  {agentResult && (
-    <div className="result-box">
-      <h3>{agentResult.title}</h3>
-      <p><strong>Status:</strong> {agentResult.status}</p>
-      <p><strong>Risiko:</strong> {agentResult.risk}</p>
-      <p>{agentResult.summary}</p>
-    </div>
-  )}
-</div>
-
+          <AgentChat
+            key={activeChat.id}
+            initialMessages={activeChat.messages}
+            onMessagesChange={(msgs) => updateChat(activeChat.id, msgs)}
+            onRunComplete={() =>
+              apiFetch("/audit-logs?limit=20")
+                .then((d) => { if (Array.isArray(d)) setAuditLogs(d) })
+                .catch(() => {})
+            }
+          />
           <div className="card-grid">
             {dashboardData.map((card) => (
               <DashboardCard key={card.title} {...card} />
@@ -122,7 +133,6 @@ const [agentResult, setAgentResult] = useState(null)
             title="Governance"
             text="Kontrollschicht für sichere, prüfbare und EU-konforme Agenten."
           />
-
           <div className="demo-grid">
             <div className="demo-card"><h3>Human Oversight</h3><p>Aktiviert für kritische Aktionen.</p><strong>Aktiv</strong></div>
             <div className="demo-card"><h3>Risk Classification</h3><p>Risikoklasse wird vor Ausführung geprüft.</p><strong>Vorhanden</strong></div>
@@ -141,13 +151,13 @@ const [agentResult, setAgentResult] = useState(null)
             title="Audit-Protokolle"
             text="Nachvollziehbare Ereignisse für Entscheidungen, Prüfungen und Agentenaktionen."
           />
-
           <div className="table-card">
-            {auditLogs.map(([time, event, detail]) => (
-              <div className="table-row" key={time}>
-                <span>{time}</span>
-                <strong>{event}</strong>
-                <p>{detail}</p>
+            {auditLogs.length === 0 && <p>Keine Einträge vorhanden.</p>}
+            {auditLogs.map((log, i) => (
+              <div className="table-row" key={log.id || i}>
+                <span>{log.created_at ? new Date(log.created_at).toLocaleTimeString("de-DE") : "—"}</span>
+                <strong>{log.action}</strong>
+                <p>{log.metadata ? JSON.stringify(log.metadata) : ""}</p>
               </div>
             ))}
           </div>
@@ -163,7 +173,6 @@ const [agentResult, setAgentResult] = useState(null)
             title="Agenten"
             text="Aktive AILIZA-Systemagenten für Governance, Audit, Runtime und Monitoring."
           />
-
           <div className="demo-grid">
             {agents.map(([name, status, task]) => (
               <div className="demo-card" key={name}>
@@ -179,25 +188,27 @@ const [agentResult, setAgentResult] = useState(null)
 
     return (
       <section className="panel">
-        <PageHeader
-          label="System"
-          title="Einstellungen"
-          text="Konfiguration der Demo-Umgebung."
-        />
-
+        <PageHeader label="System" title="Einstellungen" text="Konfiguration." />
         <div className="demo-grid">
-          <div className="demo-card"><h3>Dark Mode</h3><p>Aktiviert für Demo und Dashboard.</p><strong>Aktiv</strong></div>
+          <div className="demo-card">
+            <h3>Session</h3>
+            <p>Nutzer: <strong>{session.user_id}</strong></p>
+            <p>Rolle: <strong>{session.role}</strong></p>
+            <button onClick={logout} style={{ marginTop: "0.75rem" }}>Abmelden</button>
+          </div>
           <div className="demo-card"><h3>Audit Logging</h3><p>Protokollierung aller Aktionen.</p><strong>Aktiv</strong></div>
-          <div className="demo-card"><h3>Runtime Monitoring</h3><p>Überwachung der Agentenlaufzeit.</p><strong>Aktiv</strong></div>
-          <div className="demo-card"><h3>Demo Mode</h3><p>Mock-Daten für Präsentation.</p><strong>Aktiv</strong></div>
+          <div className="demo-card"><h3>EU AI Act Art. 50</h3><p>KI-Kennzeichnung aktiv.</p><strong>Konform</strong></div>
+          <div className="demo-card"><h3>Kill-Switch</h3><p>Externe KI steuerbar über Env-Variable.</p><strong>Fail-Closed</strong></div>
         </div>
       </section>
     )
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell${sidebarOpen ? "" : " sidebar-collapsed"}`}>
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`sidebar${sidebarOpen ? " sidebar--open" : " sidebar--closed"}`}>
+        <button className="sidebar-toggle-close" onClick={() => setSidebarOpen(false)} title="Sidebar schließen">✕</button>
         <div className="brand">
           <div className="brand-mark">AI</div>
           <div>
@@ -206,20 +217,47 @@ const [agentResult, setAgentResult] = useState(null)
           </div>
         </div>
 
-        <nav>
+        <button className="new-chat-btn" onClick={newChat}>+ Neuer Chat</button>
+
+        {/* Chat-Verlauf */}
+        {chatSessions.length > 0 && (
+          <div className="chat-session-list">
+            {chatSessions.map(s => (
+              <button
+                key={s.id}
+                className={`chat-session-item${s.id === activeChat.id && activePage === "Dashboard" ? " active" : ""}`}
+                onClick={() => { setActiveChatId(s.id); setActivePage("Dashboard"); closeSidebar() }}
+                title={s.title}
+              >
+                <span className="chat-session-icon">💬</span>
+                <span className="chat-session-title">{s.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <nav className="sidebar-nav">
           {pages.map((page) => (
             <button
               key={page}
               className={activePage === page ? "nav-item active" : "nav-item"}
-              onClick={() => setActivePage(page)}
+              onClick={() => { setActivePage(page); closeSidebar() }}
             >
               {page}
             </button>
           ))}
         </nav>
+        <div className="sidebar-footer">
+          <span>{session.user_id} · {session.role}</span>
+          <button onClick={logout} className="logout-btn">Abmelden</button>
+        </div>
       </aside>
-
-      <main className="main-content">{renderPage()}</main>
+      <main className="main-content">
+        {!sidebarOpen && (
+          <button className="sidebar-toggle-open" onClick={() => setSidebarOpen(true)} title="Menü öffnen">☰</button>
+        )}
+        {renderPage()}
+      </main>
     </div>
   )
 }

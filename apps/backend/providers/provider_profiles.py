@@ -198,6 +198,10 @@ def check_provider_policy(
          RedactionEngineV2: erkennt die Klassifikation PERSONAL/HR/FINANCIAL/
          SPECIAL_CATEGORY/... in den uebergebenen data_classes, greift Punkt 2
          ohnehin nicht — Haertung 2).
+
+    Ersetzt eine fruehere, unabhaengig auf main entstandene, einfachere
+    AVV-Pruefung (nur PERSONAL_DATA/CONFIDENTIAL/FINANCIAL/HR/LEGAL, ohne
+    Testmodus-Konzept) — Betreiber-Entscheidung M1, Merge-Auftrag Stufe 1×main.
     """
     profile = _PROFILES.get(provider_id)
     if profile is None:

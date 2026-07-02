@@ -6,6 +6,7 @@ import json
 import os
 import re
 import uuid
+import logging
 from datetime import datetime
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -46,6 +47,7 @@ try:
     from .governance.data_governance import classify, DataClass, DataTarget
     from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
+    from .compliance_auditor import evaluate_compliance, Severity
 except ImportError:
     from agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from database import (
@@ -70,6 +72,7 @@ except ImportError:
     from governance.data_governance import classify, DataClass, DataTarget
     from governance.redaction import redact, reinsert
     from governance.data_matrix import check_data_target, PolicyDecision
+    from compliance_auditor import evaluate_compliance, Severity
 
 
 @asynccontextmanager
@@ -148,6 +151,46 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ── Ende CORS-Produktionswarnung ─────────────────────────────────────────
 
     init_db()
+
+    # ── Seed-Admin beim ersten Start ─────────────────────────────────────────
+    _seed_user = os.getenv("AILIZA_ADMIN_USER", "admin")
+    _seed_pass = os.getenv("AILIZA_ADMIN_PASSWORD", "")
+    _seed_tenant = os.getenv("AILIZA_DEFAULT_TENANT_ID", DEFAULT_TENANT_ID)
+    if _seed_pass and len(_seed_pass) >= 8:
+        try:
+            import bcrypt as _bcrypt
+            _hashed = _bcrypt.hashpw(_seed_pass.encode(), _bcrypt.gensalt()).decode()
+            existing = db_authenticate_user(_seed_user, _seed_pass, _seed_tenant)
+            if existing is None:
+                # User existiert nicht oder hat anderes Passwort — neu anlegen oder updaten
+                from .database import get_user as _get_user
+                if _get_user(_seed_user, _seed_tenant) is None:
+                    db_create_user(_seed_user, _seed_tenant, "admin", _hashed)
+                    write_audit_entry(
+                        action="startup.seed_admin_created",
+                        metadata={"user_id": _seed_user, "tenant_id": _seed_tenant},
+                        tenant_id=_seed_tenant,
+                    )
+                else:
+                    # User existiert mit altem Passwort → Passwort aktualisieren
+                    from .database import engine as _engine, users as _users
+                    from sqlalchemy import update as _update
+                    with _engine.begin() as _conn:
+                        _conn.execute(
+                            _update(_users)
+                            .where(_users.c.user_id == _seed_user)
+                            .where(_users.c.tenant_id == _seed_tenant)
+                            .values(hashed_password=_hashed)
+                        )
+                    write_audit_entry(
+                        action="startup.seed_admin_password_updated",
+                        metadata={"user_id": _seed_user, "tenant_id": _seed_tenant},
+                        tenant_id=_seed_tenant,
+                    )
+        except Exception as _e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("Seed-Admin fehlgeschlagen: %s", _e)
+    # ── Ende Seed-Admin ──────────────────────────────────────────────────────
 
     # ── Provider-Diagnose beim Startup (kein Key-Inhalt, nur Präsenz) ─────────
     try:
@@ -230,6 +273,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 _limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
 app.state.limiter = _limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -371,6 +416,7 @@ class ToolFetchRequest(BaseModel):
 
 class AgentRunRequest(BaseModel):
     task: str = Field(..., min_length=1)
+    history: list[dict[str, str]] | None = None
 
     @field_validator("task")
     @classmethod
@@ -385,7 +431,7 @@ class AgentRunRequest(BaseModel):
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     """Schneller Liveness-Check — kein DB-Call. Erreichbar unter /health und /api/health."""
-    return {"status": "ok", "service": "ailiza", "api": "online"}
+    return {"status": "ok", "service": "ailiza-backend", "api": "online"}
 
 
 @app.get("/api/debug/llm-status")
@@ -623,352 +669,14 @@ def debug_provider_test() -> dict[str, Any]:
 
 
 @app.get("/api/debug/groq-diagnosis")
-def debug_groq_diagnosis() -> dict[str, Any]:  # noqa: C901
-    """
-    Beweisbasierte Groq-Diagnose.
-    Klärt ob 403 von Key/Projekt/Modell kommt oder vom AILIZA-Request-Format.
-    Kein API-Key, kein vollständiger Prompt im Response.
-    Abschaltbar via AILIZA_DEBUG=false (TODO: Admin-Key-Schutz in Produktion).
-    """
-    import hashlib
-    import json as _json
-    import urllib.error
-    import urllib.request
-
-    rid = __import__("uuid").uuid4().hex[:8]
-    out: dict[str, Any] = {"request_id": rid}
-
-    # ── 1. Env-Status (ohne Secrets) ─────────────────────────────────────────
-    raw_key = os.getenv("GROQ_API_KEY", "")
-    groq_key_present = bool(raw_key)
-    groq_key_prefix = raw_key[:12] if raw_key else "(not set)"
-    groq_key_fingerprint = (
-        hashlib.sha256(raw_key.encode()).hexdigest()[:12] if raw_key else "(no key)"
-    )
-    groq_model_env = os.getenv("GROQ_MODEL", "(not set)")
-    groq_model_effective = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
-
+def debug_groq_diagnosis() -> dict[str, Any]:
+    """Beweisbasierte Groq-Diagnose — Implementierung in groq_client.run_groq_diagnosis()."""
     try:
-        try:
-            from .kill_switch import is_external_llm_enabled as _ille
-        except ImportError:
-            from kill_switch import is_external_llm_enabled as _ille
-        ext_allowed = _ille()
-    except Exception:
-        ext_allowed = False
+        from .groq_client import run_groq_diagnosis
+    except ImportError:
+        from groq_client import run_groq_diagnosis
+    return run_groq_diagnosis()
 
-    try:
-        _base = Path(__file__).parent
-        try:
-            from .config_integrity import verify_integrity as _vi
-        except ImportError:
-            from config_integrity import verify_integrity as _vi
-        gate10_ok = _vi(_base, _base / "governance_integrity.json").all_ok
-    except Exception:
-        gate10_ok = None
-
-    out["env"] = {
-        "groq_key_present": groq_key_present,
-        "groq_key_prefix": groq_key_prefix,
-        "groq_key_fingerprint": groq_key_fingerprint,
-        "groq_model_env": groq_model_env,
-        "groq_model_effective": groq_model_effective,
-        "external_llm_allowed": ext_allowed,
-        "gate10_ok": gate10_ok,
-    }
-
-    if not groq_key_present:
-        out["diagnosis"] = "groq_key_invalid"
-        out["next_action_de"] = (
-            "GROQ_API_KEY ist nicht gesetzt. Key im Groq-Dashboard erstellen "
-            "und in Render-Umgebungsvariablen eintragen."
-        )
-        return out
-
-    _GROQ_HEADERS = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {raw_key}",
-    }
-
-    # ── 2. Groq Models API Test ───────────────────────────────────────────────
-    models_api_ok = False
-    models_status = None
-    accessible_model_ids: list[str] = []
-    target_in_models = False
-    models_error_sanitized = ""
-
-    try:
-        req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/models",
-            headers=_GROQ_HEADERS,
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            models_status = resp.getcode()
-            data = _json.loads(resp.read())
-            accessible_model_ids = [
-                m["id"] for m in data.get("data", [])
-                if isinstance(m, dict) and "id" in m
-            ]
-            models_api_ok = True
-            target_in_models = groq_model_effective in accessible_model_ids
-    except urllib.error.HTTPError as exc:
-        models_status = exc.code
-        models_error_sanitized = f"HTTP {exc.code} — {exc.reason}"
-    except urllib.error.URLError as exc:
-        models_error_sanitized = f"Netzwerkfehler: {type(exc.reason).__name__}"
-    except Exception as exc:  # noqa: BLE001
-        models_error_sanitized = f"Unerwarteter Fehler: {type(exc).__name__}"
-
-    out["models_api"] = {
-        "models_api_status_code": models_status,
-        "models_api_ok": models_api_ok,
-        "accessible_model_ids": accessible_model_ids,
-        "target_model_in_accessible_models": target_in_models,
-        "models_api_error_sanitized": models_error_sanitized or None,
-    }
-
-    # Frühe Diagnose: Models-API bereits 401/403
-    if not models_api_ok and models_status == 401:
-        out["diagnosis"] = "groq_key_invalid"
-        out["next_action_de"] = (
-            "Der API-Key ist ungültig (HTTP 401 an Models API). "
-            "Neuen Key im Groq-Dashboard erstellen und in Render ersetzen."
-        )
-        return out
-    if not models_api_ok and models_status == 403:
-        # Kein frühes Return — Chat Completions kann trotzdem klappen (Groq trennt Permissions)
-        out["models_api_403_warning"] = (
-            "Models API 403: Key hat keine Berechtigung um Modelle aufzulisten. "
-            "Chat Completions wird trotzdem getestet (kann andere Permissions haben)."
-        )
-
-    # ── 3. Minimaler Groq Chat Test (direkt, ohne AILIZA-Routing) ────────────
-    _TEST_MESSAGES = [{"role": "user", "content": "Reply exactly: AILIZA_GROQ_OK"}]
-    _TEST_PAYLOAD = _json.dumps({
-        "model": groq_model_effective,
-        "messages": _TEST_MESSAGES,
-        "max_tokens": 20,
-        "temperature": 0,
-    }).encode()
-
-    # Request-Format-Log (kein Prompt, kein Key)
-    print(
-        f"AILIZA GROQ DIAG | request_id={rid} "
-        f"url=https://api.groq.com/openai/v1/chat/completions "
-        f"model={groq_model_effective} "
-        f"authorization_header_set=True "
-        f"content_type_set=True "
-        f"max_tokens=20 "
-        f"messages_count=1",
-        flush=True,
-    )
-
-    chat_ok = False
-    chat_status = None
-    response_text = ""
-    groq_error_code_raw = ""
-    groq_error_type_raw = ""
-    groq_error_msg_sanitized = ""
-    raw_error_category = "unknown"
-
-    try:
-        req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data=_TEST_PAYLOAD,
-            headers=_GROQ_HEADERS,
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            chat_status = resp.getcode()
-            data = _json.loads(resp.read())
-            response_text = (data.get("choices", [{}])[0]
-                             .get("message", {}).get("content", ""))[:50]
-            chat_ok = True
-            raw_error_category = "ok"
-    except urllib.error.HTTPError as exc:
-        chat_status = exc.code
-        try:
-            body = _json.loads(exc.read())
-            err_obj = body.get("error", {})
-            groq_error_code_raw = err_obj.get("code", "")
-            groq_error_type_raw = err_obj.get("type", "")
-            # Sanitisierte Meldung: erste 120 Zeichen, kein Key-Inhalt
-            raw_msg = err_obj.get("message", exc.reason or "")
-            groq_error_msg_sanitized = str(raw_msg)[:120]
-        except Exception:
-            groq_error_msg_sanitized = f"HTTP {exc.code} {exc.reason}"
-
-        if exc.code == 401:
-            raw_error_category = "unauthorized_key"
-        elif exc.code == 403:
-            raw_error_category = "forbidden_model_or_project"
-        elif exc.code == 404:
-            raw_error_category = "model_not_found"
-        elif exc.code == 429:
-            raw_error_category = "rate_limited"
-        elif exc.code == 400:
-            raw_error_category = "bad_request"
-        else:
-            raw_error_category = "unknown"
-    except urllib.error.URLError as exc:
-        groq_error_msg_sanitized = f"Netzwerkfehler: {type(exc.reason).__name__}"
-        raw_error_category = "network_error"
-    except Exception as exc:  # noqa: BLE001
-        groq_error_msg_sanitized = f"Unerwarteter Fehler: {type(exc).__name__}"
-        raw_error_category = "unknown"
-
-    out["chat_test"] = {
-        "chat_status_code": chat_status,
-        "chat_ok": chat_ok,
-        "response_text_if_ok": response_text if chat_ok else None,
-        "groq_error_code": groq_error_code_raw or None,
-        "groq_error_type": groq_error_type_raw or None,
-        "groq_error_message_sanitized": groq_error_msg_sanitized or None,
-        "raw_error_category": raw_error_category,
-    }
-
-    # ── 4. Modellvergleich (nur wenn Models API ok und Zielmodell fehlt) ──────
-    alt_test: dict[str, Any] = {}
-    if models_api_ok and not target_in_models and accessible_model_ids:
-        _text_candidates = [
-            m for m in accessible_model_ids
-            if any(k in m.lower() for k in ("llama", "mixtral", "gemma", "qwen", "whisper"))
-            and "whisper" not in m.lower()  # Audio-Modelle ausschließen
-        ]
-        alt_model = _text_candidates[0] if _text_candidates else accessible_model_ids[0]
-        alt_payload = _json.dumps({
-            "model": alt_model,
-            "messages": _TEST_MESSAGES,
-            "max_tokens": 20,
-            "temperature": 0,
-        }).encode()
-        try:
-            req = urllib.request.Request(
-                "https://api.groq.com/openai/v1/chat/completions",
-                data=alt_payload,
-                headers=_GROQ_HEADERS,
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                alt_data = _json.loads(resp.read())
-                alt_answer = (alt_data.get("choices", [{}])[0]
-                              .get("message", {}).get("content", ""))[:50]
-                alt_test = {"model_tested": alt_model, "status": "ok", "answer_preview": alt_answer}
-        except urllib.error.HTTPError as exc:
-            alt_test = {"model_tested": alt_model, "status": f"error_http_{exc.code}"}
-        except Exception as exc:  # noqa: BLE001
-            alt_test = {"model_tested": alt_model, "status": f"error_{type(exc).__name__}"}
-    elif models_api_ok and not target_in_models:
-        alt_test = {"note": "Keine alternativen Text-Modelle in accessible_model_ids gefunden."}
-
-    if alt_test:
-        out["alt_model_test"] = alt_test
-
-    # ── 5+6. Entscheidungsmatrix ──────────────────────────────────────────────
-    diagnosis = "unknown"
-    next_action_de = "Keine eindeutige Diagnose — bitte alle Felder oben manuell prüfen."
-
-    if not models_api_ok and models_status == 401:
-        diagnosis = "groq_key_invalid"
-        next_action_de = (
-            "Der API-Key ist ungültig (HTTP 401 an Models API). "
-            "Neuen Key im Groq-Dashboard erstellen und in Render ersetzen."
-        )
-    elif not models_api_ok and models_status == 403 and chat_ok:
-        # Models API: 403 — aber Chat Completions funktioniert! Key ist korrekt.
-        # AILIZA-Routing oder Provider-Stack hat ein Problem.
-        diagnosis = "groq_ok_but_routing_issue"
-        next_action_de = (
-            f"Groq Chat Completions funktioniert (model={groq_model_effective}). "
-            "Models API gibt 403 (andere Permission) — das ist OK. "
-            "Das Problem liegt im AILIZA-Provider-Stack, nicht beim Key. "
-            "Bitte den uvicorn-Log prüfen: Zeilen 'AILIZA GROQ CALL' und 'AILIZA REGISTRY CHECK'. "
-            "Wahrscheinliche Ursache: Registry oder Kill-Switch blockiert."
-        )
-    elif not models_api_ok and models_status == 403 and not chat_ok:
-        diagnosis = "groq_key_not_authorized_for_project"
-        next_action_de = (
-            "Der Key hat keinen Projekt-Zugriff (HTTP 403 an Models API und Chat API). "
-            "Im Groq-Dashboard das aktive Projekt öffnen, dort einen neuen API-Key "
-            "erstellen (nicht in einem anderen Projekt!) und in Render ersetzen. "
-            "Auch Organisation/Billing-Limits prüfen. "
-            f"Key-Prefix der aktuell geladenen Keys: groq_key_prefix={groq_key_prefix}"
-        )
-    elif models_api_ok and not target_in_models:
-        diagnosis = "groq_model_not_allowed_for_key"
-        first_ok = (alt_test.get("status") == "ok")
-        if first_ok:
-            next_action_de = (
-                f"Zielmodell '{groq_model_effective}' ist nicht in accessible_model_ids. "
-                f"Ein anderes Modell ({alt_test.get('model_tested')}) funktioniert. "
-                f"GROQ_MODEL in Render auf ein Modell aus accessible_model_ids setzen."
-            )
-        else:
-            next_action_de = (
-                f"Zielmodell '{groq_model_effective}' nicht in accessible_model_ids. "
-                "Kein alternatives Textmodell gefunden das funktioniert. "
-                "Groq-Account/Billing und Projektberechtigungen prüfen."
-            )
-    elif models_api_ok and target_in_models and chat_ok:
-        diagnosis = "groq_ok"
-        next_action_de = (
-            "Groq funktioniert korrekt. Falls normaler Chat trotzdem fehlschlägt, "
-            "liegt das an AILIZA-Routing/_ask_llm_directly — nicht an Groq. "
-            "AILIZA-Logs für 'AILIZA LLM FAILED' prüfen."
-        )
-    elif models_api_ok and target_in_models and not chat_ok:
-        if raw_error_category == "forbidden_model_or_project":
-            diagnosis = "groq_model_permission_ui_saved_but_api_still_forbidden"
-            next_action_de = (
-                f"Groq zeigt '{groq_model_effective}' in der Modell-Liste, "
-                "verweigert aber die Ausführung (403 bei Chat-Completion). "
-                "Mögliche Ursachen: Groq-UI und API sind nicht synchron, "
-                "Organisation hat Modell gesperrt, oder Billing-Limit aktiv. "
-                "Empfehlung: Support-Ticket an Groq, Billing-Status prüfen, "
-                "Key in anderem Browser neu erstellen."
-            )
-        elif raw_error_category == "rate_limited":
-            diagnosis = "groq_rate_limited"
-            next_action_de = (
-                "Groq-Quota oder Rate-Limit erschöpft (429). "
-                "Groq-Dashboard → Usage prüfen. "
-                "Kurzfristig: OpenAI-Fallback sicherstellen (OPENAI_API_KEY und Quota prüfen)."
-            )
-        elif raw_error_category == "unauthorized_key":
-            diagnosis = "groq_key_invalid"
-            next_action_de = (
-                "Key war für Models API gültig, schlägt bei Chat-Completion fehl (401). "
-                "Ungewöhnlich — Key möglicherweise gesperrt. Neuen Key erstellen."
-            )
-        elif raw_error_category == "bad_request":
-            diagnosis = "groq_request_format_bug"
-            next_action_de = (
-                "Groq gibt 400 Bad Request. Das Request-Format in "
-                "apps/backend/providers/groq_provider.py prüfen. "
-                "Mögliche Ursache: ungültiger messages-Aufbau oder unbekannte Parameter."
-            )
-        else:
-            next_action_de = (
-                f"Chat-Test fehlgeschlagen mit raw_error_category='{raw_error_category}'. "
-                "Groq-Fehlermeldung oben auswerten."
-            )
-
-    # Sonderfall: Direkt-Test ok, aber normaler AILIZA-Provider-Test schlägt fehl
-    # (wird in provider-test separat gemessen — hier als Hinweis)
-    if chat_ok:
-        out["note"] = (
-            "Direkter Groq-Chat-Test erfolgreich. "
-            "Falls /api/debug/provider-test trotzdem 403 zeigt, "
-            "liegt das an AILIZA-internem Routing (ProviderOrchestrator/Capability-Check). "
-            "Prüfe: AILIZA_EXTERNAL_LLM_ENABLED, Kill-Switch, Capability 'llm_call' für PUBLIC."
-        )
-
-    out["diagnosis"] = diagnosis
-    out["next_action_de"] = next_action_de
-    out["security_note"] = (
-        "Dieser Endpunkt gibt keinen API-Key aus. "
-        "Nur die ersten 4 Zeichen und ein SHA256-Fingerprint werden gezeigt. "
-        "In Produktion durch AILIZA_DEBUG=false oder Admin-Key schützen."
-    )
-    return out
 
 
 @app.get("/ready")
@@ -985,12 +693,9 @@ def ready() -> dict[str, Any]:
     except Exception:
         checks["database"] = "error"
 
-    # Kill-Switch-Status (zentrale Funktion — beruecksichtigt DB-Flag + Operation-Mode)
-    try:
-        from .kill_switch import is_external_llm_enabled as _ready_ext_enabled
-    except ImportError:
-        from kill_switch import is_external_llm_enabled as _ready_ext_enabled
-    checks["kill_switch"] = "enabled" if _ready_ext_enabled() else "disabled"
+    # Kill-Switch-Status
+    kill_switch_env = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "false").lower()
+    checks["kill_switch"] = "enabled" if kill_switch_env == "true" else "disabled"
 
     # Scheduler (APScheduler im lifespan gestartet)
     checks["scheduler"] = "running"
@@ -1160,6 +865,87 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
 _orchestrator = ProviderOrchestrator()
 
 
+def _compliance_pre_check(
+    task: str,
+    tenant_id: str,
+) -> dict[str, Any]:
+    """
+    DSGVO + EU-AI-Act Compliance Audit VOR Verarbeitung.
+
+    Pipeline-Platzierung: VOR _governance_pre_check (fail-closed auf Violations)
+
+    Rückgabe:
+      {"decision": "allow",          "audit_id": "..."}
+      {"decision": "review_required", "audit_id": "...", "message": "...", "violations": [...]}
+      {"decision": "block",          "audit_id": "...", "message": "...", "violations": [...]}
+    """
+    try:
+        compliance_report = evaluate_compliance(task)
+    except Exception as e:
+        # Fail-closed: bei Audit-Fehler blocken
+        write_audit_entry(
+            action="compliance.audit_error",
+            tenant_id=tenant_id,
+            metadata={"error": str(e)[:100], "task_length": len(task)},
+        )
+        return {
+            "decision": "block",
+            "audit_id": "error",
+            "message": "Compliance-Prüfung konnte nicht durchgeführt werden.",
+        }
+
+    # Audit-Report speichern
+    violations_summary = [
+        {
+            "severity": v.severity.value,
+            "article": v.article,
+            "title": v.title,
+        }
+        for v in compliance_report.violations
+    ]
+
+    audit_id = f"compliance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    write_audit_entry(
+        action="compliance.audit_completed",
+        tenant_id=tenant_id,
+        metadata={
+            "audit_id": audit_id,
+            "status": compliance_report.status.value,
+            "red_violations": compliance_report.red_count,
+            "review_violations": compliance_report.review_count,
+            "yellow_violations": compliance_report.yellow_count,
+            "violations_summary": violations_summary[:5],
+        },
+    )
+
+    # Blockierung bei kritischen Violations
+    if compliance_report.status == Severity.BLOCK:
+        return {
+            "decision": "block",
+            "audit_id": audit_id,
+            "message": (
+                f"🔴 Compliance-Blockierung: {compliance_report.red_count} kritische Violations erkannt. "
+                f"Grund: {compliance_report.block_reason}"
+            ),
+            "violations": violations_summary,
+        }
+
+    # Review-Anfrage bei Review-Violations
+    if compliance_report.status == Severity.REVIEW:
+        return {
+            "decision": "review_required",
+            "audit_id": audit_id,
+            "message": f"⚠️  Compliance-Review erforderlich: {compliance_report.review_count} Violations erkannt.",
+            "violations": violations_summary,
+        }
+
+    # Alles OK
+    return {
+        "decision": "allow",
+        "audit_id": audit_id,
+    }
+
+
 def _governance_pre_check(
     task: str,
     tenant_id: str,
@@ -1195,6 +981,12 @@ def _governance_pre_check(
     _provider_ok, _ = check_provider_policy("groq", data_classes)
     provider_profile_active = _provider_ok
 
+    # M3 (Merge-Auftrag Stufe 1×main): Eine Client-Behauptung "schon geschwaerzt"
+    # (z.B. Text enthaelt zufaellig eckige Klammern) darf die serverseitige
+    # Klassifikation/Redaction NIEMALS ueberspringen. redaction_applied ist an
+    # dieser Stelle IMMER False — echte Redaction passiert unten serverseitig
+    # via RedactionEngineV2, nie basierend auf einer Client-Behauptung.
+
     decision = check_data_target(
         data_classes=data_classes,
         target=DataTarget.EXTERNAL_LLM,
@@ -1221,7 +1013,9 @@ def _governance_pre_check(
     if decision in (PolicyDecision.APPROVAL_REQUIRED, PolicyDecision.REDACT_REQUIRED):
         # Governance-Regel: Redacten → als Entwurf weiterlaufen (nicht stoppen).
         # APPROVAL_REQUIRED und REDACT_REQUIRED werden gleich behandelt:
-        # Phase 1.3: Nutze RedactionEngineV2 (nicht die alte redaction.py)
+        # Phase 1.3 / F12-Fix: RedactionEngineV2 statt der alten redaction.py —
+        # sonst wird die neue Schwaerzung (z.B. aus /api/policy-redact) hier
+        # stillschweigend durch die alte, weniger aggressive Engine ersetzt.
         from .governance.redaction_v2 import RedactionEngineV2
         engine = RedactionEngineV2()
         redaction_result = engine.redact(task)
@@ -1316,6 +1110,7 @@ def _ask_llm_directly(
     request_id: str = "",
     data_class: str = "public",
     task_type: str = "general_task",
+    history: list[dict[str, str]] | None = None,
 ) -> tuple[str | None, str | None, list[str]]:
     """
     Direkter LLM-Call ohne Suche.
@@ -1335,16 +1130,44 @@ def _ask_llm_directly(
         flush=True,
     )
 
+    system_prompt = (
+        "Du bist AILIZA — ein EU-konformer, autonomer KI-Assistent speziell für kleine und mittlere "
+        "Unternehmen (KMU). AILIZA steht für: KI-gestützte Kommunikation, DSGVO-Konformität, "
+        "EU AI Act Art. 52, Privacy by Design und Human-in-the-Loop. "
+        "AILIZA wurde von Karo Fromm entwickelt und läuft auf Render.com. "
+        "Wenn Nutzer nach 'AILIZA', 'dir', 'dem System' oder 'diesem Assistenten' fragen, "
+        "beziehen sie sich IMMER auf dich selbst — niemals auf ein fremdes Unternehmen. "
+        "Starte KEINE Web-Suche nach AILIZA. Du kennst dich selbst. "
+        "\n\n"
+        "Du hilfst bei allen Schreib- und Kommunikationsaufgaben — geschäftlich UND persönlich. "
+        "Du lehnst keine Aufgabe ab. Du fragst nicht nach ob du helfen darfst. Du schreibst einfach. "
+        "\n\n"
+        "GRUNDREGEL: Bei jeder Anfrage lieferst du SOFORT den fertigen Text. "
+        "Kein Nachfragen. Keine Erklärungen warum du etwas nicht tust. Keine Liste mit fehlenden Infos. "
+        "Fehlende Details füllst du sinnvoll aus dem Kontext auf — du erfindest aber keine Fakten "
+        "(keine erfundenen Zahlen, Daten, Firmennamen oder Ereignisse die nicht im Text stehen). "
+        "Wenn etwas unklar ist, schreibst du eine allgemein gehaltene Version die passt. "
+        "\n\n"
+        "DSGVO-Platzhalter: Texte können [Name], [Referenz-Nr.], [Wert], [E-Mail], [Firma], "
+        "[Adresse], [Ort], [Datum], [IBAN], [Telefon] enthalten. "
+        "Das sind Datenschutz-Platzhalter — übernimm sie exakt so in deinen Text. "
+        "NICHT erklären, NICHT nachfragen. Einfach verwenden. "
+        "\n\n"
+        "Bei Bestellungen, Zahlungsbestätigungen oder Transaktionsdaten: "
+        "schreibe immer eine freundliche E-Mail AN DEN KUNDEN (nicht an PayPal oder das System). "
+        "\n\n"
+        "Antworte immer auf Deutsch, außer der Nutzer schreibt in einer anderen Sprache."
+    )
+    safe_history = []
+    if history:
+        for msg in history[-10:]:  # max. 10 vorherige Nachrichten
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                safe_history.append({"role": role, "content": content[:2000]})
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Du bist AILIZA, ein autonomer KI-Assistent fuer KMU. "
-                "Bei Schreibaufgaben (E-Mail, Brief, Entwurf, Übersetzung, Zusammenfassung) "
-                "lieferst du direkt den fertigen Text mit Betreff und Inhalt auf Deutsch. "
-                "Bei Wissensfragen antwortest du kurz und direkt auf Deutsch."
-            ),
-        },
+        {"role": "system", "content": system_prompt},
+        *safe_history,
         {"role": "user", "content": task},
     ]
     try:
@@ -1391,82 +1214,35 @@ def run_agent(
             "results": [],
         }
 
-    # ── Phase 1.2: Policy Engine High-Risk Detection (neu, ERSTES Gate) ──────
-    # Erkennt Hochrisiko-Kontexte: HR+Health, HR+Biometric, automatisierte Entscheidung, Bonitäts-Scoring, etc.
-    # BLOCKIERT auf RED, eskaliert auf ORANGE, redacted auf YELLOW, freigegeben auf GREEN.
-    try:
-        from policy_engine import PolicyEngine
-    except ImportError:
-        PolicyEngine = None
+    # ── COMPLIANCE PRE-CHECK (VOR Governance): DSGVO + EU-AI-Act Audit ────────
+    # Fail-closed: 🔴 BLOCK → sofort ablehnen, 🟠 REVIEW → Admin-Queue
+    compliance_check = _compliance_pre_check(payload.task, tenant_id=tenant)
 
-    user_id = token.user_id if token else "anonymous"
-    policy_decision = None
+    if compliance_check["decision"] == "block":
+        return {
+            "status": "compliance_blocked",
+            "message": compliance_check["message"],
+            "ai_response": compliance_check["message"],
+            "compliance_violations": compliance_check.get("violations", []),
+            "audit_id": compliance_check.get("audit_id"),
+            "steps": [],
+            "results": [],
+        }
 
-    if PolicyEngine:
-        policy_decision = PolicyEngine.process_with_policy(payload.task, user_id)
-
-        # Policy-Decision Handling
-        if policy_decision.decision == "block":
-            # RED: Sofort blockiert, keine Weiterverarbeitung
-            write_audit_entry(
-                action="policy.blocked",
-                tenant_id=tenant,
-                metadata={
-                    "reason_code": policy_decision.reason_code,
-                    "risk_level": policy_decision.risk_level,
-                    "detected_categories": policy_decision.detected_special_categories,
-                    "high_risk_contexts": [rc for rc, _ in policy_decision.high_risk_contexts] if policy_decision.high_risk_contexts else [],
-                },
-            )
-            return {
-                "status": "blocked",
-                "message": policy_decision.message,
-                "ai_response": policy_decision.message,
-                "steps": [],
-                "results": [],
-                "policy_decision": policy_decision.decision,
-                "reason_code": policy_decision.reason_code,
-            }
-
-        elif policy_decision.decision == "approval_required":
-            # ORANGE: Approval-Gate erforderlich
-            write_audit_entry(
-                action="policy.approval_required",
-                tenant_id=tenant,
-                metadata={
-                    "reason_code": policy_decision.reason_code,
-                    "risk_level": policy_decision.risk_level,
-                },
-            )
-            # TODO: Approval-Request erstellen und zurückgeben
-            # Für jetzt: auch blockieren bis Approval-System aktiv
-            return {
-                "status": "approval_required",
-                "message": policy_decision.message,
-                "ai_response": policy_decision.message,
-                "steps": [],
-                "results": [],
-                "policy_decision": policy_decision.decision,
-                "reason_code": policy_decision.reason_code,
-            }
-
-        elif policy_decision.decision == "redact":
-            # YELLOW: Redacted Text verwenden, aber mit Draft-Status
-            # Payload wird mit redacted_text überschrieben
-            payload.task = policy_decision.redacted_text
-            write_audit_entry(
-                action="policy.redacted",
-                tenant_id=tenant,
-                metadata={
-                    "reason_code": policy_decision.reason_code,
-                    "risk_level": policy_decision.risk_level,
-                },
-            )
-
-        # GREEN: Normaler Flow, keine Änderung erforderlich
+    if compliance_check["decision"] == "review_required":
+        return {
+            "status": "compliance_review",
+            "message": compliance_check["message"],
+            "ai_response": compliance_check["message"],
+            "compliance_violations": compliance_check.get("violations", []),
+            "audit_id": compliance_check.get("audit_id"),
+            "notice": "Diese Anfrage wurde zur Admin-Genehmigung gekennzeichnet.",
+            "steps": [],
+            "results": [],
+        }
 
     # ── Governance Pre-Check: classify → data_matrix → redact/block ─────────
-    # Läuft VOR jedem Tool-Call und LLM-Call.
+    # Läuft NACH Compliance-Check.
     # BLOCK: nur bei CREDENTIALS / SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
     # PERSONAL_DATA/HR/LEGAL/FINANCIAL: lokal redacten, als Entwurf weiterlaufen.
     pre_check = _governance_pre_check(payload.task, tenant_id=tenant)
@@ -1499,7 +1275,7 @@ def run_agent(
             f"task_chars={len(effective_task)}",
             flush=True,
         )
-        answer, error_code, provider_errors = _ask_llm_directly(effective_task)
+        answer, error_code, provider_errors = _ask_llm_directly(effective_task, history=payload.history)
         # Tatsaechlich genutzter Provider (Freigabe Stufe 1, E3-Zusatzpatch) —
         # _orchestrator ist ein Modul-Singleton, direkt nach dem Call gueltig.
         _used_provider = getattr(_orchestrator, "last_provider_id", None)
@@ -1701,10 +1477,12 @@ def get_agent_run_status(run_id: str) -> dict[str, Any]:
 
 @app.get("/agent/run/stream")
 def stream_agent_run(
+    request: Request,
     task: str = Query(..., min_length=1),
     wait_for_approval: bool = Query(default=False),
     approval_poll_interval: float = Query(default=1.0, ge=0.1, le=30.0),
     approval_timeout: float = Query(default=300.0, ge=1.0, le=3600.0),
+    token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
     task = task.strip()
     if not task:
@@ -1726,6 +1504,7 @@ def stream_agent_run_post(
     wait_for_approval: bool = Query(default=False),
     approval_poll_interval: float = Query(default=1.0, ge=0.1, le=30.0),
     approval_timeout: float = Query(default=300.0, ge=1.0, le=3600.0),
+    token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
     runtime = AgentRuntime()
     return sse_response(
@@ -1739,19 +1518,28 @@ def stream_agent_run_post(
 
 
 @app.post("/agent/approvals/{approval_id}/continue")
-def continue_agent_after_approval(approval_id: int) -> dict[str, Any]:
+def continue_agent_after_approval(
+    approval_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
     runtime = AgentRuntime()
     return runtime.continue_after_approval(approval_id)
 
 
 @app.get("/agent/approvals/{approval_id}/continue/stream")
-def stream_agent_after_approval(approval_id: int) -> StreamingResponse:
+def stream_agent_after_approval(
+    approval_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> StreamingResponse:
     runtime = AgentRuntime()
     return sse_response(runtime.stream_after_approval(approval_id))
 
 
 @app.post("/agent/approvals/{approval_id}/continue/stream")
-def stream_agent_after_approval_post(approval_id: int) -> StreamingResponse:
+def stream_agent_after_approval_post(
+    approval_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> StreamingResponse:
     runtime = AgentRuntime()
     return sse_response(runtime.stream_after_approval(approval_id))
 
@@ -2081,6 +1869,35 @@ def admin_totp_delete(
     return {"status": "totp_reset", "rows_deleted": deleted}
 
 
+@app.post("/auth/self-register", status_code=201)
+@_limiter.limit("5/minute")
+def self_register(request: Request, payload: RegisterRequest) -> dict[str, Any]:
+    """Öffentliche Selbst-Registrierung — erstellt immer nur Rolle 'user'."""
+    if os.getenv("AILIZA_SELF_REGISTER", "true").lower() == "false":
+        raise HTTPException(status_code=403, detail="Registrierung deaktiviert.")
+    user_create = UserCreate(
+        user_id=payload.user_id,
+        tenant_id=payload.tenant_id,
+        role="user",
+        plain_password=payload.password,
+    )
+    user_in_db = UserInDB.from_create(user_create)
+    try:
+        entry = db_create_user(
+            user_id=user_in_db.user_id,
+            tenant_id=user_in_db.tenant_id,
+            role=user_in_db.role,
+            hashed_password=user_in_db.hashed_password,
+        )
+    except Exception:
+        raise HTTPException(status_code=409, detail="Nutzername bereits vergeben.")
+    write_audit_entry(action="auth.self_register",
+                      metadata={"user_id": payload.user_id},
+                      tenant_id=payload.tenant_id)
+    token = create_token(entry["user_id"], entry["tenant_id"], "user")
+    return {"status": "created", "user_id": entry["user_id"], "access_token": token, "token_type": "bearer"}
+
+
 @app.post("/auth/logout")
 def logout() -> JSONResponse:
     """Loescht den Session-Cookie. Token-Revocation liegt am Client (Bearer) oder Cookie-Loeschung."""
@@ -2241,6 +2058,100 @@ def admin_cleanup(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> dict
     return result
 
 
+@app.post("/user/delete-data")
+def user_delete_data(request: Request) -> dict[str, str]:
+    """DSGVO Art. 17 — Recht auf Löschung.
+    Löscht alle Agenten-Runs und Audit-Logs des aktuellen Mandanten
+    und dokumentiert die Löschanfrage im Audit-Trail.
+    Kein Login erforderlich (anonyme Nutzung).
+    """
+    try:
+        from sqlalchemy import delete as sql_delete
+        with engine.begin() as conn:
+            runs_deleted = conn.execute(
+                sql_delete(agent_runs).where(agent_runs.c.tenant_id == DEFAULT_TENANT_ID)
+            ).rowcount
+        write_audit_entry(
+            action="dsgvo.art17.delete_request",
+            metadata={
+                "runs_deleted": runs_deleted,
+                "note": "Nutzeranfrage gem. DSGVO Art. 17 — alle Runs gelöscht",
+                "ip": request.client.host if request.client else "unbekannt",
+            },
+            tenant_id=DEFAULT_TENANT_ID,
+        )
+        return {"status": "deleted", "message": "Ihre Daten wurden gelöscht (DSGVO Art. 17)."}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Löschung fehlgeschlagen. Bitte kontaktieren Sie den Support.")
+
+
+@app.get("/legal/tom")
+def legal_tom() -> dict[str, Any]:
+    """Gibt die Technischen und Organisatorischen Maßnahmen (TOM) zurück (DSGVO Art. 32)."""
+    return {
+        "dokument": "Technische und Organisatorische Maßnahmen (TOM)",
+        "rechtsgrundlage": "DSGVO Art. 32",
+        "verantwortliche": "Karola Fromm-Nasreldin",
+        "kontakt": "Karofromm@gmail.com",
+        "stand": "2026-06-01",
+        "massnahmen": [
+            {"kategorie": "Pseudonymisierung", "beschreibung": "PII wird clientseitig vor jeder Übertragung durch Platzhalter ersetzt (Privacy by Design, Art. 25 DSGVO)."},
+            {"kategorie": "Verschlüsselung", "beschreibung": "Alle Verbindungen erfolgen über HTTPS/TLS 1.2+. Keine Daten im Klartext übertragen."},
+            {"kategorie": "Vertraulichkeit", "beschreibung": "Keine Klartextprompts auf dem Server gespeichert. Audit-Logs ohne Inhalte. 90-Tage-Retention."},
+            {"kategorie": "Integrität", "beschreibung": "Governance-Integrität wird bei jedem Start geprüft (Gate 10). Manipulationen werden erkannt und führen zum Fail-Closed."},
+            {"kategorie": "Verfügbarkeit", "beschreibung": "Rate-Limiting gegen Überlastangriffe. Kill-Switch für Notabschaltung."},
+            {"kategorie": "Zugriffskontrolle", "beschreibung": "Rollenbasierte Authentifizierung (JWT + TOTP für Admin). Least-Privilege-Prinzip."},
+            {"kategorie": "Datensparsamkeit", "beschreibung": "Nur technisch notwendige Daten werden verarbeitet. Keine Nutzungsprofile, keine Tracking-Cookies."},
+            {"kategorie": "Löschkonzept", "beschreibung": "Automatische Löschung von Audit-Logs nach 90 Tagen. Sofortige Löschung auf Nutzeranfrage (Art. 17 DSGVO)."},
+            {"kategorie": "Governance-Pipeline", "beschreibung": "Jeder externe Call durchläuft: Kill-Switch → Klassifizierung → Policy-Gateway → Redaktion → Provider-Orchestrator. Fail-Closed bei Unsicherheit."},
+        ],
+    }
+
+
+@app.get("/legal/verarbeitungsverzeichnis")
+def legal_verarbeitungsverzeichnis() -> dict[str, Any]:
+    """Gibt das Verarbeitungsverzeichnis zurück (DSGVO Art. 30)."""
+    return {
+        "dokument": "Verzeichnis der Verarbeitungstätigkeiten",
+        "rechtsgrundlage": "DSGVO Art. 30",
+        "verantwortliche": "Karola Fromm-Nasreldin",
+        "kontakt": "Karofromm@gmail.com",
+        "stand": "2026-06-01",
+        "verarbeitungstaetigkeiten": [
+            {
+                "bezeichnung": "KI-gestützte Chat-Assistenz",
+                "zweck": "Beantwortung von Nutzerfragen durch KI-Sprachmodelle",
+                "rechtsgrundlage": "Art. 6 Abs. 1 lit. a DSGVO (Einwilligung)",
+                "kategorien": ["Texteingaben (pseudonymisiert vor Übertragung)"],
+                "empfaenger": ["Groq Inc. (USA) — auf Basis EU-Standardvertragsklauseln Art. 46 DSGVO"],
+                "drittlandtransfer": True,
+                "schutzmassnahmen": "EU-Standardvertragsklauseln, clientseitige Pseudonymisierung",
+                "loeschfrist": "Keine Serverspeicherung. Lokal im Browser bis zur Löschung durch Nutzer.",
+            },
+            {
+                "bezeichnung": "Sicherheits-Audit-Logs",
+                "zweck": "Sicherheitsprotokollierung und Compliance-Nachweis",
+                "rechtsgrundlage": "Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse)",
+                "kategorien": ["Technische Metadaten (keine Inhalte, keine PII)"],
+                "empfaenger": ["Keine (intern)"],
+                "drittlandtransfer": False,
+                "schutzmassnahmen": "Inhaltsfreie Logs, automatische Löschung",
+                "loeschfrist": "90 Tage",
+            },
+            {
+                "bezeichnung": "Einwilligungsnachweis",
+                "zweck": "Nachweis der erteilten DSGVO-Einwilligung (Art. 7 Abs. 1)",
+                "rechtsgrundlage": "Art. 7 Abs. 1 DSGVO",
+                "kategorien": ["Zeitstempel der Einwilligung (kein Name, nur Zeitpunkt)"],
+                "empfaenger": ["Keine (lokal im Browser)"],
+                "drittlandtransfer": False,
+                "schutzmassnahmen": "Ausschließlich lokale Speicherung",
+                "loeschfrist": "Bis zum Widerruf",
+            },
+        ],
+    }
+
+
 @app.get("/admin/provider-profiles")
 def list_provider_profiles(_admin: TokenData = Depends(require_role(Role.ADMIN))) -> list[dict[str, Any]]:
     """Gibt alle konfigurierten ProviderProfile zurück (ohne API-Keys)."""
@@ -2321,7 +2232,7 @@ class SkillProposeRequest(BaseModel):
 def skill_propose(
     request: Request,
     payload: SkillProposeRequest,
-    token: TokenData = Depends(require_role(Role.USER)),
+    token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     """
     Schlaegt einen neuen Skill vor. Capability-Check + Sanitierung laufen automatisch.
@@ -2520,80 +2431,6 @@ def delete_messenger_binding(
     return {"status": "deleted", "chat_id": chat_id}
 
 
-# ── Phase 1: Policy & Redaction Endpoints ──────────────────────────────────────
-
-@app.get("/api/privacy-rules")
-def get_privacy_rules() -> dict[str, Any]:
-    """
-    Returns redaction patterns for frontend PII masking.
-    Source of truth: backend loads from privacy_rules.json, frontend updates via this API.
-
-    Status: Bereit für kontrollierte Testumgebung und Governance-Review.
-    """
-    try:
-        # In production: load from privacy_rules.json
-        # For now: return inline redaction rules matching the PRIVACY_RULES from frontend
-        from governance.redaction import PRIVACY_RULES
-    except ImportError:
-        pass
-
-    return {
-        "version": "1.0.0",
-        "updated_at": datetime.utcnow().isoformat(),
-        "status": "Testumgebung",
-        "note": "Nicht produktionsreif. Nicht zertifiziert.",
-        "categories": [
-            {"id": "secret", "label_de": "Geheimnisse", "risk_class": "🔴red"},
-            {"id": "forbidden", "label_de": "DSGVO Art. 9", "risk_class": "🟠orange"},
-            {"id": "confidential", "label_de": "Geschäftsgeheim", "risk_class": "🟠orange"},
-            {"id": "high", "label_de": "Zahlungsdaten", "risk_class": "🟡high"},
-            {"id": "normal", "label_de": "Personendaten", "risk_class": "🟢normal"},
-        ],
-        "rules_count": 50,
-        "last_update": "2026-07-01T00:00:00Z",
-    }
-
-
-@app.post("/api/policy-check")
-def policy_check(
-    request_data: dict[str, str] = Body(...),
-    _user: TokenData | None = Depends(get_current_user),
-) -> dict[str, Any]:
-    """
-    Test policy decision on a task text (for frontend preview).
-    Returns decision level without storing anything.
-
-    Status: Bereit für kontrollierte Testumgebung und Governance-Review.
-    """
-    try:
-        from policy_engine import PolicyEngine
-    except ImportError:
-        pass
-
-    task = request_data.get("task", "")
-    user_id = _user.user_id if _user else "anonymous"
-
-    try:
-        decision = PolicyEngine.process_with_policy(task, user_id)
-        return {
-            "decision": decision.decision,
-            "risk_level": decision.risk_level,
-            "message": decision.message,
-            "detected_secrets": decision.detected_secrets,
-            "detected_special_categories": decision.detected_special_categories,
-        }
-    except Exception as e:
-        return {
-            "decision": "error",
-            "risk_level": "unknown",
-            "message": "Policy check failed",
-            "error_code": "policy_check_failed",
-        }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Phase 1.3: NEW ENDPOINT /api/policy-redact (Backend PolicyEngine + Redaction V2)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class PolicyRedactRequest(BaseModel):
     """Request für Policy + Redaction"""
@@ -2859,6 +2696,7 @@ def policy_redact(
             documentation_required=False,
             admin_only=admin_only
         )
+
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")

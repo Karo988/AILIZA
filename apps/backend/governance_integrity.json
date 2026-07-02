@@ -1,13 +1,13 @@
 {
   "manifest_version": "1.0",
-  "generated_at": "2026-06-27T14:34:56.696576+00:00",
+  "generated_at": "2026-07-02T12:09:59.670000+00:00",
   "governance_files": {
     "approval.py": "4c70947d5ba03db9010c093f61712ee6b8c7e715e9dceff2613c3d9bc8669016",
-    "kill_switch.py": "613945ae27588976cc274627ae5b7214951967ceabc1727b416d28c7c442ef36",
+    "kill_switch.py": "20663bc70d6b207a903a0e6449ee1eb77c669d69c247905214aedb95f321ec16",
     "sandbox.py": "97eb8cd7895f64a3fc78f1b7307835de7bdaec694eb9d12aa40c9d1bed62a82b",
     "capability_manifest.py": "04c7c3713ced0a73ac7d09e7244836336d41e7d40477b1f1393a79c91a1df545",
     "policy.py": "545ed5f952a555dd95e62c8d70ea70c5f84e3ee96a5668694fa88d69ccca6cef",
-    "governance/data_governance.py": "66eb111bf4e499c1e7ad1875ab3640932b2997b27eee954ae0292800fb29da9b",
+    "governance/data_governance.py": "753c1bb93dfd9a95b0608eff49833450525413605aa11f67460a1ac4fb016f8d",
     "governance/redaction.py": "797e4e46324167cab4e55d98f6c6907f234aae29f3113cf2d8d0d30aeb745a10",
     "documents/document_handler.py": "194e1277eb306aa92b5a3f006ea52ce44f37cbd91e1c9a2b5e0fb34c2f6ac2e7"
   }
