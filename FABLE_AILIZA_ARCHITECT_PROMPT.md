@@ -1,8 +1,8 @@
-# AILIZA — Architektur-Review + Reparaturplan (Prompt für Fable)
+# AILIZA — Architektur-Review + Reparaturplan (Prompt für externes Modell)
 
-> Status dieses Dokuments: Arbeitsauftrag für eine Analyse- und Reparatur-Session,
-> kein Freigabe-Nachweis. Ergebnisse aus dieser Session ersetzen keine juristische
-> Prüfung.
+> Status dieses Dokuments: Arbeitsauftrag für eine Analyse-Session, kein
+> Freigabe-Nachweis. Ergebnisse aus dieser Session ersetzen keine juristische Prüfung
+> und keinen Merge/Push ohne separate Freigabe.
 
 ---
 
@@ -13,83 +13,109 @@ Compliance-Prüfer.
 
 ## Ziel
 
-Prüfe AILIZA fachlich, technisch und compliance-orientiert. **AILIZA ist nicht das
-Modell selbst, sondern die Anwendungsschicht um externe Modelle herum.** AILIZA soll
-für KMU in Europa nutzbar sein und Datenminimierung, Transparenz, menschliche
-Kontrolle und nachvollziehbare Modellnutzung sicherstellen.
+Prüfe AILIZA technisch, architektonisch und compliance-orientiert. **AILIZA ist die
+Governance- und Anwendungsschicht um externe Modelle herum, nicht das Modell
+selbst.** AILIZA soll für KMU in Europa nutzbar sein und Datenminimierung,
+Transparenz, menschliche Kontrolle und nachvollziehbare Modellnutzung sicherstellen.
 
 ### Wichtige Trennung (nicht verhandelbar)
 
-- **AILIZA** = Anwendung, Policy Engine, Redaction, Audit, Human Review, UI/Workflow.
-- **Externes Modell** (Fable / Claude / Groq / etc.) = austauschbarer Modellanbieter
-  hinter einer Abstraktionsschicht.
-- Der System-Prompt des Modells darf **nicht behaupten, das Modell sei AILIZA**. Der
-  korrekte Rahmen lautet: *"Du bist das Antwortmodell innerhalb von AILIZA"* — nicht
-  *"Du bist AILIZA"*. AILIZA ist die Governance-Schicht, die vor und nach dem
-  Modellaufruf greift; das Modell ist austauschbar.
+- **AILIZA** = Redaction, Policy Engine, Audit, Human Review, UI, Tool-Governance,
+  Modellrouting.
+- **Externes Modell** = austauschbarer Anbieter, z. B. Claude/Fable/Groq/OpenAI,
+  **falls verfügbar und vertraglich zulässig**. Kein hartes Verdrahten auf ein
+  einzelnes Modell oder eine einzelne Modell-ID.
+- Kein Modellprompt darf behaupten, das externe Modell sei allein AILIZA. Korrekter
+  Rahmen: *"Du bist das Antwortmodell innerhalb von AILIZA"*, nicht *"Du bist AILIZA"*.
+
+### Hinweis zur Modellverfügbarkeit
+
+Modell-Zugänge (Modell-IDs, Verfügbarkeit einzelner Modelle wie Fable) können sich
+ändern oder zeitweise eingeschränkt werden. AILIZA darf deshalb **nicht hart auf ein
+einzelnes Modell bauen**. Die Modellanbieter-Abstraktion mit Fallback ist ein
+Kernanforderung dieses Reviews, kein optionales Extra.
 
 ---
 
-## Auftrag
+## Arbeitsmodus (verbindlich, in dieser Reihenfolge)
 
-### 1. Bestandsaufnahme (zuerst lesen, nicht ändern)
+1. Führe **zuerst nur eine Bestandsaufnahme** durch. Keine Änderungen.
+2. **Repariere nichts ohne priorisierten Plan.** Der Plan wird zuerst vorgelegt.
+3. **Ändere keinen Code, pushe nichts und merge nichts ohne explizite Freigabe** durch
+   den Menschen, der diesen Auftrag erteilt hat.
+4. Trenne durchgängig: **belegte Fakten** (mit Datei:Zeile), **Annahmen**, **Risiken**,
+   **offene Fragen**.
+
+---
+
+## Auftrag im Detail
+
+### 1. Bestandsaufnahme
 
 Lies die vorhandene Architektur, Prompts, API-Aufrufe, Redaction-Logik,
-Policy-Entscheidungen, Logging, Memory, Tool-Nutzung und Modellrouten. Erstelle eine
-Bestandsaufnahme:
+Policy-Entscheidungen, Logging, Memory, Tool-Nutzung und Modellrouten.
 
-- Welche Daten gehen wohin? (Request → Redaction → Policy → Modell → Response →
-  Reinsertion → Storage)
+- Welche Daten gehen an welches Modell oder welche API?
 - Welche personenbezogenen oder sensiblen Daten können verarbeitet werden?
 - Welche externen Anbieter werden genutzt (Modell-APIs, Suchdienste, etc.)?
 - Was wird gespeichert — wo, wie lange, geschwärzt oder im Klartext?
 - Wo gibt es menschliche Freigaben (Human Review / Approval Gates), und wo fehlen sie?
-- Wo laufen aktuell **zwei parallele Redaction-Pfade** (Altsystem vs. neues System) —
-  bekanntes Risiko: ein Pfad kann den anderen überschreiben, ohne dass es auffällt.
 
-### 2. Prüfung gegen Leitplanken
+### 2. Prüfe insbesondere
 
-**DSGVO:**
-- Datenminimierung, Zweckbindung, Rechtsgrundlage (Art. 6)
-- Art. 9-Daten (besondere Kategorien) — siehe Korrektur unten, **nicht pauschal
-  "absolut blockieren"** formulieren
-- Art. 22-Entscheidungen (automatisierte Einzelfallentscheidungen)
-- Auftragsverarbeitung (Art. 28 — DPA mit Modellanbieter vorhanden/geprüft?)
-- Löschkonzept / Speicherbegrenzung (Art. 5 Abs. 1 lit. e)
-- Transparenz- und Informationspflichten (Art. 13/14)
+- Wird **vor jedem** externen Modellaufruf dieselbe, aktuelle Redaction genutzt — oder
+  existieren mehrere Redaction-Pfade parallel, die sich gegenseitig überschreiben
+  können? (Bekanntes Beispiel aus dieser Codebasis: `_governance_pre_check()` in
+  `apps/backend/main.py` rief ursprünglich die alte `governance/redaction.py` auf und
+  überschrieb damit die Ausgabe von `governance/redaction_v2.py`
+  (`RedactionEngineV2`). Wurde in einem separaten Commit bereits behoben — bitte
+  verifizieren, dass es **keinen weiteren** solchen doppelten Pfad gibt, z. B. im
+  Frontend, zwischen `/api/policy-check` und `/api/policy-redact`, oder an anderer
+  Stelle in `/agent/run`.)
+- Gibt es einen Governance-Pre-Check vor Modellaufrufen, und greift er lückenlos?
+- Werden personenbezogene Daten, Art. 9-Daten, Secrets oder Tokens zuverlässig
+  entfernt oder blockiert — nicht nur maskiert, sondern die Datenkategorie erkennbar
+  entschärft?
+- Gibt es Human Review bei HR, Finanzen, rechtlichen, versicherungsnahen oder
+  sonst entscheidungsrelevanten Aufgaben?
+- Werden Logs, Audit-Trails und Memory datensparsam geführt (keine Klartext-PII,
+  keine Secrets)?
+- Gibt es ein Löschkonzept / eine Speicherbegrenzung?
+- Sind Anbieterrolle, DPA/AVV, Hosting-Region, Retention und Drittlandtransfer
+  geklärt oder als offene Frage markiert?
+- Ist das Modellrouting austauschbar, falls ein bestimmtes Modell (z. B. Fable) nicht
+  verfügbar oder nicht vertraglich zulässig ist?
 
-**EU AI Act:**
-- Einordnung **pro Use Case**, nicht pauschal über einen einzigen Artikel definiert.
-  Hochrisiko hängt vom konkreten Anwendungsfall ab: HR/Beschäftigung, Kreditwürdigkeit,
-  Versicherung, Bildung, Gesundheit, kritische Infrastruktur, Strafverfolgung,
-  Migration/Asyl, Rechtspflege.
-- Menschliche Aufsicht (Human Oversight, Art. 14) ist notwendig, **ersetzt aber nicht
-  automatisch alle weiteren Pflichten** (Risikomanagement, Dokumentation,
-  Transparenzpflichten Art. 52/50, Logging-Pflichten für Hochrisiko-Systeme).
+### 3. Bewerte gegen
 
-**Security:**
-- Secrets, Tokens, API-Keys in Logs/Prompts/Audit-Trails
-- Externe Datenabflüsse (welche Felder verlassen die Infrastruktur wirklich?)
-- Prompt Injection (Erkennung, Umgang, Eskalation)
-- Tool-Missbrauch (z. B. Such-Tools, die ungefilterte Anfragen weiterreichen)
-- Unsichere Defaults (fail-open statt fail-closed bei Klassifizierungsfehlern?)
+**DSGVO:** Art. 5 (Datenminimierung, Zweckbindung, Speicherbegrenzung), Art. 6
+(Rechtsgrundlage), Art. 9 (besondere Kategorien), Art. 22 (automatisierte
+Einzelfallentscheidungen), Art. 28 (Auftragsverarbeitung), Transparenzpflichten
+(Art. 13/14).
 
-### 3. Klare Kennzeichnung der Befunde
+**EU AI Act:** Use-Case-basierte Risikoeinordnung — nicht pauschal über einen
+einzigen Artikel definiert. Besonders relevant: HR/Beschäftigung, Bildung, Kredit,
+Versicherung, Gesundheit, kritische Infrastruktur, Strafverfolgung, Migration/Asyl,
+Rechtspflege. Menschliche Aufsicht ist notwendig, ersetzt aber nicht automatisch
+Risikomanagement-, Dokumentations- und Transparenzpflichten.
 
-Markiere durchgängig, woher eine Aussage kommt:
+**Security:** Secrets/Tokens in Logs/Prompts/Audit-Trails, externe Datenabflüsse,
+Prompt Injection, Tool-Missbrauch, unsichere Defaults (z. B. fail-open statt
+fail-closed bei Klassifizierungsfehlern).
 
-- **Beleg aus dem Code** (mit Datei:Zeile)
-- **Annahme** (nicht im Code verifiziert — explizit als Annahme kennzeichnen)
-- **Compliance-Risiko**
-- **Technisches Risiko**
-- **Offene Frage** (braucht menschliche/juristische Entscheidung)
+### 4. Bei Art. 9-Daten (Korrektur gegenüber einer naiven Erstfassung)
 
-### 4. Priorisierter Reparaturplan vor Umsetzung
+Nicht pauschal "absolut blockieren" formulieren. Praktisch ist ein konservativer
+Default richtig (blockieren/schwärzen), aber rechtlich existieren Ausnahmen
+(Art. 9 Abs. 2 DSGVO). Für AILIZA als KMU-Assistent gilt: **Default = blockieren/
+schwärzen; Verarbeitung nur nach expliziter Policy-Freigabe in stark minimierter
+Form, nachvollziehbar dokumentiert.**
 
-**Nicht blind reparieren.** Erst einen priorisierten Plan vorschlagen (Kritisch /
-Hoch / Mittel / Niedrig), mit Begründung, bevor Code geändert wird.
+---
 
-### 5. Wenn Code geändert wird
+## Wenn Code geändert werden soll
+
+Nur nach Freigabe (siehe Arbeitsmodus, Punkt 3), und dann:
 
 - Nur kleine, nachvollziehbare Patches.
 - Keine unnötigen Refactorings.
@@ -97,52 +123,31 @@ Hoch / Mittel / Niedrig), mit Begründung, bevor Code geändert wird.
 - Keine Speicherung ungeschwärzter personenbezogener Daten.
 - Keine Secrets in Logs, Prompts oder Audit-Trails.
 - Jede Änderung muss einem konkreten Punkt aus dem Reparaturplan zuordenbar sein.
+- Kein Push, kein Merge durch das Modell selbst — das bleibt beim Menschen.
 
-### 6. Mindestens bauen/verbessern
+### Mindestens bauen/verbessern (sobald Freigabe erteilt ist)
 
-- Redaction **vor** jedem Modellaufruf (ein einziger, konsistenter Pfad — kein
-  Altsystem parallel, das die neue Schwärzung überschreibt)
-- Policy Engine vor Modellaufruf
-- Human Review bei riskanten Entscheidungen (use-case-abhängig, nicht nur bei Art. 22)
-- Transparenzhinweis bei externer KI-Nutzung (Nutzer sieht: "Antwort wurde von
-  [Anbieter] als Modell hinter AILIZA erzeugt")
-- Auditierbare, aber datensparsame Protokollierung (keine Klartext-PII im Log)
-- Modellanbieter-Abstraktion (Modell austauschbar, ohne dass Governance-Schicht
-  angefasst werden muss)
-- Tests für: Redaction, Blocking, Human Review, sichere Modellaufrufe,
-  Art. 9-Handling, Konsistenz zwischen allen Redaction-Pfaden
-
----
-
-## Korrekturen gegenüber einer naiven Erstfassung
-
-1. **AILIZA/Modell sauber trennen.** Modellprompt: *"Du bist das Antwortmodell
-   innerhalb von AILIZA"*, nicht *"Du bist AILIZA"*.
-
-2. **Art. 9 nicht pauschal "absolut blockieren".** Praktisch ist ein konservativer
-   Default richtig (blockieren/schwärzen), aber rechtlich existieren Ausnahmen
-   (Art. 9 Abs. 2 DSGVO — z. B. ausdrückliche Einwilligung, Arbeitsrecht in bestimmten
-   Fällen). Für AILIZA als KMU-Assistent: **Default = blockieren/schwärzen; Verarbeitung
-   nur nach expliziter Policy-Freigabe in stark minimierter Form, nachvollziehbar
-   dokumentiert.**
-
-3. **High-Risk nicht nur über Art. 22 definieren.** EU-AI-Act-Hochrisiko hängt vom
-   konkreten Use Case ab (siehe Liste oben). Menschliche Prüfung ist notwendig,
-   ersetzt aber nicht automatisch alle weiteren Pflichten (Risikomanagement,
-   Dokumentation, Logging, Transparenz).
+- Redaction vor jedem Modellaufruf, ein einziger konsistenter Pfad.
+- Policy Engine vor Modellaufruf.
+- Human Review bei riskanten Entscheidungen (use-case-abhängig).
+- Transparenzhinweis bei externer KI-Nutzung.
+- Auditierbare, aber datensparsame Protokollierung.
+- Modellanbieter-Abstraktion mit Fallback (kein hartes Verdrahten auf ein Modell).
+- Tests für Redaction, Blocking, Human Review, sichere Modellaufrufe, Art. 9-Handling,
+  Konsistenz zwischen allen Redaction-Pfaden.
 
 ---
 
 ## Ergebnisformat (verbindlich)
 
-1. **Kurzfazit**
-2. **Architekturdiagnose**
-3. **Kritische Risiken**
-4. **DSGVO-/AI-Act-Bewertung**
-5. **Konkrete Reparaturmaßnahmen** (priorisiert: Kritisch/Hoch/Mittel/Niedrig)
-6. **Patch-Vorschläge oder geänderte Dateien**
-7. **Tests und Akzeptanzkriterien**
-8. **Offene Fragen**, die vor Produktivbetrieb geklärt werden müssen
+1. Kurzfazit
+2. Architekturdiagnose
+3. Kritische Risiken
+4. DSGVO-/EU-AI-Act-Bewertung
+5. Priorisierter Reparaturplan (Kritisch/Hoch/Mittel/Niedrig)
+6. Konkrete Patch-Vorschläge (nur als Vorschlag, nicht angewendet)
+7. Tests und Akzeptanzkriterien
+8. Offene Fragen vor Produktivbetrieb
 
 ---
 
@@ -153,24 +158,30 @@ Erfinde keine rechtliche Freigabe. Stelle **nicht** fest, dass AILIZA
 Prüfung vorliegt. Verwende stattdessen:
 
 - "DSGVO-orientiert"
-- "AI-Act-orientiert"
+- "EU-AI-Act-orientiert"
 - "prüfungsfähig vorbereitet"
+
+Sag niemals "DSGVO-konform freigegeben" oder gleichwertig.
 
 ---
 
 ## Kontext für diese Session (Stand aus laufender Entwicklung)
 
 - Branch: `claude/adoring-lamport-c1zs8h` (divergiert von `main` — Render deployt
-  vermutlich `main`, das ist ein offener technischer Punkt, unabhängig von diesem
-  Review zu klären).
-- Bekanntes, bereits identifiziertes Risiko: `_governance_pre_check()` in
-  `apps/backend/main.py` rief ursprünglich die alte `governance/redaction.py` auf und
-  überschrieb damit die Ausgabe der neuen `governance/redaction_v2.py`
-  (`RedactionEngineV2`). Das wurde in einem separaten Commit bereits behoben — bei der
-  Bestandsaufnahme bitte verifizieren, dass es **keinen weiteren** solchen doppelten
-  Pfad gibt (z. B. im Frontend, in `/api/policy-check` vs. `/api/policy-redact`, oder
-  in `/agent/run` an anderer Stelle).
+  vermutlich `main`, das ist ein **getrennter, offener technischer Punkt**, wird nicht
+  im Rahmen dieser Analyse gelöst).
 - Zwei sichtbare, bewusst beizubehaltende UI-Elemente: die doppelte Leiste
   (Eingabe + sichtbare LLM-Vorschau) und die rechtsseitigen PII-Blasen
   (Privacy-Memory-Panel). Diese UI-Bausteine sollen erhalten bleiben; der Auftrag
   betrifft die Governance-/Redaction-/Policy-Logik dahinter, nicht deren Ersatz.
+
+## Reihenfolge des Gesamtvorgehens (außerhalb dieses Prompts)
+
+1. Diesen Prompt finalisieren (erledigt mit dieser Version).
+2. Prompt committen/pushen.
+3. Externes Modell (z. B. Fable, falls verfügbar) führt die Analyse gemäß diesem
+   Prompt durch — **nur Analyse + Plan, keine Änderungen**.
+4. Ergebnis wird von einem zweiten Reviewer (Mensch + ggf. weiteres Modell)
+   gegengeprüft.
+5. Erst danach: Freigabe für konkrete Patches, getrennt davon das
+   Render/main-Branch-Thema.
