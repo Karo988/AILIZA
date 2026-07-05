@@ -970,9 +970,13 @@ async function sendMessage(){
     inp.value="";autoResize(inp);
     return;
   }
-  // Wenn menschliche Prüfung erforderlich (requires_human_review)
+  // Wenn menschliche Prüfung erforderlich (requires_human_review):
+  // zeige die deterministische Risiko-Zusammenfassung statt nur der
+  // generischen Meldung. Der volle geschwärzte Text (safe_text) wird erst
+  // nach Bestätigung tatsächlich gesendet — hier nur zur Information.
   if(policyResult.decision==="requires_human_review"){
-    const ok=confirm(policyResult.user_message_de+"\n\nTrotzdem fortfahren?");
+    const summary=policyResult.risk_summary||policyResult.user_message_de;
+    const ok=confirm(summary+"\n\nTrotzdem fortfahren?");
     if(!ok){inp.value="";autoResize(inp);return;}
   }
   // safe_output oder safe_output_with_redactions — weitermachen mit Backend-Schwärzung

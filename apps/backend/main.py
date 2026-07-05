@@ -2453,6 +2453,13 @@ class PolicyRedactResponse(BaseModel):
     redaction_engine: str = "RedactionEngineV2"
     policy_version: str = "1.3.3"
 
+    # Nur gesetzt bei requires_human_review (SCHWARZ/KRITISCH): deterministische
+    # Risiko-Zusammenfassung. Frontend zeigt diese standardmaessig statt des
+    # vollen geschwaerzten Texts; Volltext bleibt ueber einen expliziten Klick
+    # einsehbar (safe_text ist weiterhin die vollstaendige, korrekt
+    # geschwaerzte Fassung und bleibt unveraendert).
+    risk_summary: str | None = None
+
 def contains_secret(text: str) -> bool:
     """Prüft auf Geheimnisse: API-Keys, Tokens, etc."""
     secret_patterns = [
@@ -2492,6 +2499,36 @@ def map_risk_to_user_message(level: str) -> str:
         "critical": "Es wurde ein Datenschutzverstoß erkannt. Bitte kontaktieren Sie den Datenschutz."
     }
     return messages.get(level, "Ihre Anfrage wurde verarbeitet.")
+
+def build_risk_summary(risk_level: str, violations: list[str] | None = None) -> str:
+    """
+    Deterministische Ersatzansicht fuer Hochrisiko-Faelle (SCHWARZ/KRITISCH).
+
+    Kein KI-generierter Text (keine neue Fehlerquelle, keine Zusatzkosten) —
+    nur eine aus bereits serverseitig erkannten Fakten zusammengebaute
+    Zusammenfassung. Der vollstaendige geschwaerzte Text bleibt in safe_text
+    erhalten und ist ueber einen expliziten Klick im Frontend einsehbar.
+    """
+    level_label = {
+        "black": "Automatisierte Entscheidung mit Rechtswirkung",
+        "critical": "DSGVO-Verstoß",
+    }.get(risk_level, "Hochrisiko-Inhalt")
+
+    lines = [
+        f"⚠️ {level_label} erkannt — dieser Fall erfordert eine menschliche Prüfung.",
+        "",
+    ]
+    if violations:
+        lines.append("Erkannte Auffälligkeiten:")
+        for v in violations:
+            lines.append(f"  • {v}")
+        lines.append("")
+    lines.append(
+        "Der vollständige, geschwärzte Text ist auf Wunsch einsehbar "
+        "(\"Trotzdem Volltext anzeigen\")."
+    )
+    return "\n".join(lines)
+
 
 def build_escalation_info(risk_level: str, violations: list[str] = None) -> dict[str, Any] | None:
     """Eskalations-Infos nur für Admin"""
@@ -2655,6 +2692,11 @@ def policy_redact(
         # 7. RESPONSE
         # ─────────────────────────────────────────────────────────
 
+        risk_summary = (
+            build_risk_summary(risk_level, redaction_result.violations)
+            if decision == "requires_human_review"
+            else None
+        )
         logger.info(f"📤 PolicyRedact response | decision={decision} | risk_level={risk_level} | can_send_to_llm={can_send_to_llm}")
         return PolicyRedactResponse(
             decision=decision,
@@ -2664,7 +2706,8 @@ def policy_redact(
             can_send_to_llm=can_send_to_llm,
             requires_human_review=decision in ["requires_human_review"],
             documentation_required=risk_level in ["black", "critical"],
-            admin_only=admin_only
+            admin_only=admin_only,
+            risk_summary=risk_summary
         )
 
     except Exception as e:
