@@ -94,11 +94,11 @@ Der Ordner `C:\Ailiza` enthält jetzt zusätzlich den aktuellen KI-Liza-Stand au
 - **Art. 9** — Risikomanagementsystem
 - **Art. 13** — Transparenz
 - **Art. 14** — Menschliche Aufsicht
-- **Art. 52** — Transparenzpflicht bei Limited Risk
+- **Art. 50** — Transparenzpflicht bei Limited Risk
 
 ### Risikoklasse
 
-**Limited Risk** nach Art. 52 EU AI Act. Transparenzpflicht, Audit Trail und
+**Limited Risk** nach Art. 50 EU AI Act. Transparenzpflicht, Audit Trail und
 menschliche Aufsicht sind zentrale Produktprinzipien.
 
 ---

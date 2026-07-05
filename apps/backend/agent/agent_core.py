@@ -4,7 +4,7 @@ AILIZA Agent Core
 Inspiriert von Hermes Agent Architecture.
 Neu gebaut mit EU-Compliance (DSGVO + EU AI Act) von Grund auf.
 
-EU AI Act Art. 52: Transparenzpflicht für KI-Systeme
+EU AI Act Art. 50: Transparenzpflicht für KI-Systeme
 DSGVO Art. 25: Datenschutz durch Technikgestaltung
 """
 
@@ -34,7 +34,7 @@ class AILIZAAgent:
     - Recht auf Löschung: User kann alle Daten jederzeit löschen
     """
 
-    # EU AI Act: System-Identifikation (Art. 52 Abs. 1)
+    # EU AI Act: System-Identifikation (Art. 50 Abs. 1)
     SYSTEM_NAME = "AILIZA"
     SYSTEM_VERSION = "0.1.0"
     AI_DISCLOSURE = (
@@ -113,7 +113,7 @@ class AILIZAAgent:
 
     def get_ai_disclosure(self) -> str:
         """
-        Gibt die KI-Offenlegungspflicht zurück (EU AI Act Art. 52 Abs. 1).
+        Gibt die KI-Offenlegungspflicht zurück (EU AI Act Art. 50 Abs. 1).
         Muss dem User beim ersten Kontakt angezeigt werden.
         """
         return self.AI_DISCLOSURE

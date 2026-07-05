@@ -671,11 +671,7 @@ let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
 let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
 let context=[];
-// ⚠️ DEAKTIVIERT ab Phase 1.3
-// Die alte Frontend-Redaction PRIVACY_RULES ist nicht sicher.
-// Siehe PHASE_1_3_IMPLEMENTATION_PLAN.md
-// Backend /api/policy-redact ist jetzt die einzige Quelle der Wahrheit.
-console.warn("⚠️ Frontend PRIVACY_RULES deaktiviert (Phase 1.3). Nutze Backend /api/policy-redact");
+// Backend /api/policy-redact ist die einzige Quelle der Wahrheit fuer Redaction.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Phase 1.3: Backend-Integration mit PolicyEngine
@@ -800,12 +796,8 @@ function saveKey(){const p=document.getElementById("provider-sel").value;const k
 function toggleTool(n){tools[n]=!tools[n];localStorage.setItem("ailiza_tools",JSON.stringify(tools));renderTools()}
 function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
 function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
-// Hotfix 2026-07: Das alte, browser-eigene PRIVACY_RULES-Erkennungssystem
-// wurde in Phase 1.3 abgeschafft (unsicher, eigene abweichende Regeln) —
-// aber der Code, der es benutzte, wurde nicht mit entfernt und stuerzte bei
-// jedem Tastendruck ab (PRIVACY_RULES war nicht mehr definiert), was auch
-// das eigentliche Senden blockierte. Ersetzt durch: EIN System (Server),
-// per Vorschau-Button abgerufen — siehe previewRedaction() unten.
+// Redaction-Erkennung: EIN System (Server), per Vorschau-Button abgerufen —
+// siehe previewRedaction() unten.
 let _lastPreview=null;   // {inputText, policyResult} — Cache fuer Senden ohne Doppel-Call
 let _previewStale=true;  // true = Text hat sich seit letzter Vorschau geaendert
 

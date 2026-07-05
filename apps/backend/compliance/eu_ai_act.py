@@ -11,7 +11,7 @@ Relevante Artikel:
 - Art. 9:  Risikomanagementsystem
 - Art. 13: Transparenz und Bereitstellung von Informationen
 - Art. 14: Menschliche Aufsicht
-- Art. 52: Transparenzpflichten für bestimmte KI-Systeme
+- Art. 50: Transparenzpflichten für bestimmte KI-Systeme
 - Art. 69: Verhaltenskodizes
 """
 
@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 class RiskLevel:
     UNACCEPTABLE = "unacceptable"   # Art. 5: Verboten
     HIGH = "high"                   # Anhang III: Hochrisiko
-    LIMITED = "limited"             # Art. 52: Transparenzpflicht
+    LIMITED = "limited"             # Art. 50: Transparenzpflicht
     MINIMAL = "minimal"             # Keine spezifischen Anforderungen
 
 
@@ -34,7 +34,7 @@ class EUAIActCompliance:
     """
     EU AI Act Compliance Layer für AILIZA.
 
-    AILIZA ist als LIMITED RISK klassifiziert (Art. 52):
+    AILIZA ist als LIMITED RISK klassifiziert (Art. 50):
     - Interagiert mit natürlichen Personen
     - Transparenzpflicht: User muss wissen, dass er mit KI interagiert
     - Keine autonomen Entscheidungen mit rechtlichen Folgen
@@ -58,11 +58,11 @@ class EUAIActCompliance:
         self._audit_log: List[Dict] = []
         self._created_at = time.time()
 
-    # ── Art. 52: Transparenzpflicht ───────────────────────────────────────
+    # ── Art. 50: Transparenzpflicht ───────────────────────────────────────
 
     def get_transparency_notice(self, language: str = "de") -> str:
         """
-        Erzeugt die Transparenzmitteilung (Art. 52 Abs. 1).
+        Erzeugt die Transparenzmitteilung (Art. 50 Abs. 1).
         Muss dem Nutzer VOR der ersten Interaktion angezeigt werden.
         """
         notices = {
@@ -85,7 +85,7 @@ class EUAIActCompliance:
 
     def verify_transparency_shown(self) -> bool:
         """
-        Prüft ob die Transparenzmitteilung angezeigt wurde (Art. 52).
+        Prüft ob die Transparenzmitteilung angezeigt wurde (Art. 50).
         Sollte vor jeder Konversation aufgerufen werden.
         """
         return self._transparency_shown
@@ -228,7 +228,7 @@ class EUAIActCompliance:
             "requirements_met": [
                 "Art. 13: Transparenz und Informationsbereitstellung",
                 "Art. 14: Menschliche Aufsicht implementiert",
-                "Art. 52: Transparenzpflicht für Limited Risk KI",
+                "Art. 50: Transparenzpflicht für Limited Risk KI",
             ],
             "conformity_date": datetime.utcnow().isoformat() + "Z",
             "next_review": "2025-08-01",
