@@ -255,6 +255,15 @@ class RedactionEngineV2:
         "criminal": "Strafrechtliche Informationen",
     }
 
+    # Rechtsgrundlage je Kategorie: Art. 9 DSGVO (besondere Kategorien) vs.
+    # Art. 10 DSGVO (strafrechtliche Verurteilungen/Straftaten — eigene,
+    # striktere Rechtsgrundlage, KEINE Art.-9-Kategorie). Fehlklassifizierung
+    # als Art. 9 wurde in einer externen Compliance-Pruefung bemaengelt.
+    _VIOLET_CATEGORY_ARTICLE = {
+        "criminal": "Art. 10 DSGVO",
+    }
+    _DEFAULT_VIOLET_ARTICLE = "Art. 9 DSGVO"
+
     def _redact_violet_sections(self, text: str, violet_categories: dict[str, list]) -> str:
         """
         Schwärzt Zeilen mit Art. 9-Daten - AGGRESSIV, aber zeilenscharf.
@@ -273,11 +282,12 @@ class RedactionEngineV2:
         lines = text.split("\n")
         for category, matched_keywords in violet_categories.items():
             category_label = self._VIOLET_CATEGORY_LABELS.get(category, category)
+            article = self._VIOLET_CATEGORY_ARTICLE.get(category, self._DEFAULT_VIOLET_ARTICLE)
             kw_pattern = re.compile(
                 "|".join(re.escape(kw) for kw in set(matched_keywords)), re.IGNORECASE,
             )
             placeholder_line = (
-                f"[GESCHWAERZT: {category_label} - Art. 9 DSGVO - "
+                f"[GESCHWAERZT: {category_label} - {article} - "
                 f"Datenkategorie nicht extern verarbeitbar]"
             )
             for i, line in enumerate(lines):
