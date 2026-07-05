@@ -178,8 +178,9 @@ body{
 .dsgvo-bubble.secret .dsgvo-bubble-label{color:#888}
 .dsgvo-bubble.secret .dsgvo-bubble-value{color:#F0C040}
 @keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
-.input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
-.input-box:focus-within{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(45,95,63,.06)}
+.input-label{max-width:720px;margin:0 auto 6px;padding:0 2px;font-size:11px;font-weight:600;color:var(--text-soft);letter-spacing:.01em}
+.input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1.5px solid var(--border-strong);border-radius:12px;padding:10px 12px;box-shadow:0 1px 2px rgba(26,24,21,.04);transition:border-color .15s,box-shadow .15s}
+.input-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(45,95,63,.1)}
 .input-row{display:flex;align-items:flex-end;gap:8px}
 .input-field{flex:1;border:none;outline:none;font-family:inherit;font-size:13px;background:transparent;resize:vertical;max-height:200px;line-height:1.5;color:var(--text);user-select:text}
 .input-field::placeholder{color:var(--text-muted)}
@@ -371,6 +372,7 @@ body{
           <button class="pii-consent-btn" id="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
           <button class="pii-consent-deny" onclick="denyPiiConsent()">Abbrechen</button>
         </div>
+        <div class="input-label">Nachricht an AILIZA</div>
         <div class="input-box">
           <div class="input-row">
             <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);renderPrivacyMemory(this.value)" onpaste="handlePaste(event)"></textarea>
