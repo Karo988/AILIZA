@@ -138,10 +138,13 @@ class TestProviderProfiles:
         allowed, _ = check_provider_policy("groq", [DataClass.SPECIAL_CATEGORY])
         assert not allowed
 
-    def test_anthropic_blocks_personal_data_without_avv(self, monkeypatch):
+    def test_anthropic_allows_personal_data_with_documented_avv(self, monkeypatch):
+        """Betreiber-Entscheidung 2026-07-06: Anthropic AVV/DPA als vorhanden
+        dokumentiert (avv_signed=True) — PERSONAL_DATA ist damit auch OHNE
+        Testmodus erlaubt (Redaction-Gate greift unabhaengig davon weiterhin)."""
         monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
         allowed, reason = check_provider_policy("anthropic", [DataClass.PERSONAL_DATA])
-        assert not allowed
+        assert allowed, reason
 
     def test_local_allows_all(self):
         for dc in DataClass:
@@ -169,10 +172,13 @@ class TestProviderProfiles:
         assert allowed, reason
         monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
 
-    def test_openai_blocks_personal_data_without_avv(self, monkeypatch):
+    def test_openai_allows_personal_data_with_documented_avv(self, monkeypatch):
+        """Betreiber-Entscheidung 2026-07-06: OpenAI AVV/DPA als vorhanden
+        dokumentiert (avv_signed=True) — PERSONAL_DATA ist damit auch OHNE
+        Testmodus erlaubt (Redaction-Gate greift unabhaengig davon weiterhin)."""
         monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
         allowed, reason = check_provider_policy("openai", [DataClass.PERSONAL_DATA])
-        assert not allowed
+        assert allowed, reason
 
     def test_openai_failover_priority_lower_than_groq(self):
         from apps.backend.providers.provider_profiles import get_profile

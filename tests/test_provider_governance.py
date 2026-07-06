@@ -67,7 +67,8 @@ def test_groq_personal_data_blocked():
 
 
 def test_anthropic_public_allowed(monkeypatch):
-    """Ohne AVV nur mit Testmodus erlaubt (Freigabe Stufe 1, P-A)."""
+    """AVV/DPA fuer Anthropic ist dokumentiert (Betreiber-Entscheidung
+    2026-07-06) — PUBLIC ist unabhaengig vom Testmodus erlaubt."""
     monkeypatch.setenv("AILIZA_TEST_MODE", "true")
     from apps.backend.providers.provider_profiles import check_provider_policy
     from apps.backend.governance.data_governance import DataClass
