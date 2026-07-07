@@ -2875,11 +2875,6 @@ def index():
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
-@app.get("/")
-def index():
-    return FileResponse(FRONTEND_DIR / "index.html")
-
-
 @app.get("/dashboard")
 def dashboard():
     return FileResponse(FRONTEND_DIR / "index.html")
