@@ -2870,11 +2870,6 @@ def static_public_icons_svg():
     return FileResponse(FRONTEND_DIR / "public" / "icons.svg")
 
 
-@app.get("/config.js")
-def config_js():
-    return FileResponse(FRONTEND_DIR / "config.js")
-
-
 @app.get("/")
 def index():
     return FileResponse(FRONTEND_DIR / "index.html")
