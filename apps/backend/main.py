@@ -15,7 +15,6 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -2842,7 +2841,33 @@ def policy_redact(
 
 
 
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+# Kein StaticFiles-Catch-All-Mount mehr (Sicherheits-Whitelist, Phase 3e/B2):
+# NUR diese 6 Pfade sind oeffentlich erreichbar. Alles andere unter
+# apps/frontend/ (React/Vite-App-Quellcode, package.json, README, .env.example
+# etc.) bleibt im Repo, wird aber von keiner Route mehr ausgeliefert.
+@app.get("/static/index.html")
+def static_index_html():
+    return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/static/icon.svg")
+def static_icon_svg():
+    return FileResponse(FRONTEND_DIR / "icon.svg")
+
+
+@app.get("/static/manifest.json")
+def static_manifest_json():
+    return FileResponse(FRONTEND_DIR / "manifest.json")
+
+
+@app.get("/static/public/favicon.svg")
+def static_public_favicon_svg():
+    return FileResponse(FRONTEND_DIR / "public" / "favicon.svg")
+
+
+@app.get("/static/public/icons.svg")
+def static_public_icons_svg():
+    return FileResponse(FRONTEND_DIR / "public" / "icons.svg")
 
 
 @app.get("/config.js")
