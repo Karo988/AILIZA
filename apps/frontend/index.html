@@ -955,7 +955,8 @@ function renderMsg(m,idx){
   if(m.role==="user")return`<div class="msg user"><div class="bubble user"><span class="bubble-text">${text}</span></div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
   const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
   const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
-  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 50</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
+  const testModeBanner=m.testMode?`<div class="draft-banner">⚠️ Testmodus / nicht produktiv. Beantwortet von: ${escapeHtml(m.testMode.provider||"unbekannt")} / ${escapeHtml(m.testMode.model||"unbekannt")}</div>`:"";
+  return`<div class="msg ai">${draftBanner}${testModeBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 50</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
 function flyOutPiiBubbles(){
   // PII-Blasen aus dem Panel nach rechts rausflöiegen lassen → bleiben als 🔒 Mini-Blase
@@ -1109,11 +1110,12 @@ async function runAgent(text,redactionMap){
   }
   const isDraft=data.status==="draft"||data.draft===true;
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
-  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined);
+  const testModeInfo=data.test_mode?{provider:data.provider,model:data.model}:undefined;
+  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined,testModeInfo);
 }
-function addAiMessage(text,warn,draftHint){
+function addAiMessage(text,warn,draftHint,testModeInfo){
   const msg={role:"ai",content:text,time:new Date().toISOString()};
-  if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;
+  if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;if(testModeInfo)msg.testMode=testModeInfo;
   chatHistory.push(msg);
   localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));
   saveCurrentChat();

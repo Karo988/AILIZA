@@ -1194,6 +1194,26 @@ def _ask_llm_directly(
         return None, "internal_error", [f"Unerwarteter Fehler: {_etype}"]
 
 
+def _test_mode_fields(provider: str | None, model: str | None) -> dict[str, Any] | None:
+    """
+    V-8 (Freigabe Stufe 1, P-A): JEDE Antwort im Testmodus muss sichtbar
+    Provider + Modell + Testmodus-Hinweis tragen. Gibt None im Normalbetrieb
+    zurueck (kein Feld im Response), damit sich am normalen Verhalten nichts
+    aendert.
+    """
+    try:
+        from .kill_switch import is_test_mode
+    except ImportError:
+        from kill_switch import is_test_mode
+    if not is_test_mode():
+        return None
+    return {
+        "test_mode": True,
+        "provider": provider or "unbekannt",
+        "model": model or "unbekannt",
+    }
+
+
 @app.post("/agent/run")
 @_limiter.limit("30/minute")
 def run_agent(
@@ -1316,6 +1336,9 @@ def run_agent(
                 final["pii_detected"] = pii_detected
             if pre_check["decision"] == "allow_with_notice":
                 final["governance_notice"] = pre_check.get("notice", "")
+            _tmf = _test_mode_fields(_used_provider, _used_model)
+            if _tmf:
+                final.update(_tmf)
             write_audit_entry(
                 action="agent.writing_task.completed",
                 tenant_id=tenant,
@@ -1390,6 +1413,12 @@ def run_agent(
                 result["draft_notice"] = (
                     "Entwurf — personenbezogene Daten lokal maskiert, menschliche Prüfung erforderlich."
                 )
+            _tmf = _test_mode_fields(
+                getattr(_orchestrator, "last_provider_id", None),
+                getattr(_orchestrator, "last_model", None),
+            )
+            if _tmf:
+                result.update(_tmf)
             return result
         # LLM auch nicht verfügbar → lokale Antwort zurückgeben
         result["ai_response"] = result.get("message", "")
@@ -1458,6 +1487,12 @@ def run_agent(
         result["pii_detected"] = pii_detected
     if pre_check["decision"] == "allow_with_notice":
         result["governance_notice"] = pre_check.get("notice", "")
+    _tmf = _test_mode_fields(
+        getattr(_orchestrator, "last_provider_id", None),
+        getattr(_orchestrator, "last_model", None),
+    )
+    if _tmf:
+        result.update(_tmf)
     return result
 @app.get("/agent/runs")
 def get_agent_runs(
