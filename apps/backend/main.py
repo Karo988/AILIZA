@@ -1869,25 +1869,37 @@ def admin_totp_delete(
     return {"status": "totp_reset", "rows_deleted": deleted}
 
 
+class SelfRegisterRequest(BaseModel):
+    user_id: str = Field(..., min_length=2, max_length=64)
+    password: str = Field(..., min_length=8)
+    tenant_id: str = Field(default=DEFAULT_TENANT_ID)
+
+    @field_validator("password")
+    @classmethod
+    def password_policy(cls, v: str) -> str:
+        import re
+        errors = []
+        if not re.search(r"[A-Z]", v): errors.append("Großbuchstabe fehlt")
+        if not re.search(r"[a-z]", v): errors.append("Kleinbuchstabe fehlt")
+        if not re.search(r"\d", v): errors.append("Zahl fehlt")
+        if errors:
+            raise ValueError(f"Passwort: {', '.join(errors)}")
+        return v
+
+
 @app.post("/auth/self-register", status_code=201)
-@_limiter.limit("5/minute")
-def self_register(request: Request, payload: RegisterRequest) -> dict[str, Any]:
-    """Öffentliche Selbst-Registrierung — erstellt immer nur Rolle 'user'."""
-    if os.getenv("AILIZA_SELF_REGISTER", "true").lower() == "false":
-        raise HTTPException(status_code=403, detail="Registrierung deaktiviert.")
-    user_create = UserCreate(
-        user_id=payload.user_id,
-        tenant_id=payload.tenant_id,
-        role="user",
-        plain_password=payload.password,
-    )
-    user_in_db = UserInDB.from_create(user_create)
+@_limiter.limit("10/minute")
+def self_register(request: Request, payload: SelfRegisterRequest) -> dict[str, Any]:
+    """Öffentliche Selbst-Registrierung — Rolle 'user', kein Admin-Token nötig."""
+    from passlib.context import CryptContext as _CC
+    _pwd = _CC(schemes=["bcrypt"], deprecated="auto")
+    hashed = _pwd.hash(payload.password)
     try:
         entry = db_create_user(
-            user_id=user_in_db.user_id,
-            tenant_id=user_in_db.tenant_id,
-            role=user_in_db.role,
-            hashed_password=user_in_db.hashed_password,
+            user_id=payload.user_id,
+            tenant_id=payload.tenant_id,
+            role="user",
+            hashed_password=hashed,
         )
     except Exception:
         raise HTTPException(status_code=409, detail="Nutzername bereits vergeben.")
