@@ -6,6 +6,7 @@ Scannt eingehende Texte/Anfragen auf Violations und blockiert automatisch bei kr
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
+import os
 import re
 from typing import Any
 
@@ -349,6 +350,10 @@ class ComplianceAuditor:
         # Hochrisiko-Anwendungen
         self._check_high_risk_application(text)
 
+        # Beta-Einschraenkung (B8b): Bewerbung/Scoring/Bonitaet komplett
+        # deaktiviert, solange keine Human-Review-Oberflaeche existiert
+        self._check_beta_highrisk_block(text)
+
         # Transparenz und Erklärbarkeit
         self._check_explainability(text)
 
@@ -376,6 +381,39 @@ class ComplianceAuditor:
                 title="Hochrisiko-KI-Anwendung ohne angemessene Sicherungen",
                 description="KI wird für Hochrisiko-Anwendung genutzt (Bewerbung/Personalentscheidung). EU-AI-Act fordert Konformitätsbewertung, Risikomanagementsystem, Audit-Trail.",
                 found_text='KI-System "AILIZA Score 4.0" wird für Bewerbungsbewertung und Personalentscheidung genutzt'
+            ))
+
+    def _check_beta_highrisk_block(self, text: str) -> None:
+        """
+        B8b (Betreiber-Freigabe): Bewerbungs-/Scoring-/Bonitaets-Bewertungen
+        sind in der geschlossenen Beta komplett deaktiviert — nicht nur
+        review_required, sondern block. Eine Human-Review-Oberflaeche (V-3)
+        existiert noch nicht, review_required wuerde Anfragen in eine
+        Sackgasse schicken. Eigener Schalter AILIZA_BETA_HIGHRISK_BLOCK,
+        damit die spaetere Freischaltung ein bewusster Schritt ist — im
+        Normalbetrieb (Schalter aus) greift diese Regel gar nicht, die
+        bestehende _check_high_risk_application()-Regel bleibt unabhaengig
+        davon aktiv (Doppelabdeckung ist gewollt).
+        """
+        if os.getenv("AILIZA_BETA_HIGHRISK_BLOCK", "").strip().lower() not in ("1", "true", "yes"):
+            return
+        beta_keywords = [
+            "bewerbung", "bewerber", "bewerberin", "personalentscheidung",
+            "einstellung", "scoring", "bonität", "bonitätsbewertung",
+            "kreditwürdigkeit", "kreditvergabe",
+        ]
+        if any(re.search(rf"\b{kw}\b", text, re.I) for kw in beta_keywords):
+            self.violations.append(Violation(
+                severity=Severity.BLOCK,
+                article="Beta-Einschränkung",
+                category="Beta",
+                title="Bewerbungs-/Scoring-Bewertung in der Beta deaktiviert",
+                description=(
+                    "Bewerbungs- und Scoring-Bewertungen sind in der Beta deaktiviert. "
+                    "Diese Funktion erfordert eine menschliche Prüfung und wird "
+                    "später freigeschaltet."
+                ),
+                found_text=None,
             ))
 
     def _check_explainability(self, text: str) -> None:

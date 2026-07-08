@@ -1038,6 +1038,19 @@ def _compliance_pre_check(
 
     # Blockierung bei kritischen Violations
     if compliance_report.status == Severity.BLOCK:
+        # B8b: Beta-Einschraenkung (Bewerbung/Scoring) bekommt die einfache,
+        # nutzerfreundliche Meldung statt der generischen Compliance-Meldung.
+        _beta_violation = next(
+            (v for v in compliance_report.violations if v.article == "Beta-Einschränkung"),
+            None,
+        )
+        if _beta_violation:
+            return {
+                "decision": "block",
+                "audit_id": audit_id,
+                "message": _beta_violation.description,
+                "violations": violations_summary,
+            }
         return {
             "decision": "block",
             "audit_id": audit_id,
