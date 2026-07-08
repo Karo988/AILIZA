@@ -2,6 +2,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -148,6 +150,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             metadata={"cors_origins": "*", "debug_mode": _is_debug},
         )
     # ── Ende CORS-Produktionswarnung ─────────────────────────────────────────
+
+    # ── Beta-Zugangsschutz-Warnung (B8a) ──────────────────────────────────────
+    _env_is_prod = os.getenv("AILIZA_ENV", "development").lower() == "production"
+    if _env_is_prod and not os.getenv("AILIZA_BETA_ACCESS_CODE"):
+        import logging as _log_beta
+        _log_beta.getLogger(__name__).warning(
+            "SECURITY: Beta ohne Zugangsschutz — AILIZA_ENV=production, aber "
+            "AILIZA_BETA_ACCESS_CODE ist nicht gesetzt. AILIZA ist ohne "
+            "Zugangscode oeffentlich nutzbar."
+        )
+        write_audit_entry(
+            action="startup.beta_access_code_missing",
+            metadata={"env": "production"},
+        )
+    # ── Ende Beta-Zugangsschutz-Warnung ───────────────────────────────────────
 
     init_db()
 
@@ -327,6 +344,108 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_SecurityHeadersMiddleware)
 
 app.include_router(approvals_router)
+
+
+# ── B8a: Beta-Zugangsschutz ────────────────────────────────────────────────────
+_BETA_COOKIE_NAME = "ailiza_beta_access"
+_BETA_EXEMPT_PATHS = {"/health", "/api/health", "/beta", "/beta-access"}
+
+
+def _beta_cookie_value(code: str) -> str:
+    """
+    Deterministischer HMAC ueber (Secret-Key, Zugangscode) — kein Klartext-Code
+    im Cookie. An den Code gebunden: ein Code-Wechsel macht automatisch alle
+    bestehenden Cookies ungueltig (Betreiber-Anpassung, Freigabe B8a v2).
+    """
+    secret = os.getenv("AILIZA_SECRET_KEY", "")
+    return hmac.new(secret.encode(), f"beta:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def _beta_gate_page() -> str:
+    return """<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>AILIZA — Beta-Zugang</title>
+<style>body{font-family:-apple-system,sans-serif;background:#FAFAF7;color:#1A1815;
+display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.box{background:#fff;border:1px solid #E5E3DC;border-radius:12px;padding:32px;max-width:360px;width:90%}
+h1{font-size:16px;margin:0 0 12px}p{font-size:13px;color:#5A574F;margin:0 0 16px}
+input{width:100%;padding:8px;border:1px solid #E5E3DC;border-radius:6px;font-size:13px;box-sizing:border-box;margin-bottom:12px}
+button{width:100%;padding:8px;background:#2D5F3F;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer}
+#msg{font-size:12px;color:#8B2424;margin-top:8px}</style></head>
+<body><div class="box"><h1>AILIZA ist in einer geschlossenen Beta.</h1>
+<p>Bitte Zugangscode eingeben.</p>
+<form id="f"><input type="password" id="code" placeholder="Zugangscode" autofocus>
+<button type="submit">Zugang freischalten</button></form>
+<div id="msg"></div></div>
+<script>
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = document.getElementById("code").value;
+  const r = await fetch("/beta-access", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({code})});
+  if (r.ok) { location.reload(); }
+  else { document.getElementById("msg").textContent = "Zugangscode falsch. Bitte erneut versuchen."; }
+});
+</script></body></html>"""
+
+
+@app.middleware("http")
+async def beta_access_gate(request: Request, call_next):
+    """
+    B8a: Wenn AILIZA_BETA_ACCESS_CODE gesetzt ist, ist die gesamte App (inkl.
+    API) nur mit gueltigem Zugangs-Cookie nutzbar. /health bleibt immer frei.
+    """
+    code = os.getenv("AILIZA_BETA_ACCESS_CODE", "")
+    if not code:
+        return await call_next(request)
+
+    if request.url.path in _BETA_EXEMPT_PATHS:
+        return await call_next(request)
+
+    cookie_value = request.cookies.get(_BETA_COOKIE_NAME, "")
+    if cookie_value and hmac.compare_digest(cookie_value, _beta_cookie_value(code)):
+        return await call_next(request)
+
+    if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(_beta_gate_page(), status_code=200)
+
+    return JSONResponse(
+        status_code=403,
+        content={"detail": "AILIZA ist in einer geschlossenen Beta. Bitte Zugangscode eingeben."},
+    )
+
+
+@app.get("/beta")
+def beta_gate_page():
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(_beta_gate_page())
+
+
+class _BetaAccessRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=200)
+
+
+@app.post("/beta-access")
+@_limiter.limit("10/minute")
+def beta_access_check(request: Request, payload: _BetaAccessRequest):
+    configured_code = os.getenv("AILIZA_BETA_ACCESS_CODE", "")
+    if not configured_code or not hmac.compare_digest(payload.code, configured_code):
+        write_audit_entry(action="beta_access.failed", metadata={})
+        raise HTTPException(status_code=401, detail="Zugangscode falsch.")
+
+    write_audit_entry(action="beta_access.granted", metadata={})
+    is_prod = os.getenv("AILIZA_ENV", "development").lower() in ("production", "staging")
+    response = JSONResponse(content={"status": "ok"})
+    response.set_cookie(
+        key=_BETA_COOKIE_NAME,
+        value=_beta_cookie_value(configured_code),
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        max_age=24 * 60 * 60,
+        path="/",
+    )
+    return response
+# ── Ende B8a: Beta-Zugangsschutz ───────────────────────────────────────────────
 
 
 from fastapi.responses import JSONResponse
