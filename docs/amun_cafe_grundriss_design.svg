@@ -1,0 +1,267 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 820" font-family="Arial, sans-serif">
+
+  <!-- Background -->
+  <rect width="900" height="820" fill="#1a1a1a"/>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" font-size="20" font-weight="bold" fill="#D4A843">AMUN CAFÉ — DESIGNPLAN GRUNDRISS</text>
+  <text x="450" y="55" text-anchor="middle" font-size="12" fill="#888">85 m² | Doberaner Platz, Rostock | Draufsicht</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- OUTER WALLS -->
+  <rect x="60" y="70" width="780" height="680" fill="#2a2a2a" stroke="#555" stroke-width="3" rx="4"/>
+
+  <!-- STREET LABEL -->
+  <rect x="60" y="40" width="780" height="28" fill="#333" rx="3"/>
+  <text x="450" y="59" text-anchor="middle" font-size="13" font-weight="bold" fill="#D4A843">⬆ DOBERANER PLATZ / STRASSE</text>
+
+  <!-- SCHAUFENSTER LINE (front wall highlight) -->
+  <rect x="60" y="70" width="780" height="8" fill="#D4A843" opacity="0.7"/>
+
+  <!-- ENTRANCE -->
+  <rect x="380" y="68" width="140" height="12" fill="#1a1a1a"/>
+  <text x="450" y="79" text-anchor="middle" font-size="11" fill="#D4A843">EINGANG</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ZONE COLORS (floor areas) -->
+
+  <!-- SHOP ZONE - left front -->
+  <rect x="68" y="86" width="260" height="230" fill="#3D2B1A" opacity="0.85" rx="3"/>
+
+  <!-- THEKE ZONE - right front -->
+  <rect x="572" y="86" width="260" height="230" fill="#1A2D3D" opacity="0.85" rx="3"/>
+
+  <!-- CAFE SEATING ZONE - back -->
+  <rect x="68" y="330" width="764" height="410" fill="#1A1A2D" opacity="0.85" rx="3"/>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ZONE LABELS -->
+  <text x="198" y="115" text-anchor="middle" font-size="14" font-weight="bold" fill="#D4A843">☽ SHOP-ZONE</text>
+  <text x="198" y="133" text-anchor="middle" font-size="11" fill="#c8956a">Parfüm · Tee · Gewürze</text>
+  <text x="198" y="149" text-anchor="middle" font-size="11" fill="#c8956a">Tajine · Räucherstäbchen</text>
+  <text x="198" y="165" text-anchor="middle" font-size="11" fill="#c8956a">Geschenkkörbe · Keramik</text>
+  <text x="198" y="183" text-anchor="middle" font-size="10" fill="#888">~25 m²</text>
+
+  <text x="702" y="115" text-anchor="middle" font-size="14" font-weight="bold" fill="#7BC8E0">☕ THEKE / COUNTER</text>
+  <text x="702" y="133" text-anchor="middle" font-size="11" fill="#7BC8E0">Kaffee · Sandwich · Eis</text>
+  <text x="702" y="149" text-anchor="middle" font-size="11" fill="#7BC8E0">Kasse · Kuchenvitrine</text>
+  <text x="702" y="165" text-anchor="middle" font-size="11" fill="#7BC8E0">Zuckerrohrpresse</text>
+  <text x="702" y="183" text-anchor="middle" font-size="10" fill="#888">~10 m²</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SHOP FIXTURES (left zone) -->
+
+  <!-- Parfum wall shelf -->
+  <rect x="75" y="92" width="14" height="195" fill="#5C3D1E" stroke="#8B6340" stroke-width="1"/>
+  <rect x="75" y="115" width="110" height="8" fill="#8B6340" rx="1"/>
+  <rect x="75" y="145" width="110" height="8" fill="#8B6340" rx="1"/>
+  <rect x="75" y="175" width="110" height="8" fill="#8B6340" rx="1"/>
+  <rect x="75" y="205" width="110" height="8" fill="#8B6340" rx="1"/>
+  <rect x="75" y="235" width="110" height="8" fill="#8B6340" rx="1"/>
+  <!-- Shelf items (parfum bottles) -->
+  <rect x="82" y="100" width="6" height="13" fill="#D4A843" rx="1"/>
+  <rect x="92" y="103" width="5" height="10" fill="#C0392B" rx="1"/>
+  <rect x="101" y="101" width="6" height="12" fill="#8B4513" rx="1"/>
+  <rect x="110" y="104" width="5" height="9" fill="#D4A843" rx="1"/>
+  <text x="80" y="296" font-size="9" fill="#c8956a">Parfüm-Regal</text>
+
+  <!-- Tea/spice shelf -->
+  <rect x="205" y="92" width="118" height="195" fill="#3D2B1A" stroke="#8B6340" stroke-width="1" rx="2"/>
+  <!-- Spice jars -->
+  <circle cx="220" cy="125" r="10" fill="#C8A02A" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="240" cy="125" r="10" fill="#8B2500" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="260" cy="125" r="10" fill="#C07B00" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="280" cy="125" r="10" fill="#6B8B00" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="300" cy="125" r="10" fill="#8B0000" stroke="#8B6340" stroke-width="1"/>
+  <!-- Second row jars -->
+  <circle cx="220" cy="160" r="10" fill="#8B6340" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="240" cy="160" r="10" fill="#C8A02A" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="260" cy="160" r="10" fill="#2A6B8B" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="280" cy="160" r="10" fill="#8B2500" stroke="#8B6340" stroke-width="1"/>
+  <circle cx="300" cy="160" r="10" fill="#6B8B00" stroke="#8B6340" stroke-width="1"/>
+  <!-- Tajine -->
+  <ellipse cx="248" cy="215" rx="28" ry="12" fill="#C8602A" stroke="#8B4513" stroke-width="1"/>
+  <polygon points="248,185 248,214" stroke="#8B4513" stroke-width="1.5"/>
+  <ellipse cx="248" cy="215" rx="12" ry="5" fill="#D4702A" opacity="0.7"/>
+  <text x="215" y="260" font-size="9" fill="#c8956a">Tee · Gewürze · Tajine</text>
+  <text x="215" y="296" font-size="9" fill="#c8956a">Display-Regal</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- THEKE FIXTURES (right zone) -->
+
+  <!-- Eis-Vitrine -->
+  <rect x="580" y="92" width="120" height="60" fill="#1a4a6b" stroke="#7BC8E0" stroke-width="1.5" rx="3"/>
+  <text x="640" y="118" text-anchor="middle" font-size="10" fill="#7BC8E0">❄ Eis-Vitrine</text>
+  <text x="640" y="132" text-anchor="middle" font-size="9" fill="#7BC8E0">"Emma" 1,20m</text>
+
+  <!-- Kaffeemaschine -->
+  <rect x="580" y="162" width="80" height="55" fill="#2a3d4a" stroke="#7BC8E0" stroke-width="1.5" rx="3"/>
+  <rect x="590" y="170" width="30" height="25" fill="#1a2d3a" stroke="#7BC8E0" stroke-width="1" rx="2"/>
+  <circle cx="625" cy="183" r="8" fill="#7BC8E0" opacity="0.5"/>
+  <text x="620" y="228" text-anchor="middle" font-size="9" fill="#7BC8E0">Espresso + Mühle</text>
+
+  <!-- Kuchenvitrine -->
+  <rect x="720" y="92" width="105" height="75" fill="#1a4a6b" stroke="#7BC8E0" stroke-width="1.5" rx="3"/>
+  <rect x="727" y="98" width="91" height="62" fill="#0d2535" stroke="#7BC8E0" stroke-width="0.5" rx="2"/>
+  <!-- Cake slices -->
+  <polygon points="740,145 760,120 780,145" fill="#C8A02A" opacity="0.8"/>
+  <polygon points="758,145 778,120 798,145" fill="#8B2500" opacity="0.8"/>
+  <text x="772" y="178" text-anchor="middle" font-size="9" fill="#7BC8E0">Kuchenvitrine</text>
+
+  <!-- Kasse -->
+  <rect x="720" y="185" width="105" height="55" fill="#2a3d4a" stroke="#7BC8E0" stroke-width="1.5" rx="3"/>
+  <text x="772" y="210" text-anchor="middle" font-size="10" fill="#7BC8E0">💳 Kasse (TSE)</text>
+  <text x="772" y="228" text-anchor="middle" font-size="9" fill="#7BC8E0">Kontaktgrill · Spüle</text>
+
+  <!-- Zuckerrohr -->
+  <rect x="580" y="228" width="80" height="45" fill="#2a3d2a" stroke="#7BC8E0" stroke-width="1.5" rx="3"/>
+  <text x="620" y="248" text-anchor="middle" font-size="9" fill="#90EE90">🌿 Zuckerrohr-</text>
+  <text x="620" y="262" text-anchor="middle" font-size="9" fill="#90EE90">presse</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- MIDDLE DIVIDER (visual only, no wall) -->
+  <line x1="336" y1="86" x2="336" y2="316" stroke="#555" stroke-width="1" stroke-dasharray="5,5"/>
+  <line x1="564" y1="86" x2="564" y2="316" stroke="#555" stroke-width="1" stroke-dasharray="5,5"/>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- COLUMNS -->
+  <rect x="270" y="315" width="28" height="28" fill="#444" stroke="#D4A843" stroke-width="2" rx="2"/>
+  <text x="284" y="333" text-anchor="middle" font-size="10" fill="#D4A843">S1</text>
+
+  <rect x="602" y="315" width="28" height="28" fill="#444" stroke="#D4A843" stroke-width="2" rx="2"/>
+  <text x="616" y="333" text-anchor="middle" font-size="10" fill="#D4A843">S2</text>
+
+  <!-- Column shelf rings -->
+  <rect x="250" y="322" width="68" height="6" fill="#5C3D1E" stroke="#8B6340" stroke-width="1" rx="1"/>
+  <rect x="582" y="322" width="68" height="6" fill="#2a3d2a" stroke="#7BC8E0" stroke-width="1" rx="1"/>
+
+  <text x="284" y="310" text-anchor="middle" font-size="8" fill="#D4A843">Säule 1</text>
+  <text x="284" y="360" text-anchor="middle" font-size="8" fill="#888">(Tee-Regal-Ring)</text>
+  <text x="616" y="310" text-anchor="middle" font-size="8" fill="#D4A843">Säule 2</text>
+  <text x="616" y="360" text-anchor="middle" font-size="8" fill="#888">(Menütafel)</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- CAFE SEATING ZONE -->
+  <text x="450" y="370" text-anchor="middle" font-size="15" font-weight="bold" fill="#B8A4D4">☕ CAFÉ-SITZBEREICH — ~50 m²</text>
+
+  <!-- Window seats (front, 2er Tische) -->
+  <!-- Table 1 -->
+  <rect x="90" y="385" width="50" height="50" fill="#3a2a1a" stroke="#8B6340" stroke-width="1.5" rx="3"/>
+  <text x="115" y="413" text-anchor="middle" font-size="9" fill="#D4A843">2P</text>
+  <!-- Chairs -->
+  <rect x="78" y="393" width="10" height="16" fill="#5C3D1E" stroke="#8B6340" stroke-width="1" rx="2"/>
+  <rect x="142" y="393" width="10" height="16" fill="#5C3D1E" stroke="#8B6340" stroke-width="1" rx="2"/>
+
+  <!-- Table 2 -->
+  <rect x="200" y="385" width="50" height="50" fill="#3a2a1a" stroke="#8B6340" stroke-width="1.5" rx="3"/>
+  <text x="225" y="413" text-anchor="middle" font-size="9" fill="#D4A843">2P</text>
+  <rect x="188" y="393" width="10" height="16" fill="#5C3D1E" stroke="#8B6340" stroke-width="1" rx="2"/>
+  <rect x="252" y="393" width="10" height="16" fill="#5C3D1E" stroke="#8B6340" stroke-width="1" rx="2"/>
+
+  <!-- Table 3 - 4P center -->
+  <rect x="370" y="385" width="70" height="65" fill="#2a1a2a" stroke="#7B68EE" stroke-width="1.5" rx="3"/>
+  <text x="405" y="420" text-anchor="middle" font-size="9" fill="#B8A4D4">4P</text>
+  <rect x="356" y="393" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="442" y="393" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="382" y="373" width="18" height="10" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="382" y="452" width="18" height="10" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+
+  <!-- Table 4 - 4P right -->
+  <rect x="530" y="385" width="70" height="65" fill="#2a1a2a" stroke="#7B68EE" stroke-width="1.5" rx="3"/>
+  <text x="565" y="420" text-anchor="middle" font-size="9" fill="#B8A4D4">4P</text>
+  <rect x="516" y="393" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="602" y="393" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="542" y="373" width="18" height="10" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="542" y="452" width="18" height="10" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+
+  <!-- Table 5 - right 2P -->
+  <rect x="720" y="385" width="50" height="50" fill="#3a2a1a" stroke="#8B6340" stroke-width="1.5" rx="3"/>
+  <text x="745" y="413" text-anchor="middle" font-size="9" fill="#D4A843">2P</text>
+  <rect x="708" y="393" width="10" height="16" fill="#5C3D1E" stroke="#8B6340" stroke-width="1" rx="2"/>
+  <rect x="772" y="393" width="10" height="16" fill="#5C3D1E" stroke="#8B6340" stroke-width="1" rx="2"/>
+
+  <!-- Wall benches (Sitzbänke) -->
+  <!-- Left wall bench -->
+  <rect x="68" y="470" width="18" height="180" fill="#5C1A2A" stroke="#8B3040" stroke-width="1.5" rx="3"/>
+  <rect x="86" y="480" width="50" height="55" fill="#3a1a2a" stroke="#8B3040" stroke-width="1" rx="3"/>
+  <text x="111" y="510" text-anchor="middle" font-size="8" fill="#ff9999">Nische 1</text>
+  <rect x="86" y="550" width="50" height="55" fill="#3a1a2a" stroke="#8B3040" stroke-width="1" rx="3"/>
+  <text x="111" y="580" text-anchor="middle" font-size="8" fill="#ff9999">Nische 2</text>
+  <text x="77" y="468" font-size="9" fill="#ff9999">Sitzbank</text>
+
+  <!-- Right wall bench -->
+  <rect x="814" y="470" width="18" height="180" fill="#5C1A2A" stroke="#8B3040" stroke-width="1.5" rx="3"/>
+  <rect x="764" y="480" width="50" height="55" fill="#3a1a2a" stroke="#8B3040" stroke-width="1" rx="3"/>
+  <text x="789" y="510" text-anchor="middle" font-size="8" fill="#ff9999">Nische 3</text>
+  <rect x="764" y="550" width="50" height="55" fill="#3a1a2a" stroke="#8B3040" stroke-width="1" rx="3"/>
+  <text x="789" y="580" text-anchor="middle" font-size="8" fill="#ff9999">Nische 4</text>
+  <text x="764" y="468" font-size="9" fill="#ff9999">Sitzbank</text>
+
+  <!-- Center 4P table (middle area) -->
+  <rect x="350" y="490" width="80" height="70" fill="#2a1a2a" stroke="#7B68EE" stroke-width="1.5" rx="3"/>
+  <text x="390" y="528" text-anchor="middle" font-size="9" fill="#B8A4D4">4P</text>
+  <rect x="336" y="498" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="432" y="498" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+
+  <!-- Second center 4P table -->
+  <rect x="470" y="490" width="80" height="70" fill="#2a1a2a" stroke="#7B68EE" stroke-width="1.5" rx="3"/>
+  <text x="510" y="528" text-anchor="middle" font-size="9" fill="#B8A4D4">4P</text>
+  <rect x="456" y="498" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+  <rect x="552" y="498" width="12" height="18" fill="#3a2a4a" stroke="#7B68EE" stroke-width="1" rx="2"/>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- LOUNGE CORNER (back center) -->
+  <rect x="300" y="595" width="300" height="140" fill="#1a1a35" stroke="#7B68EE" stroke-width="1.5" rx="8"/>
+  <text x="450" y="618" text-anchor="middle" font-size="12" font-weight="bold" fill="#B8A4D4">🛋 LOUNGE-ECKE</text>
+  <text x="450" y="634" text-anchor="middle" font-size="10" fill="#888">Niedrige Tische · Poufs · Kissen</text>
+  <!-- Low table -->
+  <rect x="400" y="645" width="100" height="60" fill="#2a2a45" stroke="#7B68EE" stroke-width="1" rx="5"/>
+  <text x="450" y="678" text-anchor="middle" font-size="9" fill="#B8A4D4">Niedriger Tisch</text>
+  <!-- Poufs -->
+  <ellipse cx="350" cy="680" rx="25" ry="20" fill="#5C1A2A" stroke="#8B3040" stroke-width="1"/>
+  <text x="350" y="684" text-anchor="middle" font-size="8" fill="#ff9999">Pouf</text>
+  <ellipse cx="550" cy="680" rx="25" ry="20" fill="#5C1A2A" stroke="#8B3040" stroke-width="1"/>
+  <text x="550" y="684" text-anchor="middle" font-size="8" fill="#ff9999">Pouf</text>
+  <ellipse cx="350" cy="715" rx="25" ry="20" fill="#5C1A2A" stroke="#8B3040" stroke-width="1"/>
+  <text x="350" y="719" text-anchor="middle" font-size="8" fill="#ff9999">Pouf</text>
+  <ellipse cx="550" cy="715" rx="25" ry="20" fill="#5C1A2A" stroke="#8B3040" stroke-width="1"/>
+  <text x="550" y="719" text-anchor="middle" font-size="8" fill="#ff9999">Pouf</text>
+
+  <!-- WC / Prep Room -->
+  <rect x="68" y="680" width="200" height="62" fill="#1a2a1a" stroke="#4a4a4a" stroke-width="1.5" rx="3"/>
+  <text x="168" y="714" text-anchor="middle" font-size="11" fill="#666">🚾 WC (3 Kab.) + Vorbereitungsraum</text>
+
+  <rect x="632" y="680" width="200" height="62" fill="#1a2a1a" stroke="#4a4a4a" stroke-width="1.5" rx="3"/>
+  <text x="732" y="714" text-anchor="middle" font-size="11" fill="#666">Lager / Vorratskammer</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- LIGHTS (Amun Mosaik-Leuchten) -->
+  <text x="160" y="345" font-size="18" text-anchor="middle">✦</text>
+  <text x="160" y="342" font-size="7" text-anchor="middle" fill="#D4A843">Amun-Leuchte</text>
+  <text x="450" y="345" font-size="18" text-anchor="middle">✦</text>
+  <text x="450" y="342" font-size="7" text-anchor="middle" fill="#D4A843">Amun-Leuchte</text>
+  <text x="740" y="345" font-size="18" text-anchor="middle">✦</text>
+  <text x="740" y="342" font-size="7" text-anchor="middle" fill="#D4A843">Amun-Leuchte</text>
+  <text x="300" y="470" font-size="16" text-anchor="middle">✦</text>
+  <text x="600" y="470" font-size="16" text-anchor="middle">✦</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- LEGEND -->
+  <rect x="68" y="750" width="764" height="55" fill="#222" stroke="#444" stroke-width="1" rx="4"/>
+  <text x="100" y="768" font-size="11" font-weight="bold" fill="#D4A843">LEGENDE:</text>
+  <rect x="165" y="758" width="12" height="12" fill="#3D2B1A" stroke="#8B6340" stroke-width="1"/>
+  <text x="182" y="769" font-size="10" fill="#c8956a">Shop-Zone</text>
+  <rect x="265" y="758" width="12" height="12" fill="#1A2D3D" stroke="#7BC8E0" stroke-width="1"/>
+  <text x="282" y="769" font-size="10" fill="#7BC8E0">Theke/Counter</text>
+  <rect x="390" y="758" width="12" height="12" fill="#2a1a2a" stroke="#7B68EE" stroke-width="1"/>
+  <text x="407" y="769" font-size="10" fill="#B8A4D4">Café-Sitzbereich</text>
+  <rect x="525" y="758" width="12" height="12" fill="#5C1A2A" stroke="#8B3040" stroke-width="1"/>
+  <text x="542" y="769" font-size="10" fill="#ff9999">Sitzbank-Nischen</text>
+  <rect x="660" y="758" width="12" height="12" fill="#1a1a35" stroke="#7B68EE" stroke-width="1"/>
+  <text x="677" y="769" font-size="10" fill="#B8A4D4">Lounge-Ecke</text>
+
+  <text x="100" y="793" font-size="10" fill="#888">✦ = Amun-Mosaik-Leuchte</text>
+  <text x="250" y="793" font-size="10" fill="#888">S1/S2 = Säulen (als Regal-/Displayelemente)</text>
+  <text x="500" y="793" font-size="10" fill="#888">Kapazität: ca. 24–30 Sitzplätze</text>
+
+</svg>
