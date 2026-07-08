@@ -4,8 +4,18 @@ Retention Engine: Hard-delete with exclusive lock and legal hold support.
 Uses PostgreSQL pg_advisory_lock to ensure only one worker runs cleanup.
 Per-table configuration specifies retention days and legal_hold column existence.
 
-Status: Bereit für kontrollierte Testumgebung und Governance-Review.
-Nicht produktionsreif. Nicht zertifiziert.
+Status (Stand 2026-07-06): Bereit für kontrollierte Testumgebung und
+Governance-Review. Nicht produktionsreif. Nicht zertifiziert.
+
+Blocker:
+- Nirgends in main.py eingebunden — die tatsaechlich aktive
+  Retention-Logik laeuft ueber apps/backend/maintenance/retention_cleanup.py,
+  eine unabhaengige, andere Implementierung. Verwechslungsgefahr.
+- Keine Tests.
+
+Aktives Gegenstueck: apps/backend/maintenance/retention_cleanup.py
+(NICHT diese Datei) — wird in main.py beim Start und per Scheduler
+tatsaechlich aufgerufen.
 """
 
 from datetime import datetime, timedelta

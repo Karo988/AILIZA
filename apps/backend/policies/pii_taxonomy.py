@@ -1,8 +1,21 @@
 """
 PII Taxonomy: Central classification of sensitive data categories.
 
-Status: Bereit für kontrollierte Testumgebung und Governance-Review.
-Nicht produktionsreif. Nicht zertifiziert.
+Status (Stand 2026-07-06): Bereit für kontrollierte Testumgebung und
+Governance-Review. Nicht produktionsreif. Nicht zertifiziert.
+
+Blocker:
+- Nirgends in main.py eingebunden — nur von policy_engine.py (ebenfalls
+  unverdrahtet) referenziert.
+- Die tatsaechlich aktive PII-/Redaction-Klassifikation laeuft ueber
+  apps/backend/governance/redaction_v2.py, eine unabhaengige, andere
+  Implementierung mit ueberlappenden, aber nicht identischen Kategorien/
+  Mustern. Verwechslungsgefahr.
+- Keine Tests.
+
+Aktives Gegenstueck: apps/backend/governance/redaction_v2.py
+(RedactionEngineV2, NICHT diese Datei) — wird ueber
+_governance_pre_check() in main.py tatsaechlich genutzt.
 """
 
 class PIITaxonomy:

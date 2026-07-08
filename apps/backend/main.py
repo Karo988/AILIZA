@@ -76,6 +76,55 @@ except ImportError:
     from compliance_auditor import evaluate_compliance, Severity
 
 
+# ── B7 (P-C minimal): Nicht-produktionsreife Module beim Start erkennen ────────
+_NON_PRODUCTION_MODULES = [
+    "legal_hold.py",
+    "policy_engine.py",
+    "retention.py",
+    "policies/pii_taxonomy.py",
+]
+_NON_PRODUCTION_MARKER = "Nicht produktionsreif. Nicht zertifiziert."
+
+
+def _check_non_production_modules() -> list[str]:
+    """
+    Datei-basierter Scan (NICHT import-basiert): warnt auch dann, wenn eines
+    der Module spaeter versehentlich eingebunden wird, unabhaengig vom
+    aktuellen Import-Graph. Kein Startabbruch, nur Sichtbarkeit.
+
+    Gibt die Liste der Dateien zurueck, in denen der Marker gefunden wurde
+    (fuer Tests).
+    """
+    base_dir = Path(__file__).resolve().parent
+    _env_is_prod = os.getenv("AILIZA_ENV", "development").lower() == "production"
+    logger_ = logging.getLogger(__name__)
+    found: list[str] = []
+    for rel_path in _NON_PRODUCTION_MODULES:
+        try:
+            content = (base_dir / rel_path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _NON_PRODUCTION_MARKER not in content:
+            continue
+        found.append(rel_path)
+        if _env_is_prod:
+            logger_.error(
+                "SECURITY: Modul %s ist als 'nicht produktionsreif' markiert "
+                "(Docstring-Marker gefunden) und in Production aktiv.",
+                rel_path,
+            )
+            write_audit_entry(
+                action="startup.non_production_module_detected",
+                metadata={"module": rel_path, "env": "production"},
+            )
+        else:
+            logger_.warning(
+                "Modul %s ist als 'nicht produktionsreif' markiert.", rel_path,
+            )
+    return found
+# ── Ende B7 ─────────────────────────────────────────────────────────────────
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ── Gate 10: Config Integrity — muss als ERSTES laufen ───────────────────
@@ -165,6 +214,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             metadata={"env": "production"},
         )
     # ── Ende Beta-Zugangsschutz-Warnung ───────────────────────────────────────
+
+    # ── B7: Nicht-produktionsreife Module (P-C minimal) ──────────────────────
+    _check_non_production_modules()
+    # ── Ende B7 ──────────────────────────────────────────────────────────────
 
     init_db()
 
