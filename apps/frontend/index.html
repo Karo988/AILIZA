@@ -632,40 +632,10 @@ body{
       </div>
     </div>
   </div>
-</div>
-<!-- ── Login / Registrierung ── -->
-<div class="login-overlay" id="login-overlay">
-  <div class="login-box">
-    <div class="login-brand">
-      <div class="login-brand-name">AI<span>LIZA</span></div>
-      <div class="login-brand-sub">Ihr KI-Assistent · EU-konform · DSGVO</div>
-    </div>
-    <!-- Tabs -->
-    <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
-      <button id="tab-login" onclick="switchTab('login')" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--accent);color:#fff">Anmelden</button>
-      <button id="tab-register" onclick="switchTab('register')" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--surface-2);color:var(--text-soft)">Registrieren</button>
-    </div>
-    <div class="login-error" id="login-error"></div>
-    <!-- Login-Panel -->
-    <div id="panel-login">
-      <div class="login-field"><label>Nutzername</label><input type="text" id="l-user" placeholder="Nutzername" autocomplete="username"></div>
-      <div class="login-field"><label>Passwort</label><input type="password" id="l-pass" placeholder="Passwort" autocomplete="current-password" onkeydown="if(event.key==='Enter')giveConsent()"></div>
-      <div class="login-btns"><button class="btn-login" id="btn-login" onclick="giveConsent()">Anmelden →</button></div>
-    </div>
-    <!-- Registrieren-Panel -->
-    <div id="panel-register" style="display:none">
-      <div class="login-field"><label>Nutzername</label><input type="text" id="r-user" placeholder="Wunsch-Nutzername" autocomplete="username"></div>
-      <div class="login-field"><label>Passwort <span style="font-weight:400;color:var(--text-muted)">(mind. 8 Zeichen, Groß- und Kleinbuchstabe, Zahl)</span></label><div style="position:relative"><input type="password" id="r-pass" placeholder="Sicheres Passwort" autocomplete="new-password" style="width:100%;padding-right:36px"><span onclick="const i=document.getElementById('r-pass');i.type=i.type==='password'?'text':'password'" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:14px;color:var(--text-muted)" title="Passwort anzeigen">👁</span></div></div>
-      <div class="login-field"><label>Passwort wiederholen</label><div style="position:relative"><input type="password" id="r-pass2" placeholder="Wiederholen" autocomplete="new-password" onkeydown="if(event.key==='Enter')doRegister()" style="width:100%;padding-right:36px"><span onclick="const i=document.getElementById('r-pass2');i.type=i.type==='password'?'text':'password'" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:14px;color:var(--text-muted)" title="Passwort anzeigen">👁</span></div></div>
-      <div style="margin-bottom:12px">
-        <span class="privacy-toggle" onclick="const t=document.getElementById('priv-text2');t.style.display=t.style.display==='block'?'none':'block'">▸ Datenschutzhinweis lesen (Art. 13 DSGVO)</span>
-        <div class="privacy-collapse" id="priv-text2" style="display:none">Personenbezogene Daten werden vor der Übertragung automatisch durch Platzhalter ersetzt. Chat-Verläufe werden lokal gespeichert. Anfragen an externe KI-Anbieter nur pseudonymisiert (Art. 46 DSGVO).</div>
-      </div>
-      <label class="login-check"><input type="checkbox" id="r-consent"> Datenschutz &amp; Nutzungsbedingungen akzeptiert · Art. 6 Abs. 1 lit. a DSGVO</label>
-      <label class="login-check"><input type="checkbox" id="r-age"> Ich bin mindestens 16 Jahre alt (Art. 8 DSGVO)</label>
-      <div class="ki-hinweis" style="margin:10px 0">🤖 <strong>KI-Hinweis (EU AI Act Art. 52):</strong> KI-generierte Antworten sollten bei wichtigen Entscheidungen geprüft werden.</div>
-      <div class="login-btns"><button class="btn-login" id="btn-register" onclick="doRegister()">Konto erstellen &amp; starten</button></div>
-    </div>
+  <div class="dsgvo-sidebar" id="dsgvo-sidebar">
+    <div class="dsgvo-sidebar-title">🔒 DSGVO-Schutz</div>
+    <div id="privacy-note" style="font-size:11px;color:var(--text-muted);line-height:1.5"></div>
+    <div id="privacy-items" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"><div class="dsgvo-sidebar-empty">Keine sensiblen Daten erkannt</div></div>
   </div>
 </div>
 <div class="modal" id="proj-modal">
@@ -1257,82 +1227,12 @@ async function deleteMyData(){
   // Seite neu laden nach Datenlöschung
   setTimeout(()=>{location.reload();},2000);
 }
-// ── Auth ──
-function authHeaders(){
-  const t=localStorage.getItem("ailiza_jwt");
-  const h={"Content-Type":"application/json"};
-  if(t)h["Authorization"]="Bearer "+t;
-  return h;
-}
-function showLoginError(msg){const el=document.getElementById("login-error");el.textContent=msg;el.style.display="block"}
-function switchTab(tab){
-  const isLogin=tab==="login";
-  document.getElementById("panel-login").style.display=isLogin?"block":"none";
-  document.getElementById("panel-register").style.display=isLogin?"none":"block";
-  document.getElementById("tab-login").style.background=isLogin?"var(--accent)":"var(--surface-2)";
-  document.getElementById("tab-login").style.color=isLogin?"#fff":"var(--text-soft)";
-  document.getElementById("tab-register").style.background=isLogin?"var(--surface-2)":"var(--accent)";
-  document.getElementById("tab-register").style.color=isLogin?"var(--text-soft)":"#fff";
-  document.getElementById("login-error").style.display="none";
-}
-async function doRegister(){
-  const user=document.getElementById("r-user").value.trim();
-  const pass=document.getElementById("r-pass").value;
-  const pass2=document.getElementById("r-pass2").value;
-  if(!document.getElementById("r-consent").checked||!document.getElementById("r-age").checked){showLoginError("Bitte beide Einwilligungen bestätigen.");return}
-  if(!user){showLoginError("Nutzername eingeben.");return}
-  if(pass!==pass2){showLoginError("Passwörter stimmen nicht überein.");return}
-  const btn=document.getElementById("btn-register");btn.disabled=true;btn.innerHTML='<span class="login-spinner"></span>Erstellen…';
-  try{
-    const r=await fetch(`${API}/auth/self-register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:user,password:pass})});
-    const data=await r.json();
-    if(!r.ok){
-      let msg=data.detail||"Registrierung fehlgeschlagen.";
-      if(Array.isArray(msg))msg=msg.map(e=>e.msg||JSON.stringify(e)).join(" · ");
-      showLoginError(msg);btn.disabled=false;btn.textContent="Konto erstellen & starten";return;
-    }
-    localStorage.setItem("ailiza_jwt",data.access_token);
-    localStorage.setItem("ailiza_user",user);
-    localStorage.setItem("ailiza_consent","1");
-    localStorage.setItem("ailiza_consent_ts",new Date().toISOString());
-    document.getElementById("login-overlay").classList.add("hidden");
-    updateTopbarAuth();init();
-  }catch{showLoginError("Server nicht erreichbar.");btn.disabled=false;btn.textContent="Konto erstellen & starten";}
-}
-async function giveConsent(){
-  const user=document.getElementById("l-user").value.trim();
-  const pass=document.getElementById("l-pass").value;
-  if(!user||!pass){showLoginError("Nutzername und Passwort eingeben.");return}
-  const btn=document.getElementById("btn-login");btn.disabled=true;btn.innerHTML='<span class="login-spinner"></span>Anmelden…';
-  try{
-    const r=await fetch(`${API}/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:user,password:pass})});
-    const data=await r.json();
-    if(!r.ok){showLoginError(data.detail||"Anmeldung fehlgeschlagen.");btn.disabled=false;btn.textContent="Anmelden →";return}
-    localStorage.setItem("ailiza_jwt",data.access_token);
-    localStorage.setItem("ailiza_user",user);
-    localStorage.setItem("ailiza_consent","1");
-    localStorage.setItem("ailiza_consent_ts",new Date().toISOString());
-    document.getElementById("login-overlay").classList.add("hidden");
-    updateTopbarAuth();init();
-  }catch{showLoginError("Server nicht erreichbar.");btn.disabled=false;btn.textContent="Zustimmen & anmelden";}
-}
-function showLoginOverlay(){document.getElementById("login-overlay").classList.remove("hidden")}
-function updateTopbarAuth(){
-  const area=document.getElementById("topbar-auth-area");
-  const user=localStorage.getItem("ailiza_jwt")?localStorage.getItem("ailiza_user")||"Nutzer":null;
-  if(user)area.innerHTML=`<span class="topbar-user" onclick="logout()" title="Abmelden">👤 ${user}</span>`;
-  else area.innerHTML=`<button class="topbar-login" onclick="showLoginOverlay()">Anmelden</button>`;
-}
-function logout(){
-  localStorage.removeItem("ailiza_consent");
-  localStorage.removeItem("ailiza_jwt");
-  localStorage.removeItem("ailiza_user");
-  localStorage.removeItem("ailiza_pii_consent");
-  updateTopbarAuth();
-  document.getElementById("login-overlay").classList.remove("hidden");
-}
-if(localStorage.getItem("ailiza_consent")==="1"&&localStorage.getItem("ailiza_jwt")){document.getElementById("login-overlay").classList.add("hidden");updateTopbarAuth();init();}
-else{updateTopbarAuth();}
+// ── Auth (Login deaktiviert — kommt später) ──
+function authHeaders(){return{"Content-Type":"application/json"};}
+// App direkt starten
+if(localStorage.getItem("ailiza_consent")==="1"){init();}
+
+// else: Consent-Screen bleibt sichtbar
 </script>
 </body>
 </html>
