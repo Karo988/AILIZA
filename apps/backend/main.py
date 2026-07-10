@@ -49,6 +49,7 @@ try:
     from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
     from .compliance_auditor import evaluate_compliance, Severity
+    from .kill_switch import enforce_kill_switch
 except ImportError:
     from agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from database import (
@@ -74,6 +75,7 @@ except ImportError:
     from governance.redaction import redact, reinsert
     from governance.data_matrix import check_data_target, PolicyDecision
     from compliance_auditor import evaluate_compliance, Severity
+    from kill_switch import enforce_kill_switch
 
 
 # ── B7 (P-C minimal): Nicht-produktionsreife Module beim Start erkennen ────────
@@ -713,130 +715,149 @@ def debug_llm_status() -> dict[str, Any]:
     return result
 
 
-@app.get("/api/debug/provider-test")
-def debug_provider_test() -> dict[str, Any]:
-    """
-    Testet jeden Provider mit einer harmlosen Nachricht ohne Nutzerdaten.
-    Gibt sanitisierten Status je Provider zurück — keine Secrets, keine Keys.
-    Für Diagnose auf Render: zeigt welcher Provider fehlschlägt und warum.
-    WICHTIG: Deaktivieren wenn nicht gebraucht (AILIZA_DEBUG=false).
-    """
-    import uuid as _uuid
-    rid = _uuid.uuid4().hex[:8]
-    _test_prompt = "Antworte nur mit: AILIZA_PROVIDER_OK"
-    _test_messages = [{"role": "user", "content": _test_prompt}]
+def _debug_provider_test_enabled() -> bool:
+    return os.getenv("AILIZA_ENV", "development").strip().lower() != "production"
 
-    results: dict[str, Any] = {}
-    selected_provider: str | None = None
-    final_status = "all_failed"
 
-    # GROQ_MODEL — der häufigste Fehlergrund
-    groq_model_used = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
-    results["groq_model_resolved"] = groq_model_used
-    results["groq_model_env_raw"] = os.getenv("GROQ_MODEL", "(not set)")
+if _debug_provider_test_enabled():
+    @app.get("/api/debug/provider-test")
+    def debug_provider_test() -> dict[str, Any]:
+        """
+        Testet jeden Provider mit einer harmlosen Nachricht ohne Nutzerdaten.
+        Gibt sanitisierten Status je Provider zurück — keine Secrets, keine Keys.
+        Für Diagnose auf Render: zeigt welcher Provider fehlschlägt und warum.
+        In Production wird dieser Endpunkt nicht registriert.
+        """
+        import uuid as _uuid
+        rid = _uuid.uuid4().hex[:8]
+        _test_prompt = "Antworte nur mit: AILIZA_PROVIDER_OK"
+        _test_messages = [{"role": "user", "content": _test_prompt}]
 
-    _KEY_ENV_TEST = {
-        "groq": "GROQ_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-    }
-
-    # Effektive Provider-Reihenfolge aus AILIZA_PROVIDER_ORDER
-    from providers.orchestrator import _get_provider_order
-    provider_order_effective = _get_provider_order()
-
-    def _reg_meta(pid: str) -> dict[str, Any]:
         try:
-            from registry.registry_loader import get_registry
-            reg_entry = get_registry().get_provider(pid)
-            if reg_entry:
-                return {
-                    "registry_enabled": reg_entry.enabled,
-                    "registry_approved": reg_entry.admin_approved,
-                    "registry_health": reg_entry.health_status,
-                    "failover_priority": reg_entry.failover_priority,
-                }
-        except Exception:
-            pass
-        return {}
+            enforce_kill_switch()
+        except AILIZAError as exc:
+            return {
+                "request_id": rid,
+                "status": "blocked",
+                "final_status": "blocked",
+                "error": exc.to_dict(),
+                "provider_attempts_in_order": [],
+                "failed_providers": {},
+                "providers": {},
+                "note": "Kill-Switch aktiv: Provider-Test wurde vor externen Calls gestoppt.",
+            }
 
-    # Teste Provider in der konfigurierten Reihenfolge
-    all_pids = list(getattr(_orchestrator, "providers", {}).keys())
-    ordered_pids = [p for p in provider_order_effective if p in all_pids]
-    ordered_pids += [p for p in all_pids if p not in ordered_pids]
+        results: dict[str, Any] = {}
+        selected_provider: str | None = None
+        final_status = "all_failed"
 
-    attempts_in_order: list[str] = []
-    failed_providers: dict[str, str] = {}
+        # GROQ_MODEL — der häufigste Fehlergrund
+        groq_model_used = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
+        results["groq_model_resolved"] = groq_model_used
+        results["groq_model_env_raw"] = os.getenv("GROQ_MODEL", "(not set)")
 
-    for pid in ordered_pids:
-        provider = _orchestrator.providers[pid]
-        key_env = _KEY_ENV_TEST.get(pid, "")
-        configured = bool(os.getenv(key_env)) if key_env else True
-        model_used = getattr(provider, "model", "unknown")
-
-        entry: dict[str, Any] = {
-            "configured": configured,
-            "model": model_used,
-            "status": "skipped",
-            "error_type": None,
-            "error_sanitized": None,
-            **_reg_meta(pid),
+        _KEY_ENV_TEST = {
+            "groq": "GROQ_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
         }
 
-        if not configured:
-            entry["error_sanitized"] = f"API-Key nicht gesetzt — Render-Env: {key_env}"
+        # Effektive Provider-Reihenfolge aus AILIZA_PROVIDER_ORDER
+        from providers.orchestrator import _get_provider_order
+        provider_order_effective = _get_provider_order()
+
+        def _reg_meta(pid: str) -> dict[str, Any]:
+            try:
+                from registry.registry_loader import get_registry
+                reg_entry = get_registry().get_provider(pid)
+                if reg_entry:
+                    return {
+                        "registry_enabled": reg_entry.enabled,
+                        "registry_approved": reg_entry.admin_approved,
+                        "registry_health": reg_entry.health_status,
+                        "failover_priority": reg_entry.failover_priority,
+                    }
+            except Exception:
+                pass
+            return {}
+
+        # Teste Provider in der konfigurierten Reihenfolge
+        all_pids = list(getattr(_orchestrator, "providers", {}).keys())
+        ordered_pids = [p for p in provider_order_effective if p in all_pids]
+        ordered_pids += [p for p in all_pids if p not in ordered_pids]
+
+        attempts_in_order: list[str] = []
+        failed_providers: dict[str, str] = {}
+
+        for pid in ordered_pids:
+            provider = _orchestrator.providers[pid]
+            key_env = _KEY_ENV_TEST.get(pid, "")
+            configured = bool(os.getenv(key_env)) if key_env else True
+            model_used = getattr(provider, "model", "unknown")
+
+            entry: dict[str, Any] = {
+                "configured": configured,
+                "model": model_used,
+                "status": "skipped",
+                "error_type": None,
+                "error_sanitized": None,
+                **_reg_meta(pid),
+            }
+
+            if not configured:
+                entry["error_sanitized"] = f"API-Key nicht gesetzt — Render-Env: {key_env}"
+                results[pid] = entry
+                continue
+
+            attempts_in_order.append(pid)
+            try:
+                answer = provider.generate(_test_messages)
+                entry["status"] = "ok"
+                entry["answer_preview"] = (answer or "")[:40]
+                if selected_provider is None:
+                    selected_provider = pid
+                    final_status = "ok"
+            except AILIZAError as exc:
+                entry["status"] = "error"
+                entry["error_type"] = exc.code
+                _alts = exc.safe_alternatives or []
+                entry["error_sanitized"] = _alts[0] if _alts else exc.code
+                failed_providers[pid] = entry["error_sanitized"]
+            except Exception as exc:  # noqa: BLE001
+                entry["status"] = "error"
+                entry["error_type"] = type(exc).__name__
+                entry["error_sanitized"] = type(exc).__name__
+                failed_providers[pid] = entry["error_sanitized"]
+
+            print(
+                f"AILIZA PROVIDER TEST | request_id={rid} provider={pid} "
+                f"model={model_used} status={entry['status']} "
+                f"error={entry.get('error_type') or 'none'}",
+                flush=True,
+            )
             results[pid] = entry
-            continue
 
-        attempts_in_order.append(pid)
-        try:
-            answer = provider.generate(_test_messages)
-            entry["status"] = "ok"
-            entry["answer_preview"] = (answer or "")[:40]
-            if selected_provider is None:
-                selected_provider = pid
-                final_status = "ok"
-        except AILIZAError as exc:
-            entry["status"] = "error"
-            entry["error_type"] = exc.code
-            _alts = exc.safe_alternatives or []
-            entry["error_sanitized"] = _alts[0] if _alts else exc.code
-            failed_providers[pid] = entry["error_sanitized"]
-        except Exception as exc:  # noqa: BLE001
-            entry["status"] = "error"
-            entry["error_type"] = type(exc).__name__
-            entry["error_sanitized"] = type(exc).__name__
-            failed_providers[pid] = entry["error_sanitized"]
-
-        print(
-            f"AILIZA PROVIDER TEST | request_id={rid} provider={pid} "
-            f"model={model_used} status={entry['status']} "
-            f"error={entry.get('error_type') or 'none'}",
-            flush=True,
-        )
-        results[pid] = entry
-
-    return {
-        "request_id": rid,
-        "final_status": final_status,
-        "provider_order_effective": provider_order_effective,
-        "provider_attempts_in_order": attempts_in_order,
-        "first_successful_provider": selected_provider,
-        "selected_provider": selected_provider,
-        "failed_providers": failed_providers,
-        "groq_model_resolved": groq_model_used,
-        "groq_model_env_raw": results.pop("groq_model_env_raw", os.getenv("GROQ_MODEL", "(not set)")),
-        "providers": results,
-        "render_env_required": {
-            "openai": "OPENAI_API_KEY (+ optional OPENAI_MODEL, default: gpt-4o-mini)",
-            "openrouter": "OPENROUTER_API_KEY (+ optional OPENROUTER_MODEL, default: meta-llama/llama-3.1-8b-instruct)",
-            "groq": "GROQ_API_KEY + GROQ_MODEL (default: llama-3.1-8b-instant) — aktuell health_status=down",
-            "anthropic": "ANTHROPIC_API_KEY (+ optional ANTHROPIC_MODEL)",
-            "provider_order": "AILIZA_PROVIDER_ORDER (optional, default: openai,openrouter,groq,anthropic,local)",
-        },
-        "note": "Dieser Endpunkt sollte in Produktion durch AILIZA_DEBUG-Flag geschützt werden.",
-    }
+        return {
+            "request_id": rid,
+            "final_status": final_status,
+            "provider_order_effective": provider_order_effective,
+            "provider_attempts_in_order": attempts_in_order,
+            "first_successful_provider": selected_provider,
+            "selected_provider": selected_provider,
+            "failed_providers": failed_providers,
+            "groq_model_resolved": groq_model_used,
+            "groq_model_env_raw": results.pop("groq_model_env_raw", os.getenv("GROQ_MODEL", "(not set)")),
+            "providers": results,
+            "render_env_required": {
+                "openai": "OPENAI_API_KEY (+ optional OPENAI_MODEL, default: gpt-4o-mini)",
+                "openrouter": "OPENROUTER_API_KEY (+ optional OPENROUTER_MODEL, default: meta-llama/llama-3.1-8b-instruct)",
+                "groq": "GROQ_API_KEY + GROQ_MODEL (default: llama-3.1-8b-instant) — aktuell health_status=down",
+                "anthropic": "ANTHROPIC_API_KEY (+ optional ANTHROPIC_MODEL)",
+                "provider_order": "AILIZA_PROVIDER_ORDER (optional, default: openai,openrouter,groq,anthropic,local)",
+            },
+            "note": "Dieser Endpunkt ist in Dev/Staging verfügbar und Kill-Switch-geschützt.",
+        }
 
 
 @app.get("/api/debug/groq-diagnosis")
