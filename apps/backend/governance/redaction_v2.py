@@ -122,7 +122,7 @@ class RedactionEngineV2:
         "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
         "gps_coords": re.compile(r"\b-?\d{1,3}\.\d{3,6},[ \t]*-?\d{1,3}\.\d{3,6}\b"),
         "device_id": re.compile(
-            r"(?i:Gerätekennung|Geräte-ID|Device-ID)[ \t]*:?[ \t]*[\w\-]{4,30}",
+            r"(?i:Gerätekennung|Geräte-ID|Device-ID|Browser-Fingerprint)[ \t]*:?[ \t]*[\w\-]{4,30}",
         ),
         # Finanzielle Detailangaben — label-basiert, Wert bis Zeilenende.
         "financial_detail": re.compile(
