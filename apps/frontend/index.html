@@ -648,6 +648,19 @@ body{
     <div class="modal-acts"><button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button><button class="btn-primary" onclick="saveProject()">Erstellen</button></div>
   </div>
 </div>
+<div class="modal" id="login-modal">
+  <div class="modal-box">
+    <div class="modal-h">Anmelden</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" id="login-modal-hint">
+      Anfragen mit personenbezogenen Daten sind dokumentationspflichtig (DSGVO).
+      Bitte melden Sie sich an, um fortzufahren.
+    </div>
+    <div class="field"><label>Nutzername</label><input id="login-user" type="text" autocomplete="username"></div>
+    <div class="field"><label>Passwort</label><input id="login-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <div id="login-error" style="display:none;color:var(--warn);font-size:12px;margin-bottom:8px"></div>
+    <div class="modal-acts"><button class="btn-ghost" onclick="closeLoginModal()">Abbrechen</button><button class="btn-primary" onclick="doLogin()">Anmelden</button></div>
+  </div>
+</div>
 <script>
 // API-URL: relativ, Same-Origin (siehe Kommentar bei const API weiter unten)
 // Same-Origin: Frontend und Backend laufen im selben FastAPI-Prozess (main.py
@@ -1092,13 +1105,40 @@ async function _doSend(sendText,map){
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
 }
-async function runAgent(text,redactionMap){
+// Merkt sich die letzte Anfrage, die an einem Login-/Einwilligungs-Gate
+// gestoppt wurde, damit sie nach Login bzw. Bestätigung erneut gesendet
+// werden kann. Nur im RAM — wird nie gespeichert.
+let gatedTask=null;
+let gatedConsentApprovalId=null;
+
+async function runAgent(text,redactionMap,consentApprovalId){
   // Phase 1.3: History wird bereits durch Backend geschwärzt
   const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
-  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
+  const body={task:text,history};
+  if(consentApprovalId)body.consent_approval_id=consentApprovalId;
+  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify(body)});
   hideTyping();
   if(!r.ok){activeRedactionMap={};renderPrivacyMemory();addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
   const data=await r.json();
+  // B2: Drei-Stufen-Modell — Login-Gate (Dokumentationspflicht) und
+  // Einwilligungs-Gate (auch nach Schwärzung nicht konform). Kein Hartblock.
+  if(data.status==="login_required"){
+    activeRedactionMap={};renderPrivacyMemory();
+    gatedTask=text;gatedConsentApprovalId=null;
+    addAiMessage(data.message||"Bitte einloggen.",undefined);
+    appendActionRow([{label:"Jetzt anmelden",primary:true,handler:openLoginModal}]);
+    return;
+  }
+  if(data.status==="consent_required"){
+    activeRedactionMap={};renderPrivacyMemory();
+    gatedTask=text;gatedConsentApprovalId=data.approval_id||null;
+    addAiMessage(data.message||"Bestätigung erforderlich.",undefined);
+    appendActionRow([
+      {label:"Trotzdem senden (wird dokumentiert)",primary:true,handler:consentResend},
+      {label:"Abbrechen",primary:false,handler:()=>{gatedTask=null;gatedConsentApprovalId=null;}}
+    ]);
+    return;
+  }
   let answer=data.ai_response||"";
   if(data.message&&data.message!=="Agent run completed")answer=data.message;
   if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
@@ -1131,6 +1171,64 @@ function addAiMessage(text,warn,draftHint,testModeInfo){
   if(last){streamAiBubble(last,text);}
   renderPrivacyMemory();scrollToBottom();
 }
+// ── B2: Aktions-Buttons unter einer AI-Nachricht (nicht persistiert — nach
+// einem Neu-Rendern der History verschwinden sie bewusst) ────────────────────
+function appendActionRow(buttons){
+  const inner=document.getElementById("chat-inner");
+  const row=document.createElement("div");
+  row.className="msg ai";
+  row.style.cssText="display:flex;gap:8px;margin:4px 0 12px 0";
+  for(const b of buttons){
+    const btn=document.createElement("button");
+    btn.className=b.primary?"btn-primary":"btn-ghost";
+    btn.textContent=b.label;
+    btn.addEventListener("click",()=>{row.remove();b.handler();});
+    row.appendChild(btn);
+  }
+  inner.appendChild(row);
+  scrollToBottom();
+}
+
+// ── B2 Fall 3: Einwilligung bestätigen und erneut senden ─────────────────────
+async function consentResend(){
+  if(!gatedTask||!gatedConsentApprovalId)return;
+  const r=await fetch(`${API}/approvals/${gatedConsentApprovalId}/approve`,{
+    method:"POST",headers:authHeaders(),
+    body:JSON.stringify({note:"Nutzer-Einwilligung im Chat bestätigt"})
+  });
+  if(r.status===401){openLoginModal();return;}
+  if(!r.ok&&r.status!==409){addAiMessage("Bestätigung fehlgeschlagen.","HTTP "+r.status);return;}
+  const task=gatedTask,aid=gatedConsentApprovalId;
+  gatedTask=null;gatedConsentApprovalId=null;
+  showTyping();
+  try{await runAgent(task,null,aid);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+}
+
+// ── B2: Minimales Login (Cookie-Flow, /auth/login setzt HttpOnly-Cookie) ─────
+function openLoginModal(){document.getElementById("login-error").style.display="none";document.getElementById("login-modal").classList.add("open");document.getElementById("login-user").focus();}
+function closeLoginModal(){document.getElementById("login-modal").classList.remove("open");}
+async function doLogin(){
+  const u=document.getElementById("login-user").value.trim();
+  const p=document.getElementById("login-pass").value;
+  const err=document.getElementById("login-error");
+  if(!u||!p){err.textContent="Bitte Nutzername und Passwort eingeben.";err.style.display="block";return;}
+  let r;
+  try{
+    r=await fetch(`${API}/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:u,password:p})});
+  }catch(e){err.textContent="Backend nicht erreichbar.";err.style.display="block";return;}
+  if(!r.ok){err.textContent="Anmeldung fehlgeschlagen. Bitte Zugangsdaten prüfen.";err.style.display="block";return;}
+  const d=await r.json();
+  if(d.totp_required){err.textContent="Dieses Konto erfordert TOTP — bitte über die Admin-Oberfläche anmelden.";err.style.display="block";return;}
+  document.getElementById("login-pass").value="";
+  closeLoginModal();
+  addAiMessage(`Angemeldet als ${u}. `+(gatedTask?"Ihre Anfrage wird erneut gesendet.":""),undefined);
+  if(gatedTask){
+    const task=gatedTask;gatedTask=null;gatedConsentApprovalId=null;
+    showTyping();
+    try{await runAgent(task,null);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+  }
+}
+
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function handlePaste(e){
   e.preventDefault();

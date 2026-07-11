@@ -8,14 +8,20 @@
 - [x] Branch-Schutz auf `main` aktiv
 - [x] Debug-Endpoint Kill-Switch-Fix (`11779cb`) — verifiziert, Tests grün
 - [x] VISION.md / TASKS.md angelegt
+- [x] Compliance-Auditor-Bug: blockierte 100% aller Nachrichten (Art.-6-Regel)
+- [x] B1: Login-Pflicht für /approvals/{id}/approve und /reject
+- [x] B2a: Drei-Stufen-Modell statt Hartblock (Schwärzung zuerst, dann
+      Compliance; Fall 1 frei / Fall 2 Login+Doku / Fall 3 Login+Einwilligung)
+- [x] B2b: Frontend-Gates (login_required/consent_required) + Login-Modal
 
 ## In Arbeit
 
 - [ ] Docker-Staging (`AILIZA-stagin`) Funktionscheckliste — Claude Code
+      (Health ✓, Beta-Gate ✓, Golden-Brief ✓ — Rest nach B2-Deploy erneut)
 
 ## Review nötig
 
-- [ ] —
+- [ ] B2 auf Staging live testen (Betreiberin, Browser): Fall 1/2/3 + Login
 
 ## Backlog
 
