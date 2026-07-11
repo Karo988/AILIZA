@@ -74,6 +74,23 @@ class RedactionEngineV2:
         "name_standalone_line": re.compile(
             r"^[A-ZÄÖÜ][a-zäöüß\-]+[ \t]+[A-ZÄÖÜ][a-zäöüß\-]+$", re.MULTILINE,
         ),
+        # "mein Name ist Paula Ronder" — haeufigste Selbstauskunfts-Formulierung
+        # in Briefen/E-Mails, wurde bisher von keinem Muster erfasst (nur
+        # "Name:" mit Doppelpunkt und Titel-Anreden wie "Frau X").
+        "name_self_intro": re.compile(
+            r"(?i:mein(?:e)?|unser(?:e)?)[ \t]+Name[ \t]+ist[ \t]+"
+            r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
+        ),
+        # Name in der Grussformel-Signatur ("Mit freundlichen Gruessen, X Y").
+        # Gr(üe|ü|ue)ß(en)? deckt auch ASCII-Ersatzschreibung ohne Umlaut-
+        # Tastatur ab ("Gruessen" statt "Grüßen").
+        "name_signature": re.compile(
+            r"(?i:Mit[ \t]+freundlichen[ \t]+Gr(?:ü|ue)(?:ß|ss)en"
+            r"|Mit[ \t]+besten[ \t]+Gr(?:ü|ue)(?:ß|ss)en"
+            r"|Viele[ \t]+Gr(?:ü|ue)(?:ß|ss)e\b"
+            r"|Beste[ \t]+Gr(?:ü|ue)(?:ß|ss)e\b)[,]?[ \t]*"
+            r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
+        ),
         "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
         "birthdate": re.compile(
             r"\b(?:Geburtsdatum|geb\.)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}", re.IGNORECASE,
@@ -115,13 +132,21 @@ class RedactionEngineV2:
 
     # Art. 9-Kategorien (VIOLETT)
     VIOLET_KEYWORDS = {
-        "health": ["diagnose", "migräne", "kopfschmerz", "krankheit", "gesundheit", "krankschreibung"],
-        "religion": ["religion", "muslimisch", "christlich", "buddhistische", "jüdisch", "atheist"],
+        "health": [
+            "diagnose", "migräne", "kopfschmerz", "krankheit", "gesundheit",
+            "krankschreibung", "hiv", "aids", "infektion", "erkrankung",
+            "behinderung", "depression", "krebs", "diabetes",
+        ],
+        "religion": ["religion", "muslimisch", "christlich", "buddhistische", "jüdisch", "atheist", "katholisch", "evangelisch"],
         "politics": ["politische", "wahlbezirk", "spd", "cdu", "grüne", "linke", "afd", "fdp"],
         "sexual": ["homosexuell", "lesbisch", "schwul", "bisexuell", "queer", "sexuelle"],
         "ethnic": ["herkunft", "ethni", "rasse", "abstammung", "nationalität"],
         "biometric": ["fingerabdruck", "gesichtserkennung", "biometrisch", "gesichtsanalyse"],
-        "union": ["gewerkschafts", "tarifvertrag", "betriebsrat"],
+        # "gewerkschaft" statt "gewerkschafts": das Grundwort ("Mitglied der
+        # Gewerkschaft ver.di") ist haeufiger als die zusammengesetzte Form
+        # und wurde vorher NICHT erkannt (\bgewerkschafts matcht "Gewerkschaft"
+        # nicht, da das "s" fehlt).
+        "union": ["gewerkschaft", "tarifvertrag", "betriebsrat"],
         "genetic": ["genetisch", "dna", "chromosom", "genom"],
         "criminal": ["strafrechtlich", "verurteilung", "strafregister"],
     }
@@ -266,35 +291,29 @@ class RedactionEngineV2:
 
     def _redact_violet_sections(self, text: str, violet_categories: dict[str, list]) -> str:
         """
-        Schwärzt Zeilen mit Art. 9-Daten - AGGRESSIV, aber zeilenscharf.
+        Schwärzt NUR die konkreten Art.-9-Begriffe/Wörter selbst — nicht die
+        ganze Zeile oder den ganzen Brief.
 
-        Fruehere Version nutzte eine mehrzeilige Regex mit `\\s+` als
-        "Folgezeilen"-Muster — `\\s` matcht auch `\\n`, wodurch das Muster
-        durch Absatzgrenzen hindurch bis zum Ende des Dokuments "fressen"
-        konnte und dabei bereits geschwaerzte SCHWARZ-Abschnitte mit
-        wegloeschte (Incident 2026-07, Amun-Brief-Vorfall). Fix: Ersetzt
-        ausschliesslich die EINZELNE Zeile, die eines der tatsaechlich
-        erkannten Schluesselwoerter enthaelt — nie mehr, nie weniger.
-        Ausserdem unabhaengig vom exakten Feldbezeichner im Dokument (z.B.
-        "Religion:" vs. Code-Label "Religion/Weltanschauung:" — vorher ein
-        stiller Mismatch, der die Zeile komplett unredaktiert liess).
+        Betreiber-Freigabe 2026-07-11: Eine fruehere Version ersetzte die
+        komplette Zeile, die ein Schluesselwort enthielt (Incident: bei
+        einem einzigen durchgehenden Absatz ohne Zeilenumbrueche war "die
+        Zeile" der GESAMTE Brief — der Rest der Anfrage, z.B. das eigentliche
+        Anliegen, ging mit verloren und konnte nicht mehr zusammengefasst
+        werden). Jetzt: nur die tatsaechlich erkannten Woerter werden durch
+        einen kompakten Inline-Platzhalter ersetzt, der Rest des Textes
+        bleibt unveraendert erhalten und ist weiter verarbeitbar.
         """
-        lines = text.split("\n")
         for category, matched_keywords in violet_categories.items():
             category_label = self._VIOLET_CATEGORY_LABELS.get(category, category)
             article = self._VIOLET_CATEGORY_ARTICLE.get(category, self._DEFAULT_VIOLET_ARTICLE)
             kw_pattern = re.compile(
-                "|".join(re.escape(kw) for kw in set(matched_keywords)), re.IGNORECASE,
+                r"\b(?:" + "|".join(re.escape(kw) for kw in set(matched_keywords)) + r")[\wäöüÄÖÜß-]*",
+                re.IGNORECASE,
             )
-            placeholder_line = (
-                f"[GESCHWAERZT: {category_label} - {article} - "
-                f"Datenkategorie nicht extern verarbeitbar]"
-            )
-            for i, line in enumerate(lines):
-                if kw_pattern.search(line):
-                    lines[i] = placeholder_line
+            placeholder = f"[GESCHWAERZT: {category_label} - {article}]"
+            text = kw_pattern.sub(placeholder, text)
 
-        return "\n".join(lines)
+        return text
 
     def _remove_secrets(self, text: str) -> str:
         """Entfernt Secrets komplett (keine Redaction)"""
@@ -345,6 +364,8 @@ class RedactionEngineV2:
             "name": "Name",
             "name_field": "Name",
             "name_standalone_line": "Name",
+            "name_self_intro": "Name",
+            "name_signature": "Name",
             "email": "E-Mail",
             "birthdate": "Geburtsdatum",
             "phone": "Telefon",
