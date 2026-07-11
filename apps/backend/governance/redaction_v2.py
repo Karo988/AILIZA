@@ -99,7 +99,37 @@ class RedactionEngineV2:
             re.IGNORECASE,
         ),
         "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
+        "bic": re.compile(r"\bBIC[ \t]*:?[ \t]*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b", re.IGNORECASE),
         "card": re.compile(r"\b(?:\d{4}[\s\-]?){3}\d{4}\b"),
+        # Amtliche Ausweis-/ID-Nummern (Karo-Fund 2026-07-11, erweiterter
+        # Amun-Testbrief): Personalausweis, Reisepass, Steuer-ID, Sozial-
+        # versicherung, Fuehrerschein, Krankenversicherung. Label-basiert,
+        # da die Nummernformate je Dokumenttyp variieren.
+        "official_id": re.compile(
+            r"(?i:Personalausweisnummer|Reisepassnummer|Steueridentifikationsnummer"
+            r"|Steuer-?ID|Sozialversicherungsnummer|Führerscheinnummer"
+            r"|Krankenversicherungsnummer)[ \t]*:?[ \t]*[\w \-]{4,25}",
+        ),
+        # Zugangsdaten/Geheimnisse (DSGVO/CLAUDE.md-Kategorie "secret" ⚫ —
+        # nie ausgeben). Label-basiert: die Werte selbst haben kein
+        # einheitliches Format (Woerter, Zahlen, Base32-Schluessel, ...).
+        "credential": re.compile(
+            r"(?i:Benutzername|Passwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
+            r"|Wiederherstellungscode|Zwei-Faktor-Authentifizierungsschlüssel)"
+            r"[ \t]*:?[ \t]*[^\n]{1,60}",
+        ),
+        # Technische Kennungen mit Standort-/Identifizierungsbezug.
+        "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+        "gps_coords": re.compile(r"\b-?\d{1,3}\.\d{3,6},[ \t]*-?\d{1,3}\.\d{3,6}\b"),
+        "device_id": re.compile(
+            r"(?i:Gerätekennung|Geräte-ID|Device-ID)[ \t]*:?[ \t]*[\w\-]{4,30}",
+        ),
+        # Finanzielle Detailangaben — label-basiert, Wert bis Zeilenende.
+        "financial_detail": re.compile(
+            r"(?i:Monatliches Nettoeinkommen|Monatliche Mietkosten|Laufender Ratenkredit"
+            r"|Dispositionskredit|Aktueller Kontostand|Bonitätsscore"
+            r"|SCHUFA-ähnliche Risikoeinstufung)[ \t]*:?[ \t]*[^\n]{1,60}",
+        ),
         "address": re.compile(
             # Kein IGNORECASE: Strassenname ist im Deutschen konventionell
             # grossgeschrieben — case-sensitiv verhindert Ueberdehnung auf
@@ -309,8 +339,14 @@ class RedactionEngineV2:
         for category, matched_keywords in violet_categories.items():
             category_label = self._VIOLET_CATEGORY_LABELS.get(category, category)
             article = self._VIOLET_CATEGORY_ARTICLE.get(category, self._DEFAULT_VIOLET_ARTICLE)
+            # Karo-Fund 2026-07-11 (erweiterter Amun-Testbrief): "Diagnose:
+            # depressive Episode" schwaerzte bisher nur das Wort "Diagnose"
+            # — die eigentliche Diagnose dahinter blieb im Klartext. Wenn dem
+            # Schluesselwort direkt ": <Wert>" folgt (Label-Zeile), wird der
+            # Wert bis Zeilenende MIT geschwaerzt, nicht nur das Label-Wort.
             kw_pattern = re.compile(
-                r"\b(?:" + "|".join(re.escape(kw) for kw in set(matched_keywords)) + r")[\wäöüÄÖÜß-]*",
+                r"\b(?:" + "|".join(re.escape(kw) for kw in set(matched_keywords)) + r")"
+                r"[\wäöüÄÖÜß-]*(?:[ \t]*:[ \t]*[^\n]{1,80})?",
                 re.IGNORECASE,
             )
             placeholder = f"[GESCHWAERZT: {category_label} - {article}]"
@@ -373,10 +409,17 @@ class RedactionEngineV2:
             "birthdate": "Geburtsdatum",
             "phone": "Telefon",
             "iban": "IBAN",
+            "bic": "BIC",
             "card": "Kartennummer",
             "address": "Adresse",
             "postal_city": "Ort",
             "reference": "Referenznummer",
+            "official_id": "Ausweisnummer",
+            "credential": "Zugangsdaten",
+            "ip_address": "IP-Adresse",
+            "gps_coords": "Standort",
+            "device_id": "Gerätekennung",
+            "financial_detail": "Finanzangabe",
         }
         return labels.get(pii_type, pii_type.title())
 
