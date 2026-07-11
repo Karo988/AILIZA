@@ -1252,16 +1252,46 @@ def _governance_pre_check(
         engine = RedactionEngineV2()
         redaction_result = engine.redact(task)
         dc_names = [c.value for c in data_classes]
+
+        # Sicherheitsnetz (fail-closed auf Schwaerzungsebene): Wenn der
+        # Klassifikator SPECIAL_CATEGORY/CREDENTIALS meldet, die Engine aber
+        # nichts (oder nicht alles) schwaerzt, wird der GESAMTE Inhalt durch
+        # einen Platzhalter ersetzt. Rohdaten verlassen das System NIE —
+        # auch nicht nach Nutzer-Einwilligung.
+        redacted_text = redaction_result.redacted_text
+        reinsertion_map = redaction_result.reinsertion_map
+        _still_critical = redacted_text == task
+        if not _still_critical:
+            try:
+                _recheck = classify(_strip_redaction_placeholders(redacted_text))
+                _recheck_classes = list(getattr(_recheck, "classes", getattr(_recheck, "data_classes", [])) or [])
+                _still_critical = any(
+                    c in (DataClass.SPECIAL_CATEGORY, DataClass.CREDENTIALS)
+                    for c in _recheck_classes
+                )
+            except Exception:
+                _still_critical = True  # fail-closed
+        if _still_critical:
+            redacted_text = (
+                f"[GESCHWAERZT: {', '.join(dc_names)} - Art. 9 DSGVO / "
+                "EU AI Act Art. 5 - Inhalt vollständig geschwärzt]"
+            )
+            reinsertion_map = {}
+
         write_audit_entry(
             action="governance.special_category_redacted",
             tenant_id=tenant_id,
-            metadata={"data_classes": dc_names, "redaction_applied": True},
+            metadata={
+                "data_classes": dc_names,
+                "redaction_applied": True,
+                "full_redaction_fallback": _still_critical,
+            },
         )
         return {
             "decision": "allow_with_notice",
-            "task": redaction_result.redacted_text,
+            "task": redacted_text,
             # reinsertion_map: NUR lokal im RAM — NIEMALS loggen oder persistieren
-            "reinsertion_map": redaction_result.reinsertion_map,
+            "reinsertion_map": reinsertion_map,
             "notice": (
                 "Besonders geschützte Daten erkannt "
                 f"({', '.join(dc_names)}) und vollständig geschwärzt "
@@ -1497,6 +1527,33 @@ def run_agent(
             "status": "completed",
             "message": simple_answer,
             "ai_response": simple_answer,
+            "steps": [],
+            "results": [],
+        }
+
+    # ── B8b: Beta-Hochrisiko-Sperre auf dem ROHEN Text ────────────────────────
+    # Muss VOR der Schwaerzung laufen: die Sperre gilt der Nutzerabsicht
+    # (Bewerbung/Scoring), deren Schluesselwoerter die Schwaerzung entfernt.
+    try:
+        from .compliance_auditor import check_beta_highrisk
+    except ImportError:
+        from compliance_auditor import check_beta_highrisk
+    _beta_violation = check_beta_highrisk(payload.task)
+    if _beta_violation is not None:
+        write_audit_entry(
+            action="compliance.beta_highrisk_blocked",
+            tenant_id=tenant,
+            metadata={"title": _beta_violation.title},
+        )
+        return {
+            "status": "compliance_blocked",
+            "message": _beta_violation.description,
+            "ai_response": _beta_violation.description,
+            "compliance_violations": [{
+                "severity": _beta_violation.severity.value,
+                "article": _beta_violation.article,
+                "title": _beta_violation.title,
+            }],
             "steps": [],
             "results": [],
         }

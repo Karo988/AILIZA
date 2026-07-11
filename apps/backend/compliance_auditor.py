@@ -307,8 +307,10 @@ class ComplianceAuditor:
         ]
         patterns = [
             r"OpenAI.*API",
-            r"USA",
-            r"Singapur",
+            # \b noetig: ohne Wortgrenzen matcht "USA" z.B. in "zusammen"
+            # ("z-usa-mmen") und blockiert jede Zusammenfassungs-Anfrage.
+            r"\bUSA\b",
+            r"\bSingapur\b",
             r"Drittland.*übermittlung.*nicht.*geprüft",
             r"prüfung.*noch.*nicht.*abgeschlossen"
         ]
@@ -567,3 +569,18 @@ def evaluate_compliance(text: str) -> ComplianceReport:
     """
     auditor = ComplianceAuditor()
     return auditor.audit(text)
+
+
+def check_beta_highrisk(text: str) -> Violation | None:
+    """
+    B8b: Beta-Hochrisiko-Sperre (Bewerbung/Scoring) auf dem ROHEN Text.
+    Muss VOR der Schwaerzung laufen — die Sperre gilt der Nutzerabsicht,
+    nicht der Datenlage; Schwaerzung wuerde die Schluesselwoerter entfernen.
+    Gibt die Violation zurueck oder None.
+    """
+    auditor = ComplianceAuditor()
+    auditor._check_beta_highrisk_block(text)
+    for v in auditor.violations:
+        if v.article == "Beta-Einschränkung":
+            return v
+    return None

@@ -159,3 +159,51 @@ def test_beta_highrisk_block_still_hard(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "compliance_blocked"
+
+
+# ── Sicherheitsnetz: Klassifikator erkennt Art.-9-Daten, Engine schwaerzt
+#    nicht → Voll-Schwaerzung, Rohdaten verlassen das System NIE ─────────────
+def test_unredactable_health_data_never_leaves_in_clear():
+    """
+    Regressionsschutz fuer B2a-Korrektur: 'X leidet an einer HIV-Infektion'
+    wird von classify() als special_category erkannt, von der Redaction-Engine
+    aber nicht geschwaerzt. Das Sicherheitsnetz muss den gesamten Inhalt
+    ersetzen — auch im Einwilligungs-Fall darf kein Klartext rausgehen.
+    """
+    from apps.backend.main import _governance_pre_check
+    result = _governance_pre_check(
+        "Fasse zusammen: Paula Ronder leidet an einer HIV-Infektion.",
+        tenant_id="default",
+    )
+    assert result["decision"] != "block"
+    task_out = result["task"]
+    assert "HIV" not in task_out
+    assert "Paula" not in task_out
+    assert "GESCHWAERZT" in task_out
+
+
+# ── Art.-44-48-Regel: "USA" ohne Wortgrenzen traf "zusammen" ─────────────────
+def test_zusammenfassen_not_flagged_as_third_country_transfer():
+    from apps.backend.compliance_auditor import evaluate_compliance
+    report = evaluate_compliance("Fasse diesen Text bitte zusammen: Der Himmel ist blau.")
+    articles = [v.article for v in report.violations]
+    assert "Art. 44-48" not in articles
+
+
+def test_real_usa_transfer_still_flagged():
+    from apps.backend.compliance_auditor import evaluate_compliance
+    report = evaluate_compliance(
+        "Wir übermitteln die Kundendaten an unseren Dienstleister in den USA."
+    )
+    articles = [v.article for v in report.violations]
+    assert "Art. 44-48" in articles
+
+
+def test_fall1_summarize_request_guest_passes_gates(client):
+    """Der haeufigste Anwendungsfall (harmlose Zusammenfassung) bleibt frei."""
+    resp = client.post(
+        "/agent/run",
+        json={"task": "Fasse diesen Text bitte zusammen: Der Himmel ist blau und die Sonne scheint."},
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("status") not in GATE_STATUSES

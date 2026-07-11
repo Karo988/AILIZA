@@ -658,7 +658,8 @@ body{
     <div class="field"><label>Nutzername</label><input id="login-user" type="text" autocomplete="username"></div>
     <div class="field"><label>Passwort</label><input id="login-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <div id="login-error" style="display:none;color:var(--warn);font-size:12px;margin-bottom:8px"></div>
-    <div class="modal-acts"><button class="btn-ghost" onclick="closeLoginModal()">Abbrechen</button><button class="btn-primary" onclick="doLogin()">Anmelden</button></div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Noch kein Konto? "Registrieren" legt eines an (Passwort: mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl, Sonderzeichen).</div>
+    <div class="modal-acts"><button class="btn-ghost" onclick="closeLoginModal()">Abbrechen</button><button class="btn-ghost" onclick="doRegister()">Registrieren</button><button class="btn-primary" onclick="doLogin()">Anmelden</button></div>
   </div>
 </div>
 <script>
@@ -1227,6 +1228,23 @@ async function doLogin(){
     showTyping();
     try{await runAgent(task,null);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
   }
+}
+
+// ── B2: Selbst-Registrierung (Rolle immer 'user', /auth/self-register) ───────
+async function doRegister(){
+  const u=document.getElementById("login-user").value.trim();
+  const p=document.getElementById("login-pass").value;
+  const err=document.getElementById("login-error");
+  if(!u||!p){err.textContent="Bitte Nutzername und Passwort eingeben.";err.style.display="block";return;}
+  let r;
+  try{
+    r=await fetch(`${API}/auth/self-register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:u,password:p})});
+  }catch(e){err.textContent="Backend nicht erreichbar.";err.style.display="block";return;}
+  if(r.status===409){err.textContent="Nutzername bereits vergeben.";err.style.display="block";return;}
+  if(r.status===422){err.textContent="Passwort erfüllt die Richtlinie nicht: mind. 12 Zeichen, Groß- und Kleinbuchstabe, Zahl, Sonderzeichen.";err.style.display="block";return;}
+  if(!r.ok){err.textContent="Registrierung fehlgeschlagen.";err.style.display="block";return;}
+  // Konto angelegt → direkt anmelden (setzt HttpOnly-Cookie)
+  await doLogin();
 }
 
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
