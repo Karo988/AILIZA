@@ -164,7 +164,7 @@ class ComplianceAuditor:
                 found_no_basis = True
                 break
 
-        if found_no_basis or "einwilligung" not in text.lower():
+        if found_no_basis:
             self.violations.append(Violation(
                 severity=Severity.BLOCK,
                 article="Art. 6",
