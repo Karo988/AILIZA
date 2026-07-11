@@ -214,3 +214,12 @@ def test_fall1_summarize_request_guest_passes_gates(client):
     )
     assert resp.status_code == 200
     assert resp.json().get("status") not in GATE_STATUSES
+
+
+# ── "geboren am X" ist die haeufigste Alltagsformulierung (nicht nur
+#    "Geburtsdatum:") — wurde vorher NICHT erkannt (Karo-Fund 2026-07-11) ────
+def test_geboren_am_birthdate_redacted():
+    from apps.backend.governance.redaction_v2 import RedactionEngineV2
+    r = RedactionEngineV2().redact("Herr Mustermann, geboren am 03.04.1985, meldet sich.")
+    assert "03.04.1985" not in r.redacted_text
+    assert "[Geburtsdatum]" in r.redacted_text

@@ -92,8 +92,11 @@ class RedactionEngineV2:
             r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
         ),
         "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
+        # "geboren am X" ist die haeufigste Alltagsformulierung in Briefen/
+        # E-Mails und wurde bisher NICHT erkannt (nur "Geburtsdatum:"/"geb.").
         "birthdate": re.compile(
-            r"\b(?:Geburtsdatum|geb\.)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}", re.IGNORECASE,
+            r"\b(?:Geburtsdatum|geb\.|geboren[ \t]+am)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}",
+            re.IGNORECASE,
         ),
         "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
         "card": re.compile(r"\b(?:\d{4}[\s\-]?){3}\d{4}\b"),
