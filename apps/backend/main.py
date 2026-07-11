@@ -28,7 +28,7 @@ try:
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
-        create_approval_request,
+        create_approval_request, get_approval_request,
     )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
@@ -60,7 +60,7 @@ except ImportError:
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
-        create_approval_request,
+        create_approval_request, get_approval_request,
     )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
@@ -590,6 +590,10 @@ class ToolFetchRequest(BaseModel):
 class AgentRunRequest(BaseModel):
     task: str = Field(..., min_length=1)
     history: list[dict[str, str]] | None = None
+    # Fall 3 (Compliance-Einwilligung): ID einer zuvor vom eingeloggten Nutzer
+    # bestaetigten Freigabe (/approvals/{id}/approve). Bindet ueber task_sha256
+    # an genau diese Anfrage.
+    consent_approval_id: int | None = None
 
     @field_validator("task")
     @classmethod
@@ -1057,6 +1061,42 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
 _orchestrator = ProviderOrchestrator()
 
 
+# Schwaerzungs-Platzhalter (z.B. "[GESCHWAERZT: Religion/... Art. 9 DSGVO ...]",
+# "[NAME_1]") duerfen die Compliance-Pruefung nicht selbst ausloesen — sie
+# enthalten Kategorienamen wie "Religion"/"Gesundheit" als Metadaten, nicht
+# als Inhalt. Vor evaluate_compliance() werden sie deshalb entfernt.
+_REDACTION_PLACEHOLDER_RE = re.compile(
+    r"\[GESCHWAERZT:[^\]]*\]|\[[A-ZÄÖÜ_]+(?:_\d+)?\]"
+)
+
+
+def _strip_redaction_placeholders(text: str) -> str:
+    return _REDACTION_PLACEHOLDER_RE.sub(" ", text)
+
+
+def _consent_task_hash(task: str) -> str:
+    """Bindet eine Compliance-Einwilligung an genau eine Anfrage (kein PII im Audit)."""
+    return hashlib.sha256(task.encode("utf-8")).hexdigest()
+
+
+def _valid_compliance_consent(approval_id: int, task: str) -> bool:
+    """
+    Prueft eine vom Nutzer erteilte Compliance-Einwilligung (Fall 3):
+    Freigabe existiert, wurde ueber /approvals/{id}/approve bestaetigt
+    (Login-Pflicht dort erzwungen) und gehoert zu GENAU dieser Anfrage.
+    """
+    try:
+        entry = get_approval_request(approval_id)
+    except Exception:
+        return False
+    if not entry or entry.get("status") != "approved":
+        return False
+    if entry.get("tool") != "compliance_consent":
+        return False
+    params = entry.get("input_params") or {}
+    return params.get("task_sha256") == _consent_task_hash(task)
+
+
 def _compliance_pre_check(
     task: str,
     tenant_id: str,
@@ -1064,7 +1104,9 @@ def _compliance_pre_check(
     """
     DSGVO + EU-AI-Act Compliance Audit VOR Verarbeitung.
 
-    Pipeline-Platzierung: VOR _governance_pre_check (fail-closed auf Violations)
+    Pipeline-Platzierung: NACH _governance_pre_check — laeuft auf der bereits
+    geschwaerzten Fassung (Betreiber-Freigabe 2026-07-11: erst schwaerzen,
+    dann pruefen; Hinweis+Einwilligung nur wenn trotzdem nicht konform)
 
     Rückgabe:
       {"decision": "allow",          "audit_id": "..."}
@@ -1201,18 +1243,38 @@ def _governance_pre_check(
     )
 
     if decision == PolicyDecision.BLOCK:
-        # Nur bei CREDENTIALS oder SPECIAL_CATEGORY → echter Block (EU AI Act Art. 5 / DSGVO Art. 9)
+        # CREDENTIALS oder SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
+        # Betreiber-Freigabe 2026-07-11: KEIN Hartblock mehr — die Rohdaten
+        # verlassen das System weiterhin NIE, aber statt abzubrechen wird
+        # vollstaendig geschwaerzt und nur die geschwaerzte Fassung laeuft
+        # weiter (dokumentationspflichtig, Login-Gate im Aufrufer).
+        from .governance.redaction_v2 import RedactionEngineV2
+        engine = RedactionEngineV2()
+        redaction_result = engine.redact(task)
+        dc_names = [c.value for c in data_classes]
         write_audit_entry(
-            action="governance.task_blocked",
+            action="governance.special_category_redacted",
             tenant_id=tenant_id,
-            metadata={"data_classes": [c.value for c in data_classes]},
+            metadata={"data_classes": dc_names, "redaction_applied": True},
         )
         return {
-            "decision": "block",
-            "message": (
-                "Diese Anfrage enthält Daten, die nach EU AI Act Art. 5 / DSGVO Art. 9 "
-                f"nicht extern verarbeitet werden dürfen ({', '.join(c.value for c in data_classes)})."
+            "decision": "allow_with_notice",
+            "task": redaction_result.redacted_text,
+            # reinsertion_map: NUR lokal im RAM — NIEMALS loggen oder persistieren
+            "reinsertion_map": redaction_result.reinsertion_map,
+            "notice": (
+                "Besonders geschützte Daten erkannt "
+                f"({', '.join(dc_names)}) und vollständig geschwärzt "
+                "(DSGVO Art. 9 / EU AI Act Art. 5). Nur die geschwärzte "
+                "Fassung wurde verarbeitet."
             ),
+            "is_draft": True,
+            "approval_id": None,
+            "pii_detected": {
+                "has_pii": True,
+                "requires_consent": True,
+                "items": [{"type": m, "requires_consent": True} for m in getattr(classification, "matched_rules", [])],
+            },
         }
 
     if decision in (PolicyDecision.APPROVAL_REQUIRED, PolicyDecision.REDACT_REQUIRED):
@@ -1439,40 +1501,15 @@ def run_agent(
             "results": [],
         }
 
-    # ── COMPLIANCE PRE-CHECK (VOR Governance): DSGVO + EU-AI-Act Audit ────────
-    # Fail-closed: 🔴 BLOCK → sofort ablehnen, 🟠 REVIEW → Admin-Queue
-    compliance_check = _compliance_pre_check(payload.task, tenant_id=tenant)
-
-    if compliance_check["decision"] == "block":
-        return {
-            "status": "compliance_blocked",
-            "message": compliance_check["message"],
-            "ai_response": compliance_check["message"],
-            "compliance_violations": compliance_check.get("violations", []),
-            "audit_id": compliance_check.get("audit_id"),
-            "steps": [],
-            "results": [],
-        }
-
-    if compliance_check["decision"] == "review_required":
-        return {
-            "status": "compliance_review",
-            "message": compliance_check["message"],
-            "ai_response": compliance_check["message"],
-            "compliance_violations": compliance_check.get("violations", []),
-            "audit_id": compliance_check.get("audit_id"),
-            "notice": "Diese Anfrage wurde zur Admin-Genehmigung gekennzeichnet.",
-            "steps": [],
-            "results": [],
-        }
-
-    # ── Governance Pre-Check: classify → data_matrix → redact/block ─────────
-    # Läuft NACH Compliance-Check.
-    # BLOCK: nur bei CREDENTIALS / SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
-    # PERSONAL_DATA/HR/LEGAL/FINANCIAL: lokal redacten, als Entwurf weiterlaufen.
+    # ── Governance Pre-Check ZUERST: classify → data_matrix → redact ─────────
+    # Betreiber-Freigabe 2026-07-11 (drei Stufen statt Hartblock):
+    #   Fall 1: keine sensiblen Daten → direkt senden, kein Login noetig.
+    #   Fall 2: Schwaerzung loest das Problem → Login noetig (Dokumentationspflicht).
+    #   Fall 3: auch nach Schwaerzung nicht konform → Login + explizite Einwilligung.
     pre_check = _governance_pre_check(payload.task, tenant_id=tenant)
 
     if pre_check["decision"] == "block":
+        # Nur noch fail-closed (Klassifizierungsfehler) — kein Inhalts-Hartblock mehr.
         return {
             "status": "blocked",
             "message": pre_check["message"],
@@ -1487,6 +1524,118 @@ def run_agent(
     reinsertion_map: dict[str, str] = pre_check.get("reinsertion_map", {})
     pii_detected = pre_check.get("pii_detected")
     governance_is_draft = pre_check.get("is_draft", False)
+    redaction_applied = bool(pii_detected) or bool(reinsertion_map)
+
+    # ── COMPLIANCE-Check auf der GESCHWAERZTEN Fassung ────────────────────────
+    # Platzhalter ([GESCHWAERZT: ...], [NAME_1]) vorher entfernen — sie nennen
+    # Kategorien als Metadaten und wuerden die Pruefung sonst selbst ausloesen.
+    compliance_check = _compliance_pre_check(
+        _strip_redaction_placeholders(effective_task), tenant_id=tenant
+    )
+
+    if compliance_check["decision"] == "block":
+        _violations = compliance_check.get("violations", [])
+        # B8b: Beta-Einschraenkung (Bewerbung/Scoring) bleibt harte Sperre —
+        # separate Betreiber-Freigabe, gilt fuer Gaeste UND eingeloggte Nutzer.
+        if any(v.get("article") == "Beta-Einschränkung" for v in _violations):
+            return {
+                "status": "compliance_blocked",
+                "message": compliance_check["message"],
+                "ai_response": compliance_check["message"],
+                "compliance_violations": _violations,
+                "audit_id": compliance_check.get("audit_id"),
+                "steps": [],
+                "results": [],
+            }
+
+        # Fall 3: auch nach Schwaerzung nicht DSGVO-/EU-AI-Act-konform.
+        if token is None:
+            _msg = (
+                "Diese Anfrage entspricht auch nach der Schwärzung nicht den "
+                "DSGVO-/EU-AI-Act-Richtlinien. Bitte loggen Sie sich ein, um sie "
+                "nach ausdrücklicher Bestätigung dennoch zu senden (dokumentationspflichtig)."
+            )
+            return {
+                "status": "login_required",
+                "login_required": True,
+                "login_reason": "consent",
+                "message": _msg,
+                "ai_response": _msg,
+                "compliance_violations": _violations,
+                "audit_id": compliance_check.get("audit_id"),
+                "steps": [],
+                "results": [],
+            }
+
+        if payload.consent_approval_id and _valid_compliance_consent(
+            payload.consent_approval_id, payload.task
+        ):
+            # Einwilligung liegt vor → dokumentieren, dann mit der
+            # geschwaerzten Fassung normal weiterlaufen.
+            write_audit_entry(
+                action="compliance.consent_used",
+                tenant_id=tenant,
+                metadata={
+                    "approval_id": payload.consent_approval_id,
+                    "user_id": token.user_id,
+                    "audit_id": compliance_check.get("audit_id"),
+                    "violations_summary": _violations[:5],
+                },
+            )
+        else:
+            approval = create_approval_request(
+                tool="compliance_consent",
+                input_params={
+                    "task_sha256": _consent_task_hash(payload.task),
+                    "articles": [v.get("article") for v in _violations[:5]],
+                },
+                risk_level="high",
+                risk_reason="Anfrage auch nach Schwärzung nicht DSGVO-/EU-AI-Act-konform — Nutzer-Einwilligung erforderlich.",
+                tenant_id=tenant,
+            )
+            _msg = (
+                "Diese Anfrage entspricht nicht den DSGVO-/EU-AI-Act-Richtlinien. "
+                "Möchten Sie trotzdem senden? Ihre Bestätigung wird dokumentiert."
+            )
+            return {
+                "status": "consent_required",
+                "message": _msg,
+                "ai_response": _msg,
+                "approval_id": approval.get("id"),
+                "compliance_violations": _violations,
+                "audit_id": compliance_check.get("audit_id"),
+                "steps": [],
+                "results": [],
+            }
+    # REVIEW-Schwere ist nicht blockierend (Betreiber-Freigabe 2026-07-11):
+    # bereits in _compliance_pre_check auditiert, Anfrage laeuft normal weiter.
+
+    # ── Fall 2: Schwaerzung angewandt → Dokumentationspflicht → Login-Gate ────
+    if redaction_applied:
+        if token is None:
+            _msg = (
+                "Bitte loggen Sie sich ein — diese Anfrage enthält personenbezogene "
+                "Daten und ist dokumentationspflichtig. Die Daten wurden bereits "
+                "lokal geschwärzt und verlassen das System nicht im Klartext."
+            )
+            return {
+                "status": "login_required",
+                "login_required": True,
+                "login_reason": "documentation",
+                "message": _msg,
+                "ai_response": _msg,
+                "steps": [],
+                "results": [],
+            }
+        write_audit_entry(
+            action="compliance.documented_processing",
+            tenant_id=tenant,
+            metadata={
+                "user_id": token.user_id,
+                "redaction_applied": True,
+                "audit_id": compliance_check.get("audit_id"),
+            },
+        )
 
     # ── Schreibaufgaben: direkt LLM ohne AgentRuntime / Tavily ────────────────
     _is_writing = (
