@@ -493,6 +493,110 @@ class TestPIIReinsertion:
         for v in result.reinsertion_map.values():
             assert secret_text not in v, "Secret-Wert im reinsertion_map!"
 
+    def test_reinsert_resolves_nested_placeholders(self):
+        """
+        Karo-Fund 2026-07-12: Wenn der Wert eines Platzhalters selbst einen
+        anderen (bereits bekannten) Platzhalter als Literal-Text enthaelt,
+        muss reinsert() das ueber mehrere Durchlaeufe korrekt aufloesen —
+        nicht nur, wenn die Verarbeitungsreihenfolge zufaellig passt.
+        """
+        from apps.backend.governance.redaction import reinsert
+        # Worst-Case-Reihenfolge: der AEUSSERE Platzhalter [OUTER_1] wird vor
+        # dem darin enthaltenen [INNER_1] verarbeitet — ein Einzel-Durchlauf
+        # wuerde [INNER_1] frisch einfuegen und nie wieder aufloesen.
+        text = "Ergebnis: [OUTER_1]"
+        reinsertion_map = {
+            "[OUTER_1]": "Wert enthaelt [INNER_1] als Text",
+            "[INNER_1]": "den echten inneren Wert",
+        }
+        reinserted, fully = reinsert(text, reinsertion_map)
+        assert "[INNER_1]" not in reinserted
+        assert "[OUTER_1]" not in reinserted
+        assert "den echten inneren Wert" in reinserted
+        assert fully is True
+
+    def test_reinsert_nested_placeholder_loop_has_limit(self):
+        """Ein Platzhalter, der sich selbst referenziert, darf keine
+        Endlosschleife verursachen — Schleifen-Limit muss greifen."""
+        from apps.backend.governance.redaction import reinsert
+        text = "Start [A_1]"
+        reinsertion_map = {"[A_1]": "Text mit [A_1] drin"}
+        # Darf nicht haengen bleiben — reines Terminierungsverhalten wird geprueft.
+        reinserted, fully = reinsert(text, reinsertion_map)
+        assert isinstance(reinserted, str)
+
+    def test_end_to_end_reply_mail_no_placeholders_leak(self, monkeypatch):
+        """
+        Karo-Fund 2026-07-12 (End-zu-End-Reproduktion): 'Antwort-Mail an
+        mueller@example.com ... von Herrn Mueller' loeste durch das zu
+        allgemeine 'Antwort'-Schluesselwort im credential-Muster eine
+        verschachtelte Platzhalter-Situation aus. Die Nutzer-Antwort MUSS
+        die echten Werte enthalten, KEINE Platzhalter-Reste.
+        """
+        import os as _os
+        _os.environ.setdefault("AILIZA_SECRET_KEY", "test-secret-key-minimum-32-chars-ok")
+        _os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
+
+        from fastapi.testclient import TestClient
+        from apps.backend.main import app, _orchestrator
+        from apps.backend.database import init_db, metadata_obj, engine
+        metadata_obj.drop_all(engine)
+        init_db()
+
+        class EchoProvider:
+            model = "echo-test"
+            def count_tokens(self, text):
+                return len(text.split())
+            def generate(self, messages, context=None, **kwargs):
+                last_user = [m["content"] for m in messages if m["role"] == "user"][-1]
+                return f"Sehr geehrter {last_user}, vielen Dank fuer Ihre Nachricht."
+
+        # monkeypatch.setattr statt direkter Zuweisung -- setzt den
+        # ORIGINALEN _get_provider_order nach dem Test automatisch zurueck
+        # (Karo-Fund 2026-07-12: direkte Zuweisung ohne Rueckgabe verschmutzte
+        # globalen Modul-Zustand und liess spaetere Tests im selben Lauf
+        # fehlschlagen, z.B. test_provider_order_env_respected).
+        monkeypatch.setitem(_orchestrator.providers, "groq", EchoProvider())
+        import apps.backend.providers.orchestrator as orch_mod
+        monkeypatch.setattr(orch_mod, "_get_provider_order", lambda: ["groq"])
+
+        client = TestClient(app, cookies={})
+        client.post("/auth/self-register", json={"user_id": "e2ereinsert", "password": "SicherPass1!Xyz"})
+        client.post("/auth/login", json={"user_id": "e2ereinsert", "password": "SicherPass1!Xyz"})
+
+        task = "Schreibe eine Antwort-Mail an mueller@example.com bezueglich seiner Anfrage von Herrn Mueller."
+        resp = client.post("/agent/run", json={"task": task})
+        assert resp.status_code == 200
+        answer = resp.json().get("ai_response") or resp.json().get("message") or ""
+        assert "mueller@example.com" in answer
+        assert "Herrn Mueller" in answer
+        assert "[" not in answer, f"Platzhalter-Rest in der Antwort: {answer!r}"
+
+    def test_antwort_credential_requires_colon(self):
+        """
+        Karo-Entscheidung 2026-07-12 (Option 1): 'Antwort' bleibt im
+        credential-Muster, aber der Doppelpunkt ist Pflicht. 'Antwort-Mail'
+        (kein Doppelpunkt) darf NICHT matchen, 'Antwort: Lucky'
+        (Sicherheitsfrage) MUSS weiterhin geschwaerzt werden.
+        """
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        r1 = RedactionEngineV2().redact(
+            "Schreibe eine Antwort-Mail an mueller@example.com von Herrn Mueller."
+        )
+        assert "mueller@example.com" not in r1.redacted_text
+        assert "Herrn Mueller" not in r1.redacted_text
+        # Der Rest des Satzes ("Antwort-Mail an ... von ...") darf NICHT als
+        # ein einziger Zugangsdaten-Block verschluckt worden sein.
+        assert "Zugangsdaten" not in r1.redacted_text
+
+        r2 = RedactionEngineV2().redact(
+            "* Sicherheitsfrage: Name des ersten Haustieres\n* Antwort: Lucky"
+        )
+        assert "Lucky" not in r2.redacted_text
+        assert "Zugangsdaten" in r2.redacted_text
+
     def test_person_name_redacted_mitarbeiter(self):
         """'Mitarbeiter Max Müller' → [PERSON_1], redaction_applied=True."""
         from apps.backend.governance.redaction import redact, reinsert

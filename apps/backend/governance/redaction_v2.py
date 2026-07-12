@@ -113,10 +113,21 @@ class RedactionEngineV2:
         # Zugangsdaten/Geheimnisse (DSGVO/CLAUDE.md-Kategorie "secret" ⚫ —
         # nie ausgeben). Label-basiert: die Werte selbst haben kein
         # einheitliches Format (Woerter, Zahlen, Base32-Schluessel, ...).
+        #
+        # Karo-Fund 2026-07-12: "Antwort" ist ein sehr allgemeines deutsches
+        # Wort (= "Reply") und matchte mit optionalem Doppelpunkt (":?")
+        # beliebigen Fliesstext ("Antwort-Mail an ...") — dabei wurden
+        # bereits redigierte Platzhalter ([E-Mail], [Name]) erneut mit
+        # eingeschlossen und so eine verschachtelte Platzhalter-Situation
+        # erzeugt. Betreiber-Entscheidung (Option 1): "Antwort" bleibt im
+        # Muster (schuetzt weiterhin z.B. "Antwort: Lucky" bei Sicherheits-
+        # fragen), aber der Doppelpunkt ist jetzt fuer ALLE Schluesselwoerter
+        # PFLICHT (":" statt ":?") -- "Antwort-Mail" (kein Doppelpunkt)
+        # matcht dadurch nicht mehr, "Antwort: Lucky" weiterhin.
         "credential": re.compile(
             r"(?i:Benutzername|Passwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
             r"|Wiederherstellungscode|Zwei-Faktor-Authentifizierungsschlüssel)"
-            r"[ \t]*:?[ \t]*[^\n]{1,60}",
+            r"[ \t]*:[ \t]*[^\n]{1,60}",
         ),
         # Technische Kennungen mit Standort-/Identifizierungsbezug.
         "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
