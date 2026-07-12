@@ -3282,6 +3282,21 @@ def static_public_icons_svg():
     return FileResponse(FRONTEND_DIR / "public" / "icons.svg")
 
 
+@app.get("/sw.js")
+def service_worker():
+    """
+    Muss auf Root-Scope liegen (nicht /static/sw.js), sonst kann der neue
+    Selbstzerstoerungs-Worker den alten, root-scope-registrierten Worker
+    nicht ersetzen (SW-Scope = Verzeichnis der Skript-URL). Kein Caching
+    der Datei selbst, damit Browser die Aktualisierung sofort sehen.
+    """
+    return FileResponse(
+        FRONTEND_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 @app.get("/")
 def index():
     return FileResponse(FRONTEND_DIR / "index.html")
