@@ -311,6 +311,7 @@ body{
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
+    <button class="btn-ghost" id="topbar-auth-btn" onclick="openLoginModal()" style="font-size:12px;padding:5px 10px">Anmelden</button>
   </div>
 </div>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -788,10 +789,32 @@ function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
   document.getElementById("m-days").textContent=days;
-  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();
+  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();refreshAuthButton();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
+}
+// ── Immer sichtbarer Anmelde-Status oben rechts (Karo-Wunsch 2026-07-12):
+// nicht nur reaktiv im Chat, sondern jederzeit erreichbar. Nutzt den
+// bestehenden Cookie-Flow (/auth/me liest ailiza_session).
+async function refreshAuthButton(){
+  const btn=document.getElementById("topbar-auth-btn");
+  if(!btn)return;
+  try{
+    const r=await fetch(`${API}/auth/me`,{signal:AbortSignal.timeout(4000)});
+    if(r.ok){
+      const me=await r.json();
+      btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
+      btn.onclick=doLogout;
+      return;
+    }
+  }catch(e){/* Netzwerkfehler: Button bleibt auf "Anmelden" */}
+  btn.textContent="Anmelden";
+  btn.onclick=openLoginModal;
+}
+async function doLogout(){
+  try{await fetch(`${API}/auth/logout`,{method:"POST"});}catch(e){}
+  refreshAuthButton();
 }
 function showView(name,el){
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
@@ -1201,6 +1224,7 @@ async function doLogin(){
   if(d.totp_required){err.textContent="Dieses Konto erfordert TOTP — bitte über die Admin-Oberfläche anmelden.";err.style.display="block";return;}
   document.getElementById("login-pass").value="";
   closeLoginModal();
+  refreshAuthButton();
   addAiMessage(`Angemeldet als ${u}. `+(gatedTask?"Ihre Anfrage wird erneut gesendet.":""),undefined);
   if(gatedTask){
     const task=gatedTask;gatedTask=null;gatedConsentApprovalId=null;

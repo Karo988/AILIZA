@@ -46,3 +46,12 @@ def test_send_message_has_no_native_confirm_gate():
     send_message_body = html[send_message_start:send_message_end]
     assert "confirm(" not in send_message_body
     assert "alert(" not in send_message_body
+
+
+def test_topbar_has_persistent_auth_button():
+    """Karo-Wunsch 2026-07-12: dauerhaft sichtbarer Anmelde-Button oben
+    rechts, nicht nur reaktiv im Gate-Fluss."""
+    html = INDEX.read_text(encoding="utf-8")
+    assert 'id="topbar-auth-btn"' in html
+    assert "/auth/me" in html
+    assert "refreshAuthButton" in html
