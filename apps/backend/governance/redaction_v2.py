@@ -130,6 +130,20 @@ class RedactionEngineV2:
             r"|Dispositionskredit|Aktueller Kontostand|Bonitätsscore"
             r"|SCHUFA-ähnliche Risikoeinstufung)[ \t]*:?[ \t]*[^\n]{1,60}",
         ),
+        # SCHUFA/Bonität auch als freistehende Erwaehnung erkennen (nicht nur
+        # in der exakten Label-Zeile oben) — Karo-Fund 2026-07-11.
+        "financial_keyword": re.compile(r"\b(?:schufa|bonität(?:sscore)?)[\wäöüÄÖÜß\-]*", re.IGNORECASE),
+        # Kartenpruefnummer/Gueltigkeitsdatum (getrennt von der Kartennummer
+        # selbst, damit CVV nicht zufaellig als 3-4-stellige "Kartennummer"
+        # durchrutscht oder umgekehrt zerstoert wird).
+        "card_cvv": re.compile(r"(?i:Kartenprüfnummer|CVV|CVC)[ \t]*:?[ \t]*\d{3,4}"),
+        "card_expiry": re.compile(r"(?i:Gültig bis)[ \t]*:?[ \t]*\d{1,2}[ \t]*/[ \t]*\d{2,4}"),
+        # Kinderdaten (DSGVO Art. 8 — eigene, striktere Rechtsgrundlage fuer
+        # Daten Minderjaehriger, unabhaengig von der sonstigen Kategorie).
+        "child_field": re.compile(
+            r"(?i:Schule des Kindes|Schulweg|Kindergarten|Name des Kindes"
+            r"|Geburtsdatum des Kindes)[ \t]*:?[ \t]*[^\n]{1,60}",
+        ),
         "address": re.compile(
             # Kein IGNORECASE: Strassenname ist im Deutschen konventionell
             # grossgeschrieben — case-sensitiv verhindert Ueberdehnung auf
@@ -169,6 +183,11 @@ class RedactionEngineV2:
             "diagnose", "migräne", "kopfschmerz", "krankheit", "gesundheit",
             "krankschreibung", "hiv", "aids", "infektion", "erkrankung",
             "behinderung", "depression", "krebs", "diabetes",
+            # Karo-Fund 2026-07-11, erweiterter Amun-Testbrief:
+            "depressiv", "angststörung", "burnout", "burn-out", "allergie",
+            "schwanger", "fehlgeburt", "therapeutisch", "psychotherap",
+            "medikament", "blutdruck", "body-mass-index", "bmi",
+            "krankenversicherungsnummer",
         ],
         "religion": ["religion", "muslimisch", "christlich", "buddhistische", "jüdisch", "atheist", "katholisch", "evangelisch"],
         "politics": ["politische", "wahlbezirk", "spd", "cdu", "grüne", "linke", "afd", "fdp"],
@@ -420,6 +439,10 @@ class RedactionEngineV2:
             "gps_coords": "Standort",
             "device_id": "Gerätekennung",
             "financial_detail": "Finanzangabe",
+            "financial_keyword": "Finanzangabe",
+            "card_cvv": "Kartenprüfnummer",
+            "card_expiry": "Kartengültigkeit",
+            "child_field": "Kinderdaten (Art. 8 DSGVO)",
         }
         return labels.get(pii_type, pii_type.title())
 
