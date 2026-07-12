@@ -288,7 +288,7 @@ body{
   .welcome-h{font-size:18px}
   .welcome-chips{gap:5px}
   .chip{font-size:11px;padding:6px 10px}
-  .input-wrap{padding:10px 12px 14px}
+  .input-wrap{padding:10px 12px 14px;position:sticky;bottom:0;z-index:10}
   .privacy-panel{display:none}
   .dsgvo-sidebar{display:none}
   .privacy-panel.expanded{display:block}
@@ -1268,7 +1268,7 @@ function saveProject(){const name=document.getElementById("proj-name").value.tri
 function deleteProject(i){if(!confirm("Löschen?"))return;projects.splice(i,1);localStorage.setItem("ailiza_projects",JSON.stringify(projects));renderProjects();renderProjectList()}
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card"><div class="card-h">${p.name}</div><div class="card-desc">${p.desc||""}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${p.prio}</span><button class="meta-pill del" onclick="deleteProject(${i})">✕</button></div></div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${p.name}</span></div>`).join("")}
-async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
+async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 
