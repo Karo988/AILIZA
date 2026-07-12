@@ -1039,41 +1039,20 @@ let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Vorschau wiederverwenden wenn vorhanden, aktuell und derselbe Text
-  // (Server entlasten — kein doppelter Aufruf). Sonst frisch pruefen:
-  // Senden funktioniert auch OHNE vorherigen Klick auf 🔍 (Fail-closed
-  // bleibt immer aktiv, Vorschau ist reiner Komfort/Transparenz-Schritt).
-  let policyResult;
-  if(_lastPreview&&!_previewStale&&_lastPreview.inputText===text){
-    policyResult=_lastPreview.policyResult;
-  }else{
-    policyResult=await redactWithBackend(text);
-  }
+  // B2 (Betreiber-Freigabe 2026-07-11): Der frühere client-seitige
+  // Vorab-Check (redactWithBackend + native Browser-Dialoge) wurde
+  // entfernt — er lief VOR und unabhängig von der eigentlichen Governance-
+  // Pipeline in /agent/run und erzeugte damit ein zweites, inkonsistentes
+  // Gate mit haesslichen Popups (kein Frust-Ziel der Betreiberin).
+  // /agent/run (aufgerufen ueber runAgent() in _doSend) ist jetzt die
+  // EINZIGE Quelle der Wahrheit fuer Schwärzung, Login-Gate (Fall 2) und
+  // Einwilligungs-Gate (Fall 3). Die 🔍-Vorschau (previewRedaction) bleibt
+  // als rein optionaler, nicht-blockierender Info-Schritt bestehen.
   _lastPreview=null;_previewStale=true;
-  // Sicherheitsprüfung vom Backend
-  if(policyResult.decision==="security_block"||policyResult.decision==="technical_block"){
-    alert(policyResult.user_message_de);
-    inp.value="";autoResize(inp);
-    return;
-  }
-  // Wenn menschliche Prüfung erforderlich (requires_human_review):
-  // zeige die deterministische Risiko-Zusammenfassung statt nur der
-  // generischen Meldung. Der volle geschwärzte Text (safe_text) wird erst
-  // nach Bestätigung tatsächlich gesendet — hier nur zur Information.
-  if(policyResult.decision==="requires_human_review"){
-    const summary=policyResult.risk_summary||policyResult.user_message_de;
-    const ok=confirm(summary+"\n\nTrotzdem fortfahren?");
-    if(!ok){inp.value="";autoResize(inp);return;}
-  }
-  // safe_output oder safe_output_with_redactions — weitermachen mit Backend-Schwärzung
-  const safeText=policyResult.safe_text;
   document.getElementById("kI-input-preview").value="";
   const label=document.getElementById("kI-preview-label");
   if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
-  await _doSend(safeText,{});
-  if(policyResult.admin_only){
-    showAdminPanel(policyResult.admin_only);
-  }
+  await _doSend(text,{});
 }
 async function approvePiiConsent(){
   localStorage.setItem("ailiza_pii_consent","1");

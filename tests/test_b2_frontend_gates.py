@@ -31,3 +31,18 @@ def test_frontend_has_login_modal():
 def test_consent_button_documents_confirmation():
     html = INDEX.read_text(encoding="utf-8")
     assert "wird dokumentiert" in html
+
+
+def test_send_message_has_no_native_confirm_gate():
+    """
+    Karo-Fund 2026-07-12: sendMessage() hatte einen aelteren, parallelen
+    Vorab-Check mit nativen confirm()/alert()-Popups (haesslich, kein
+    einheitliches Gate, widerspricht "kein Frust"/"ohne akustisches
+    Signal"). /agent/run (B2) ist jetzt die einzige Gate-Quelle.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    send_message_start = html.index("async function sendMessage()")
+    send_message_end = html.index("\n}", send_message_start)
+    send_message_body = html[send_message_start:send_message_end]
+    assert "confirm(" not in send_message_body
+    assert "alert(" not in send_message_body
