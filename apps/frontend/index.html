@@ -89,6 +89,8 @@ body{
 .chat-header{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:12px;flex-shrink:0}
 .chat-title{font-size:14px;font-weight:600}
 .chat-subtitle{font-size:11px;color:var(--text-muted)}
+.chat-project{display:none;margin-top:4px;font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:2px 8px;border-radius:999px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-project.visible{display:inline-block}
 .chat-actions{margin-left:auto;display:flex;gap:6px}
 .btn-mini{border:1px solid var(--border);background:var(--surface);padding:4px 10px;font-size:11px;border-radius:5px;cursor:pointer;color:var(--text-soft)}
 .btn-mini:hover{background:var(--surface-2)}
@@ -347,7 +349,7 @@ body{
     <div class="view active" id="view-chat">
       <div class="chat-header">
         <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen">☰</button>
-        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 52</div></div>
+        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 52</div><div class="chat-project" id="active-project-name"></div></div>
         <div class="chat-actions">
           <button class="btn-mini" onclick="clearChat()">🗑 Löschen</button>
           <button class="btn-mini" onclick="exportChat()">⬇ Export</button>
@@ -664,6 +666,7 @@ const SKILLS=[
 ];
 let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
 let currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;
+let activeProjectId=localStorage.getItem("ailiza_active_project_id")||null;
 let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
 let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
 let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
@@ -768,11 +771,40 @@ function closeSidebar(){
   document.getElementById("sidebar").classList.remove("open");
   document.getElementById("sidebar-overlay").classList.remove("open");
 }
+function saveProjects(){localStorage.setItem("ailiza_projects",JSON.stringify(projects))}
+function createChatId(prefix="chat"){return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`}
+function getProjectChatStorageKey(chatId){return `ailiza_chat_${chatId}`}
+function getActiveChatStorageKey(){return activeProjectId&&currentChatId?getProjectChatStorageKey(currentChatId):"ailiza_chat"}
+function getActiveProject(){return projects.find(p=>String(p.id)===String(activeProjectId))||null}
+function updateChatProjectLabel(){
+  const el=document.getElementById("active-project-name");if(!el)return;
+  const project=getActiveProject();
+  if(project){el.textContent=`Projekt: ${project.name}`;el.classList.add("visible")}
+  else{el.textContent="";el.classList.remove("visible")}
+}
+function setActiveProject(project){
+  activeProjectId=project?String(project.id):null;
+  if(activeProjectId)localStorage.setItem("ailiza_active_project_id",activeProjectId);
+  else localStorage.removeItem("ailiza_active_project_id");
+  updateChatProjectLabel();
+}
+function persistActiveChat(){
+  localStorage.setItem(getActiveChatStorageKey(),JSON.stringify(chatHistory.slice(-100)));
+  if(!activeProjectId)localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));
+}
+function loadActiveProjectFromStorage(){
+  if(!activeProjectId)return;
+  const project=getActiveProject();
+  if(!project||!project.chat_id){setActiveProject(null);return}
+  currentChatId=project.chat_id;
+  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(project.chat_id))||"[]");
+}
 function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
   document.getElementById("m-days").textContent=days;
-  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();
+  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderPrivacyMemory();checkStatus();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
@@ -909,6 +941,7 @@ function loadChat(id){
   const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
   const chat=list.find(c=>c.id===id);
   if(!chat)return;
+  setActiveProject(null);
   currentChatId=id;
   localStorage.setItem("ailiza_current_chat_id",id);
   chatHistory=chat.messages||[];
@@ -920,7 +953,8 @@ function loadChat(id){
 }
 function newChat(){
   saveCurrentChat();
-  currentChatId=Date.now().toString();
+  currentChatId=createChatId();
+  setActiveProject(null);
   localStorage.setItem("ailiza_current_chat_id",currentChatId);
   chatHistory=[];context=[];
   localStorage.setItem("ailiza_chat","[]");
@@ -934,10 +968,26 @@ function newChat(){
   document.getElementById("chat-input").value="";
   document.getElementById("chat-input").focus();
 }
-function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");if(currentChatId){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));renderRecent()}renderChat();renderPrivacyMemory()}
+function clearChat(){
+  if(!confirm("Verlauf löschen?"))return;
+  chatHistory=[];context=[];
+  if(activeProjectId&&currentChatId){
+    localStorage.setItem(getProjectChatStorageKey(currentChatId),"[]");
+  }else{
+    localStorage.setItem("ailiza_chat","[]");
+    if(currentChatId){
+      const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+      localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));
+      renderRecent();
+    }
+  }
+  renderChat();renderPrivacyMemory();
+}
 function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n")],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ailiza-chat-"+Date.now()+".txt";a.click()}
 function saveCurrentChat(){
   if(!chatHistory.length||!currentChatId)return;
+  persistActiveChat();
+  if(activeProjectId)return;
   const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
   const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);
   const idx=list.findIndex(c=>c.id===currentChatId);
@@ -1117,7 +1167,7 @@ function addAiMessage(text,warn,draftHint){
   const msg={role:"ai",content:text,time:new Date().toISOString()};
   if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;
   chatHistory.push(msg);
-  localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));
+  persistActiveChat();
   saveCurrentChat();
   const inner=document.getElementById("chat-inner");
   inner.innerHTML+=renderMsg(msg,chatHistory.length-1);
@@ -1141,10 +1191,11 @@ function handlePaste(e){
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
 function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
-function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});localStorage.setItem("ailiza_projects",JSON.stringify(projects));closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
-function deleteProject(i){if(!confirm("Löschen?"))return;projects.splice(i,1);localStorage.setItem("ailiza_projects",JSON.stringify(projects));renderProjects();renderProjectList()}
-function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card"><div class="card-h">${p.name}</div><div class="card-desc">${p.desc||""}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${p.prio}</span><button class="meta-pill del" onclick="deleteProject(${i})">✕</button></div></div>`).join("")}
-function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${p.name}</span></div>`).join("")}
+function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
+function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
+function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
+function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div></div>`).join("")}
+function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
@@ -1215,8 +1266,9 @@ async function deleteMyData(){
   const msg=document.getElementById("delete-data-msg");
   msg.style.display="block";msg.style.color="var(--text-muted)";msg.textContent="Wird gelöscht…";
   // Lokale Daten löschen
-  ["ailiza_chat","ailiza_chat_list","ailiza_current_chat_id","ailiza_projects","ailiza_folders","ailiza_tools","ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
-  chatHistory=[];context=[];currentChatId=null;projects=[];
+  ["ailiza_chat","ailiza_chat_list","ailiza_current_chat_id","ailiza_active_project_id","ailiza_projects","ailiza_folders","ailiza_tools","ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
+  for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith("ailiza_chat_"))localStorage.removeItem(k)}
+  chatHistory=[];context=[];currentChatId=null;activeProjectId=null;projects=[];
   // Server-Daten löschen
   try{
     const r=await fetch(`${API}/user/delete-data`,{method:"POST",headers:{"Content-Type":"application/json"}});
