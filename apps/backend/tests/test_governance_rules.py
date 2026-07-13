@@ -756,3 +756,84 @@ class TestKillSwitch:
         import apps.backend.kill_switch as ks
         reload(ks)
         assert ks._env_enabled() is False
+
+
+# ── Karo-Fund 2026-07-13: Name ohne Anrede + europaeische Adressen ────────────
+class TestNameContextAndEuropeanAddressRedaction:
+    """
+    Befund: "schreibe eine E-Mail, möchte kontakt mit paul sender in der
+    Mathestr. 12 in 15823 Pingelhausen" liess Name ("paul") und Strasse
+    ("Mathestr. 12") unredigiert durch, weil (a) die Namens-Muster eine
+    Anrede + Grossschreibung voraussetzten und (b) das Adress-Muster nur
+    die vollen Formen "strasse/straße" kannte, nicht die Abkuerzung "str.".
+    Betreiber-Entscheidung: Option B (Namen auch ohne Anrede/Grossschreibung
+    erkennen, aber nur mit engem Kontext-Ausloeser) + lokale, sprachueber-
+    greifende Adress-Heuristik ohne externe Validierung (Datensparsamkeit).
+    """
+
+    def _redact(self, text: str) -> str:
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        return RedactionEngineV2().redact(text).redacted_text
+
+    def test_original_karo_fund_case_fully_redacted(self):
+        text = ("schreibe eine E-Mail, möchte kontakt mit paul sender in der "
+                "Mathestr. 12 in 15823 Pingelhausen")
+        result = self._redact(text)
+        assert "paul" not in result
+        assert "sender" not in result
+        assert "Mathestr" not in result
+        assert "Pingelhausen" not in result
+        assert "[Name]" in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result
+
+    def test_name_context_lowercase_without_title(self):
+        result = self._redact("Bitte kontaktiere klaus mueller wegen des Projekts.")
+        assert "klaus" not in result
+        assert "mueller" not in result
+        assert "[Name]" in result
+
+    def test_name_context_false_positive_guard_pronoun(self):
+        result = self._redact("Schreibe an ihn direkt, das ist dringend.")
+        assert result == "Schreibe an ihn direkt, das ist dringend."
+
+    def test_name_context_false_positive_guard_generic_phrase(self):
+        result = self._redact("Wir sind in Kontakt mit anderen Abteilungen.")
+        assert result == "Wir sind in Kontakt mit anderen Abteilungen."
+
+    def test_name_context_false_positive_guard_no_trigger(self):
+        result = self._redact("Berlin Mitte ist ein Stadtteil.")
+        assert result == "Berlin Mitte ist ein Stadtteil."
+
+    def test_address_abbreviation_str_punkt(self):
+        result = self._redact("Die Adresse lautet Mathestr. 12.")
+        assert "Mathestr" not in result
+        assert "[Adresse]" in result
+
+    def test_address_english_number_first_format(self):
+        result = self._redact("Bitte senden an 12 Main Street, 90210 Los Angeles.")
+        assert "Main Street" not in result
+        assert "Los Angeles" not in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result
+
+    def test_address_french_prefix_format(self):
+        result = self._redact("Rue de la Paix 12, 75001 Paris")
+        assert "Rue de la Paix" not in result
+        assert "Paris" not in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result
+
+    def test_existing_antwort_lucky_still_blocked(self):
+        # Regression: der frueher gefixte "Antwort"-Credential-Fall
+        # (f2913c3) darf durch die neuen Muster nicht beeinflusst werden.
+        result = self._redact("Antwort: Lucky")
+        assert result == "[Zugangsdaten]"
+
+    def test_existing_antwort_mail_case_still_correct(self):
+        # Regression: verschachtelte Platzhalter-Situation (f2913c3) darf
+        # durch das neue name_context-Muster nicht wieder auftreten.
+        result = self._redact("Antwort-Mail an mueller@example.com von Herrn Mueller")
+        assert "mueller@example.com" not in result
+        assert "[E-Mail]" in result
+        assert "[Name]" in result

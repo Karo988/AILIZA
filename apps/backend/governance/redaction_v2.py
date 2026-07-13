@@ -91,6 +91,30 @@ class RedactionEngineV2:
             r"|Beste[ \t]+Gr(?:ü|ue)(?:ß|ss)e\b)[,]?[ \t]*"
             r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
         ),
+        # Karo-Fund 2026-07-13: Namen ohne Anrede-Keyword und ohne
+        # Grossschreibung ("kontakt mit paul sender") wurden bisher NICHT
+        # erkannt, weil alle bisherigen Namens-Muster entweder eine Anrede
+        # (Herr/Frau) oder ein Label (Name:) voraussetzen UND grossge-
+        # schriebene Namen erwarten. Betreiber-Entscheidung (Option B):
+        # Namen auch OHNE Anrede und OHNE Grossschreibung erkennen, aber nur
+        # wenn ein enger Kontext-Ausloeser (Kontaktaufnahme-Formulierung)
+        # unmittelbar davorsteht — sonst waere praktisch jedes Wortpaar ein
+        # falscher Treffer (z.B. "Berlin Mitte", "Team Alpha"). Verneinende
+        # Vorschau schliesst haeufige Funktionswoerter/Pronomen aus, damit
+        # z.B. "schreibe an ihn direkt" nicht faelschlich als Name gilt.
+        # Bekannte Grenze: nicht jedes Funktionswort ist in der Ausschluss-
+        # liste, daher bleibt ein Rest-Risiko an False Positives bestehen —
+        # bewusst in Kauf genommen (Betreiber-Vorgabe: lieber zu viel als zu
+        # wenig schwaerzen bei Kontaktaufnahme-Formulierungen).
+        "name_context": re.compile(
+            r"(?i:in[ \t]+kontakt[ \t]+mit|kontakt[ \t]+mit|kontaktiere(?:n)?|schreibe[ \t]+an"
+            r"|sende(?:n)?[ \t]+an|wende(?:n)?[ \t]+dich[ \t]+an|adressiert[ \t]+an"
+            r"|erreichbar[ \t]+unter|zu[ \t]+erreichen[ \t]+unter)"
+            r"[ \t]+(?!(?:der|die|das|den|dem|ihm|ihr|ihn|sie|es|uns|euch|ihnen|mich|dich|sich"
+            r"|einem|einer|einen|anderen|anderer|anderem|diesen|jenen|allen|vielen|unserem"
+            r"|unserer|unseren|niemand|jemand)\b)"
+            r"[A-Za-zÄÖÜäöüß]{2,20}[ \t]+[A-Za-zÄÖÜäöüß]{2,20}\b",
+        ),
         "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
         # "geboren am X" ist die haeufigste Alltagsformulierung in Briefen/
         # E-Mails und wurde bisher NICHT erkannt (nur "Geburtsdatum:"/"geb.").
@@ -162,8 +186,30 @@ class RedactionEngineV2:
             # "weg" als Teilstring). Nicht-gieriges *? vor dem Suffix, damit
             # die Suffix-Gruppe zuverlaessig genau an der richtigen Stelle
             # matcht statt sich auf Backtracking zu verlassen.
-            r"\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]*?(?:stra(?:ße|sse)|gasse|weg|platz|allee|ring|damm|ufer)"
-            r"[ \t]+\d+[a-z]?(?:/\d+[a-z]?)?",
+            #
+            # Karo-Fund 2026-07-13: "Mathestr. 12" wurde bisher NICHT erkannt,
+            # weil nur die vollen Formen "strasse/straße" abgedeckt waren,
+            # nicht die im Alltag sehr haeufige Abkuerzung "str.". Ausserdem
+            # soll das europaweit funktionieren (Betreiber-Vorgabe: "muss
+            # auch auf auslaendischen Briefen funktionieren"), OHNE externe
+            # Adress-Validierung (Datensparsamkeit — ein Geocoding-API-Call
+            # waere selbst eine unkontrollierte Drittanbieter-Uebermittlung).
+            # Deshalb: rein lokale, sprachuebergreifende Heuristik ueber
+            # bekannte Strassen-Suffixe/-Praefixe mehrerer europaeischer
+            # Sprachen, ohne Datenbank-Abgleich.
+            r"\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]*?(?:stra(?:ße|sse)|str\.|gasse|weg|platz|allee|ring|damm|ufer"
+            r"|straat|laan|gata|gatan|katu|utca)"
+            r"[ \t]+\d+[a-z]?(?:/\d+[a-z]?)?"
+            # Auslaendische Formate, bei denen das Strassen-Schluesselwort
+            # ein eigenes, vorangestelltes Wort ist statt eines Suffixes
+            # (z.B. "Rue de la Paix 12", "Via Roma 4", "Calle Mayor 10").
+            r"|\b(?:Rue|Via|Viale|Calle|Avenida|Rua|Ulica|Piazza|Plaza)[ \t]+"
+            r"[A-ZÀ-ÖØ-Ýa-zà-öø-ý][A-Za-zÀ-ÖØ-Ýà-öø-ý\-]*(?:[ \t]+[A-ZÀ-ÖØ-Ýa-zà-öø-ý][A-Za-zÀ-ÖØ-Ýà-öø-ý\-]*){0,3}"
+            r"(?:[ \t]*,?[ \t]*\d+[a-z]?)?"
+            # Englisches Format: Hausnummer VOR dem Strassennamen, Suffix als
+            # eigenes Wort am Ende ("12 Main Street", "221B Baker Street").
+            r"|\b\d{1,4}[A-Za-z]?[ \t]+[A-Z][A-Za-z\-]*(?:[ \t]+[A-Z][A-Za-z\-]*){0,2}[ \t]+"
+            r"(?:Street|St\.|Road|Rd\.|Avenue|Ave\.|Lane|Ln\.|Drive|Dr\.|Boulevard|Blvd\.)\b",
         ),
         "postal_city": re.compile(
             r"\b\d{5}[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+){0,3}",
@@ -435,6 +481,7 @@ class RedactionEngineV2:
             "name_standalone_line": "Name",
             "name_self_intro": "Name",
             "name_signature": "Name",
+            "name_context": "Name",
             "email": "E-Mail",
             "birthdate": "Geburtsdatum",
             "phone": "Telefon",
