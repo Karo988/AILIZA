@@ -644,13 +644,14 @@ body{
 </div>
 <div class="modal" id="proj-modal">
   <div class="modal-box">
-    <div class="modal-h">Neues Projekt</div>
+    <div class="modal-h" id="proj-modal-title">Neues Projekt</div>
     <div class="field"><label>Name</label><input id="proj-name" type="text" placeholder="z.B. Kundenmailings Q2"></div>
     <div class="field"><label>Beschreibung</label><textarea id="proj-desc" rows="3" placeholder="Worum geht es?"></textarea></div>
     <div class="field"><label>Priorität</label><select id="proj-prio"><option>Hoch</option><option selected>Mittel</option><option>Niedrig</option></select></div>
-    <div class="modal-acts"><button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button><button class="btn-primary" onclick="saveProject()">Erstellen</button></div>
+    <div class="modal-acts"><button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button><button class="btn-primary" id="proj-save-btn" onclick="saveProject()">Erstellen</button></div>
   </div>
 </div>
+<input type="file" id="proj-doc-input" accept=".txt,.md,.csv,.json" style="display:none" onchange="handleProjectDocUpload(event)">
 <script>
 // API-URL: aus config.js geladen (window.AILIZA_API), Fallback auf gleichen Host
 const API = window.AILIZA_API || "https://ailiza.onrender.com";
@@ -1232,12 +1233,179 @@ function handleFileUpload(e){
   };
   reader.readAsText(file);
 }
-function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
-function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
-function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
+// --- Teilschritt 3: Projekt bearbeiten (Name/Beschreibung/Priorität) ---
+let _editingProjectIndex=null; // null = "Neu anlegen", sonst Index in projects[]
+function openProjModal(editIndex){
+  const title=document.getElementById("proj-modal-title");
+  const saveBtn=document.getElementById("proj-save-btn");
+  if(typeof editIndex==="number"&&projects[editIndex]){
+    _editingProjectIndex=editIndex;
+    const p=projects[editIndex];
+    document.getElementById("proj-name").value=p.name||"";
+    document.getElementById("proj-desc").value=p.desc||"";
+    document.getElementById("proj-prio").value=p.prio||"Mittel";
+    if(title)title.textContent="Projekt bearbeiten";
+    if(saveBtn)saveBtn.textContent="Speichern";
+  }else{
+    _editingProjectIndex=null;
+    document.getElementById("proj-name").value="";
+    document.getElementById("proj-desc").value="";
+    document.getElementById("proj-prio").value="Mittel";
+    if(title)title.textContent="Neues Projekt";
+    if(saveBtn)saveBtn.textContent="Erstellen";
+  }
+  document.getElementById("proj-modal").classList.add("open");
+}
+function closeProjModal(){document.getElementById("proj-modal").classList.remove("open");_editingProjectIndex=null}
+function saveProject(){
+  const name=document.getElementById("proj-name").value.trim();if(!name)return;
+  const desc=document.getElementById("proj-desc").value;
+  const prio=document.getElementById("proj-prio").value;
+  if(_editingProjectIndex!==null&&projects[_editingProjectIndex]){
+    const p=projects[_editingProjectIndex];
+    p.name=name;p.desc=desc;p.prio=prio;
+  }else{
+    projects.push({id:Date.now(),name,desc,prio,created:new Date().toISOString()});
+  }
+  saveProjects();closeProjModal();renderProjects();renderProjectList();
+  document.getElementById("proj-name").value="";document.getElementById("proj-desc").value="";
+}
 function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
-function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
-function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div></div>`).join("")}
+function deleteProject(i){
+  if(!confirm("Projekt löschen? Der zugehörige Chatverlauf bleibt erhalten."))return;
+  const p=projects[i];
+  if(p){
+    // Teilschritt 3: Chat wird NICHT mehr automatisch mitgelöscht, nur die
+    // Projekt-Zuordnung selbst. Zugehörige Projektdokumente werden entfernt,
+    // da sie ohne Projekt keinen Bezug mehr hätten.
+    deleteProjectDocsByProject(String(p.id)).catch(()=>{});
+    if(String(p.id)===String(activeProjectId)){
+      setActiveProject(null);
+      // Standard-Chat zurück in die Ansicht laden — sonst würde der noch
+      // angezeigte Projekt-Verlauf beim nächsten Speichern in den
+      // Standard-Chat-Speicher ("ailiza_chat") geschrieben (Datenvermischung).
+      chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
+      currentChatId=null;
+      context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+      renderChat();
+    }
+  }
+  projects.splice(i,1);saveProjects();renderProjects();renderProjectList();
+}
+function renderProjects(){
+  document.getElementById("proj-count").textContent=projects.length;
+  const grid=document.getElementById("proj-grid");
+  if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}
+  grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill" onclick="event.stopPropagation();openProjModal(${i})" title="Bearbeiten">✎</button><button class="meta-pill" onclick="event.stopPropagation();triggerProjectDocUpload(${i})" title="Dokument hinzufügen">📎</button><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})" title="Löschen">✕</button></div><div class="proj-doc-list" id="proj-docs-${p.id}" style="font-size:11px;color:var(--text-muted);margin-top:6px">Lade Dokumente…</div></div>`).join("");
+  projects.forEach(p=>renderProjectDocs(p.id));
+}
+
+// --- Teilschritt 3: Projektdokumente, lokal in IndexedDB, mit SHA-256-Hash ---
+// Kein Server-Upload. Dokumente sind hier reine Datenhaltung — noch keine
+// Einbindung in den Chat-Kontext (das ist Teilschritt 5, bewusst nicht Teil
+// dieses Auftrags).
+const PROJ_DB_NAME="ailiza_db",PROJ_DB_VERSION=1,PROJ_DOC_STORE="project_docs";
+let _pendingDocProjectId=null;
+function openProjectDb(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(PROJ_DB_NAME,PROJ_DB_VERSION);
+    req.onupgradeneeded=function(e){
+      const db=e.target.result;
+      if(!db.objectStoreNames.contains(PROJ_DOC_STORE)){
+        const store=db.createObjectStore(PROJ_DOC_STORE,{keyPath:"id"});
+        store.createIndex("project_id","project_id",{unique:false});
+      }
+    };
+    req.onsuccess=function(e){resolve(e.target.result)};
+    req.onerror=function(e){reject(e.target.error)};
+  });
+}
+async function sha256Hex(text){
+  const enc=new TextEncoder().encode(text);
+  const buf=await crypto.subtle.digest("SHA-256",enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function addProjectDocRecord(doc){
+  return openProjectDb().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(PROJ_DOC_STORE,"readwrite");
+    tx.objectStore(PROJ_DOC_STORE).put(doc);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  }));
+}
+function getProjectDocs(projectId){
+  return openProjectDb().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(PROJ_DOC_STORE,"readonly");
+    const idx=tx.objectStore(PROJ_DOC_STORE).index("project_id");
+    const req=idx.getAll(String(projectId));
+    req.onsuccess=()=>resolve(req.result||[]);
+    req.onerror=()=>reject(req.error);
+  }));
+}
+function deleteProjectDocRecord(docId){
+  return openProjectDb().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(PROJ_DOC_STORE,"readwrite");
+    tx.objectStore(PROJ_DOC_STORE).delete(docId);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  }));
+}
+function deleteProjectDocsByProject(projectId){
+  return getProjectDocs(projectId).then(docs=>Promise.all(docs.map(d=>deleteProjectDocRecord(d.id))));
+}
+function triggerProjectDocUpload(i){
+  const p=projects[i];if(!p)return;
+  _pendingDocProjectId=String(p.id);
+  document.getElementById("proj-doc-input").click();
+}
+function handleProjectDocUpload(e){
+  const input=e.target;
+  const file=input.files&&input.files[0];
+  const projectId=_pendingDocProjectId;
+  _pendingDocProjectId=null;
+  if(!file||!projectId){input.value="";return}
+  const name=file.name||"datei";
+  const ext=(name.includes(".")?"."+name.split(".").pop():"").toLowerCase();
+  if(!FILE_UPLOAD_ALLOWED_EXT.includes(ext)){
+    alert(`Dateityp nicht unterstützt: ${ext||"(ohne Endung)"}. Erlaubt: ${FILE_UPLOAD_ALLOWED_EXT.join(", ")}`);
+    input.value="";return;
+  }
+  if(file.size>FILE_UPLOAD_MAX_BYTES){
+    alert(`Datei zu groß (${Math.round(file.size/1024)} KB). Maximal ${FILE_UPLOAD_MAX_BYTES/1024} KB.`);
+    input.value="";return;
+  }
+  const reader=new FileReader();
+  reader.onload=async function(ev){
+    const content=String(ev.target.result||"");
+    try{
+      const hash=await sha256Hex(content);
+      const doc={id:`${projectId}_${Date.now()}`,project_id:projectId,name,ext,size:file.size,hash,content,added:new Date().toISOString()};
+      await addProjectDocRecord(doc);
+      renderProjectDocs(projectId);
+    }catch(err){
+      alert("Dokument konnte nicht gespeichert werden.");
+    }
+    input.value="";
+  };
+  reader.onerror=function(){alert("Datei konnte nicht gelesen werden.");input.value=""};
+  reader.readAsText(file);
+}
+async function deleteProjectDoc(docId,projectId){
+  if(!confirm("Dokument aus dem Projekt entfernen?"))return;
+  await deleteProjectDocRecord(docId);
+  renderProjectDocs(projectId);
+}
+async function renderProjectDocs(projectId){
+  const el=document.getElementById(`proj-docs-${projectId}`);
+  if(!el)return;
+  try{
+    const docs=await getProjectDocs(String(projectId));
+    if(!docs.length){el.textContent="Keine Dokumente.";return}
+    el.innerHTML=docs.map(d=>`<div style="display:flex;align-items:center;gap:4px;justify-content:space-between"><span title="SHA-256: ${d.hash}">📄 ${escapeHtml(d.name)}</span><span onclick="event.stopPropagation();deleteProjectDoc('${d.id}','${projectId}')" style="cursor:pointer">✕</span></div>`).join("");
+  }catch(err){
+    el.textContent="Dokumente konnten nicht geladen werden.";
+  }
+}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
