@@ -91,6 +91,18 @@ class RedactionEngineV2:
             r"|Beste[ \t]+Gr(?:ü|ue)(?:ß|ss)e\b)[,]?[ \t]*"
             r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
         ),
+        # Karo-Fund 2026-07-14 (Golden-Brief, mehrsprachiger Testbrief):
+        # Namens-/Adress-/Diagnose-Angaben in Bulgarisch (kyrillisch) und
+        # Tschechisch (lateinisch mit Diakritika) wurden komplett NICHT
+        # erkannt, weil alle Muster deutsche Schluesselwoerter + lateinische
+        # Zeichenklassen ([A-ZÄÖÜ]) voraussetzten. Betreiber-Entscheidung
+        # (Option 1): gezielt nur BG/CZ ergaenzen, nicht EU-weit ausrollen.
+        # Ansatz: label-basiert + Wert bis Zeilenende — so werden kyrillische/
+        # diakritische Werte erfasst, ohne fuer jede Sprache eigene
+        # Zeichenklassen pflegen zu muessen.
+        "name_field_intl": re.compile(
+            r"(?i:Име|Jméno)[ \t]*:[ \t]*[^\n]{1,120}",
+        ),
         # Karo-Fund 2026-07-13: Namen ohne Anrede-Keyword und ohne
         # Grossschreibung ("kontakt mit paul sender") wurden bisher NICHT
         # erkannt, weil alle bisherigen Namens-Muster entweder eine Anrede
@@ -218,6 +230,17 @@ class RedactionEngineV2:
             r"|\b\d{1,4}[A-Za-z]?[ \t]+[A-Z][A-Za-z\-]*(?:[ \t]+[A-Z][A-Za-z\-]*){0,2}[ \t]+"
             r"(?:Street|St\.|Road|Rd\.|Avenue|Ave\.|Lane|Ln\.|Drive|Dr\.|Boulevard|Blvd\.)\b",
         ),
+        # Karo-Fund 2026-07-14 (Golden-Brief): BG/CZ-Adresszeilen ("Адрес: ..."
+        # / "Adresa: ...") wurden nicht erfasst. Label-basiert + Wert bis
+        # Zeilenende deckt kyrillische Strassennamen und abweichende PLZ-
+        # Formate (BG "1000 София", CZ "110 00 Praha 1") in einem Zug ab,
+        # ohne strukturelle Sprach-Parser. Bewusst NUR die BG/CZ-Labels
+        # (Адрес/Adresa), NICHT das deutsche "Adresse" — sonst wuerde das
+        # bestehende, feiner aufgeloeste deutsche Verhalten ([Adresse],[Ort])
+        # zu einem einzigen [Adresse] verschmelzen (Regression vermeiden).
+        "address_field_intl": re.compile(
+            r"(?i:Адрес|Adresa)[ \t]*:[ \t]*[^\n]{1,200}",
+        ),
         "postal_city": re.compile(
             r"\b\d{5}[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+){0,3}",
         ),
@@ -252,6 +275,15 @@ class RedactionEngineV2:
             "schwanger", "fehlgeburt", "therapeutisch", "psychotherap",
             "medikament", "blutdruck", "body-mass-index", "bmi",
             "krankenversicherungsnummer",
+            # Karo-Fund 2026-07-14 (Golden-Brief, BG/CZ): Diagnose-Labels
+            # und konkrete Erkrankungen in Bulgarisch/Tschechisch. Das
+            # Label ("диагноза"/"diagnóza") ist wichtig, weil es ueber den
+            # ": <Wert>"-Zusatz die GANZE Diagnosezeile schwaerzt — die
+            # blosse Erkrankung ("диабет") ohne folgenden Doppelpunkt wuerde
+            # sonst nur das eine Wort treffen und den Rest der Zeile
+            # stehenlassen. \w matcht im Unicode-Modus auch Kyrillisch/
+            # Diakritika, IGNORECASE deckt die Gross-/Kleinschreibung ab.
+            "диагноза", "диабет", "diagnóza", "deprese",
         ],
         "religion": ["religion", "muslimisch", "christlich", "buddhistische", "jüdisch", "atheist", "katholisch", "evangelisch"],
         "politics": ["politische", "wahlbezirk", "spd", "cdu", "grüne", "linke", "afd", "fdp"],
@@ -489,6 +521,8 @@ class RedactionEngineV2:
             "name_self_intro": "Name",
             "name_signature": "Name",
             "name_context": "Name",
+            "name_field_intl": "Name",
+            "address_field_intl": "Adresse",
             "email": "E-Mail",
             "birthdate": "Geburtsdatum",
             "phone": "Telefon",

@@ -847,3 +847,68 @@ class TestNameContextAndEuropeanAddressRedaction:
         assert result == "[Zugangsdaten]"
         assert "rein!)" not in result
         assert "ht mehr" not in result
+
+
+# ── Karo-Fund 2026-07-14: mehrsprachige Redaction BG/CZ (Golden-Brief) ────────
+class TestMultilingualRedactionBgCz:
+    """
+    Golden-Brief-Befund: Namens-/Adress-/Diagnose-Angaben in Bulgarisch
+    (kyrillisch) und Tschechisch (Diakritika) rutschten unredigiert durch,
+    weil alle Muster deutsche Schluesselwoerter + lateinische Zeichen-
+    klassen voraussetzten. Betreiber-Entscheidung (Option 1): gezielt nur
+    BG/CZ ergaenzen, nicht EU-weit. Label-basiert + Wert bis Zeilenende.
+    """
+
+    def _redact(self, text: str) -> str:
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        return RedactionEngineV2().redact(text).redacted_text
+
+    def test_bulgarian_name_redacted(self):
+        result = self._redact("Име: Димитър Иванов (Dimitar Ivanov)")
+        assert "Димитър" not in result
+        assert "Иванов" not in result
+        assert "Dimitar" not in result
+        assert "[Name]" in result
+
+    def test_bulgarian_address_redacted(self):
+        result = self._redact('Адрес: ул. "Граф Игнатиев" 15, 1000 София')
+        assert "Граф Игнатиев" not in result
+        assert "София" not in result
+        assert "1000" not in result
+        assert "[Adresse]" in result
+
+    def test_bulgarian_diagnosis_redacted(self):
+        result = self._redact(
+            "Диагноза: Диабет тип 2, необходимо е ежедневно проследяване."
+        )
+        assert "Диабет" not in result
+        assert "проследяване" not in result
+        assert "GESCHWAERZT" in result
+
+    def test_czech_name_redacted(self):
+        result = self._redact("Jméno: Jan Novák")
+        assert "Novák" not in result
+        assert "[Name]" in result
+
+    def test_czech_address_redacted(self):
+        result = self._redact("Adresa: Na Příkopě 854/14, 110 00 Praha 1")
+        assert "Příkopě" not in result
+        assert "Praha" not in result
+        assert "[Adresse]" in result
+
+    def test_czech_diagnosis_redacted(self):
+        result = self._redact(
+            "Diagnóza: Diagnostikována klinická deprese, farmakologická léčba."
+        )
+        assert "deprese" not in result
+        assert "léčba" not in result
+        assert "GESCHWAERZT" in result
+
+    def test_german_address_still_finegrained(self):
+        # Regression: das deutsche "Adresse:" darf NICHT vom intl-Label
+        # erfasst werden — feine Aufloesung [Adresse] + [Ort] bleibt.
+        result = self._redact("Adresse: Hauptstr. 5, 10115 Berlin")
+        assert "Hauptstr" not in result
+        assert "Berlin" not in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result
