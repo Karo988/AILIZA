@@ -386,6 +386,8 @@ body{
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
             <button class="tool-btn" id="tool-auto" onclick="toggleTool('auto')">⚡ Autonom</button>
+            <button class="tool-btn" id="tool-upload" onclick="triggerFileUpload()" title="Textdatei einlesen (nur clientseitig, kein Upload zum Server)">📎 Datei</button>
+            <input type="file" id="file-upload-input" accept=".txt,.md,.csv,.json" style="display:none" onchange="handleFileUpload(event)">
             <div class="dev-controls" style="display:none">
               <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
               <div class="tool-sep"></div>
@@ -1189,6 +1191,47 @@ function handlePaste(e){
   autoResize(el);renderPrivacyMemory(el.value);
 }
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
+// --- Teilschritt 2: Datei-Upload, ausschließlich clientseitig (FileReader) ---
+// Kein Server-Call, keine Rohdatei-Persistenz. Dateiinhalt landet nur im
+// Chat-Eingabefeld und durchläuft danach die normale Redaction-/Sendestrecke
+// (previewRedaction / sendMessage), genau wie eingetippter oder eingefügter Text.
+const FILE_UPLOAD_MAX_BYTES=200*1024; // 200 KB Schutzkante
+const FILE_UPLOAD_ALLOWED_EXT=[".txt",".md",".csv",".json"];
+function triggerFileUpload(){document.getElementById("file-upload-input").click()}
+function handleFileUpload(e){
+  const input=e.target;
+  const file=input.files&&input.files[0];
+  if(!file){return}
+  const name=file.name||"datei";
+  const ext=(name.includes(".")?"."+name.split(".").pop():"").toLowerCase();
+  if(!FILE_UPLOAD_ALLOWED_EXT.includes(ext)){
+    alert(`Dateityp nicht unterstützt: ${ext||"(ohne Endung)"}. Erlaubt: ${FILE_UPLOAD_ALLOWED_EXT.join(", ")}`);
+    input.value="";return;
+  }
+  if(file.size>FILE_UPLOAD_MAX_BYTES){
+    alert(`Datei zu groß (${Math.round(file.size/1024)} KB). Maximal ${FILE_UPLOAD_MAX_BYTES/1024} KB.`);
+    input.value="";return;
+  }
+  const reader=new FileReader();
+  reader.onload=function(ev){
+    // Inhalt wird als reiner Text behandelt, nicht als HTML interpretiert.
+    // renderMsg() escaped Chat-Inhalte ohnehin vor der Anzeige (siehe dort).
+    const content=String(ev.target.result||"");
+    const marked=`[Datei: ${name}]\n${content}\n[Ende Datei]`;
+    const el=document.getElementById("chat-input");
+    const start=el.selectionStart,end=el.selectionEnd;
+    const sep=el.value&&start>0?"\n":"";
+    el.value=el.value.slice(0,start)+sep+marked+el.value.slice(end);
+    el.selectionStart=el.selectionEnd=start+sep.length+marked.length;
+    autoResize(el);onChatInputChanged();el.focus();
+    input.value=""; // Input zurücksetzen, damit dieselbe Datei erneut wählbar ist
+  };
+  reader.onerror=function(){
+    alert("Datei konnte nicht gelesen werden.");
+    input.value="";
+  };
+  reader.readAsText(file);
+}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
 function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
 function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
