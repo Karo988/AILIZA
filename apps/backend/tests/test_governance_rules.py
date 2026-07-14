@@ -837,3 +837,13 @@ class TestNameContextAndEuropeanAddressRedaction:
         assert "mueller@example.com" not in result
         assert "[E-Mail]" in result
         assert "[Name]" in result
+
+    def test_credential_60_char_cutoff_bug_fixed(self):
+        # Karo-Fund 2026-07-14 (Golden-Brief): "Passwort: <langer Wert>"
+        # wurde bei >60 Zeichen mitten im Wort abgeschnitten, sodass ein
+        # unredigiertes Rest-Fragment hinter dem Platzhalter stehen blieb.
+        text = "Passwort: Xy9!Zz-supergeheim-lang (kommt da nicht mehr rein!)"
+        result = self._redact(text)
+        assert result == "[Zugangsdaten]"
+        assert "rein!)" not in result
+        assert "ht mehr" not in result

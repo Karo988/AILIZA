@@ -148,10 +148,17 @@ class RedactionEngineV2:
         # fragen), aber der Doppelpunkt ist jetzt fuer ALLE Schluesselwoerter
         # PFLICHT (":" statt ":?") -- "Antwort-Mail" (kein Doppelpunkt)
         # matcht dadurch nicht mehr, "Antwort: Lucky" weiterhin.
+        # Karo-Fund 2026-07-14 (Golden-Brief, mehrsprachiger Testbrief): Die
+        # bisherige Obergrenze von 60 Zeichen war zu knapp bemessen — bei
+        # laengeren Werten (z.B. Passwort + Klammer-Hinweis) wurde die Zeile
+        # MITTEN IM WORT abgeschnitten, sodass ein unredigiertes Rest-
+        # Fragment ("...ht mehr rein!)") hinter dem Platzhalter stehen
+        # blieb. Grenze auf 300 Zeichen angehoben (deckt realistische
+        # Zeilenlaengen ab, faengt weiterhin bei Zeilenende).
         "credential": re.compile(
             r"(?i:Benutzername|Passwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
             r"|Wiederherstellungscode|Zwei-Faktor-Authentifizierungsschlüssel)"
-            r"[ \t]*:[ \t]*[^\n]{1,60}",
+            r"[ \t]*:[ \t]*[^\n]{1,300}",
         ),
         # Technische Kennungen mit Standort-/Identifizierungsbezug.
         "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
@@ -163,7 +170,7 @@ class RedactionEngineV2:
         "financial_detail": re.compile(
             r"(?i:Monatliches Nettoeinkommen|Monatliche Mietkosten|Laufender Ratenkredit"
             r"|Dispositionskredit|Aktueller Kontostand|Bonitätsscore"
-            r"|SCHUFA-ähnliche Risikoeinstufung)[ \t]*:?[ \t]*[^\n]{1,60}",
+            r"|SCHUFA-ähnliche Risikoeinstufung)[ \t]*:?[ \t]*[^\n]{1,300}",
         ),
         # SCHUFA/Bonität auch als freistehende Erwaehnung erkennen (nicht nur
         # in der exakten Label-Zeile oben) — Karo-Fund 2026-07-11.
@@ -177,7 +184,7 @@ class RedactionEngineV2:
         # Daten Minderjaehriger, unabhaengig von der sonstigen Kategorie).
         "child_field": re.compile(
             r"(?i:Schule des Kindes|Schulweg|Kindergarten|Name des Kindes"
-            r"|Geburtsdatum des Kindes)[ \t]*:?[ \t]*[^\n]{1,60}",
+            r"|Geburtsdatum des Kindes)[ \t]*:?[ \t]*[^\n]{1,300}",
         ),
         "address": re.compile(
             # Kein IGNORECASE: Strassenname ist im Deutschen konventionell
