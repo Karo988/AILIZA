@@ -406,6 +406,8 @@ body{
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
             <button class="tool-btn" id="tool-auto" onclick="toggleTool('auto')">⚡ Autonom</button>
+            <button class="tool-btn" id="tool-chat-upload" onclick="document.getElementById('chat-file-input').click()" title="Textdatei einlesen (wird geprüft, bevor der Inhalt ins Eingabefeld übernommen wird)">📎 Datei</button>
+            <input type="file" id="chat-file-input" multiple style="display:none" onchange="handleChatFileUpload(event)">
             <div class="dev-controls" style="display:none">
               <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
               <div class="tool-sep"></div>
@@ -834,11 +836,7 @@ function documentScanFailureMessage(body,fallback="Datei wurde nicht aufgenommen
   if(body&&typeof body.decision==="string"&&body.decision.trim())return `Scan-Entscheidung: ${body.decision}`;
   return fallback;
 }
-async function uploadProjectFile(index,input){
-  const project=projects[index];
-  const file=input?.files?.[0];
-  if(!project||!file)return;
-  showProjectUploadStatus(`Prüfe Datei: ${file.name}`);
+async function scanFileForUpload(file){
   const form=new FormData();
   form.append("file",file);
   try{
@@ -846,25 +844,82 @@ async function uploadProjectFile(index,input){
     let body=null;
     try{body=await response.json()}catch{}
     if(!response.ok||!isValidDocumentScanResponse(body)||body.allowed!==true){
-      showProjectUploadStatus(`Datei abgelehnt: ${documentScanFailureMessage(body,"Sicherheitsprüfung fehlgeschlagen.")}`,"err");
-      return;
+      return{ok:false,reason:documentScanFailureMessage(body,"Sicherheitsprüfung fehlgeschlagen.")};
     }
-    project.files=getProjectFiles(project);
+    return{ok:true,decision:body.decision,highest_risk_class:body.highest_risk_class};
+  }catch{
+    return{ok:false,reason:"Sicherheitsprüfung nicht erreichbar."};
+  }
+}
+// Karo-Wunsch 2026-07-15: Datei-Upload auch direkt im Chat, nicht nur im
+// Projektbereich. Nutzt denselben Pflicht-Scan wie Projekt-Uploads
+// (scanFileForUpload -> POST /documents/scan, fail-closed). Erst NACH
+// bestandenem Scan wird der Dateiinhalt gelesen und ins Eingabefeld
+// eingefuegt -- der Inhalt selbst wird NIE ungeprueft verwendet. Danach
+// durchlaeuft er wie jeder getippte/eingefuegte Text ganz normal die
+// server-seitige Redaction/Governance-Pipeline beim Senden.
+const CHAT_FILE_MAX_BYTES=200*1024;
+async function handleChatFileUpload(e){
+  const input=e.target;
+  const files=input?.files?Array.from(input.files):[];
+  if(!files.length)return;
+  const el=document.getElementById("chat-input");
+  for(const file of files){
+    if(file.size>CHAT_FILE_MAX_BYTES){
+      alert(`Datei zu groß: ${file.name} (${Math.round(file.size/1024)} KB). Maximal ${CHAT_FILE_MAX_BYTES/1024} KB.`);
+      continue;
+    }
+    const scan=await scanFileForUpload(file);
+    if(!scan.ok){
+      alert(`Datei abgelehnt: ${file.name} — ${scan.reason}`);
+      continue;
+    }
+    try{
+      const content=await file.text();
+      const marked=`[Datei: ${file.name}]\n${content}\n[Ende Datei]`;
+      const start=el.selectionStart,end=el.selectionEnd;
+      const sep=el.value&&start>0?"\n":"";
+      el.value=el.value.slice(0,start)+sep+marked+el.value.slice(end);
+      el.selectionStart=el.selectionEnd=start+sep.length+marked.length;
+    }catch{
+      alert(`Datei konnte nicht gelesen werden: ${file.name}`);
+    }
+  }
+  autoResize(el);onChatInputChanged();el.focus();
+  input.value="";
+}
+async function uploadProjectFile(index,input){
+  const project=projects[index];
+  const files=input?.files?Array.from(input.files):[];
+  if(!project||!files.length)return;
+  project.files=getProjectFiles(project);
+  let acceptedCount=0,rejectedCount=0,lastRejectReason="";
+  for(const file of files){
+    showProjectUploadStatus(`Prüfe Datei: ${file.name}`);
+    const scan=await scanFileForUpload(file);
+    if(!scan.ok){
+      rejectedCount++;lastRejectReason=`${file.name}: ${scan.reason}`;
+      continue;
+    }
     project.files.push({
       name:file.name,
       uploaded_at:new Date().toISOString(),
-      decision:body.decision,
-      highest_risk_class:body.highest_risk_class
+      decision:scan.decision,
+      highest_risk_class:scan.highest_risk_class
     });
-    saveProjects();
-    renderProjects();
-    renderProjectList();
-    showProjectUploadStatus(`Datei aufgenommen: ${file.name}`,"ok");
-  }catch{
-    showProjectUploadStatus("Datei abgelehnt: Sicherheitsprüfung nicht erreichbar.","err");
-  }finally{
-    if(input)input.value="";
+    acceptedCount++;
   }
+  saveProjects();
+  renderProjects();
+  renderProjectList();
+  if(rejectedCount&&acceptedCount){
+    showProjectUploadStatus(`${acceptedCount} Datei(en) aufgenommen, ${rejectedCount} abgelehnt (${lastRejectReason})`,"err");
+  }else if(rejectedCount){
+    showProjectUploadStatus(`Datei abgelehnt: ${lastRejectReason}`,"err");
+  }else{
+    showProjectUploadStatus(`${acceptedCount} Datei(en) aufgenommen.`,"ok");
+  }
+  if(input)input.value="";
 }
 function renderProjectFiles(project,index){
   const files=getProjectFiles(project);
@@ -881,7 +936,7 @@ function renderProjectFiles(project,index){
     <div class="project-files-head">
       <div class="project-files-title">Dateien</div>
       <button class="project-file-upload" onclick="event.stopPropagation();document.getElementById('project-file-input-${index}').click()">＋ Datei</button>
-      <input class="project-file-input" id="project-file-input-${index}" type="file" onchange="uploadProjectFile(${index},this)">
+      <input class="project-file-input" id="project-file-input-${index}" type="file" multiple onchange="uploadProjectFile(${index},this)">
     </div>
     <div class="project-file-list">${items}</div>
   </div>`;
