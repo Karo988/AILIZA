@@ -212,6 +212,24 @@ body{
 .meta-pill.hi{background:var(--warn-soft);color:var(--warn)}
 .meta-pill.del{background:transparent;color:var(--text-muted);cursor:pointer;border:none;margin-left:auto}
 .meta-pill.del:hover{color:var(--err)}
+.project-upload-status{display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:10px 12px;font-size:12px;color:var(--text-soft)}
+.project-upload-status.visible{display:block}
+.project-upload-status.ok{border-color:#B6D2BD;background:var(--accent-soft);color:var(--accent)}
+.project-upload-status.err{border-color:#E6B8B8;background:#FCE8E8;color:var(--err)}
+.project-files{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.project-files-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.project-files-title{font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.project-file-upload{border:1px solid var(--border);background:var(--surface);color:var(--accent);border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;cursor:pointer}
+.project-file-upload:hover{background:var(--accent-soft)}
+.project-file-input{display:none}
+.project-file-list{display:flex;flex-direction:column;gap:6px}
+.project-file-item{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;border:1px solid var(--border);background:var(--surface-2);border-radius:7px;padding:7px 8px}
+.project-file-main{min-width:0}
+.project-file-name{font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-file-meta{font-size:10px;color:var(--text-muted);margin-top:2px}
+.project-file-delete{border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:12px;line-height:1;padding:2px 4px;flex-shrink:0}
+.project-file-delete:hover{color:var(--err)}
+.project-file-empty{font-size:11px;color:var(--text-muted);padding:4px 0}
 .empty{text-align:center;padding:48px;color:var(--text-muted);font-size:13px}
 .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px}
 .metric{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
@@ -412,6 +430,7 @@ body{
     <div class="view" id="view-projects">
       <div class="page-wrap">
         <div class="page-head"><div><div class="page-title">Projekte</div><div class="page-sub">Aufgaben verwalten und Chats zuordnen</div></div><button class="btn-primary" onclick="openProjModal()">＋ Neues Projekt</button></div>
+        <div class="project-upload-status" id="project-upload-status" role="status" aria-live="polite"></div>
         <div class="grid" id="proj-grid"></div>
       </div>
     </div>
@@ -776,6 +795,89 @@ function createChatId(prefix="chat"){return `${prefix}_${Date.now()}_${Math.rand
 function getProjectChatStorageKey(chatId){return `ailiza_chat_${chatId}`}
 function getActiveChatStorageKey(){return activeProjectId&&currentChatId?getProjectChatStorageKey(currentChatId):"ailiza_chat"}
 function getActiveProject(){return projects.find(p=>String(p.id)===String(activeProjectId))||null}
+function getProjectFiles(project){return Array.isArray(project?.files)?project.files:[]}
+function documentUploadHeaders(){const headers={...authHeaders()};delete headers["Content-Type"];return headers}
+function isValidDocumentScanResponse(body){
+  return body&&typeof body.allowed==="boolean"&&typeof body.decision==="string"&&"highest_risk_class" in body;
+}
+function showProjectUploadStatus(message,type=""){
+  const el=document.getElementById("project-upload-status");
+  if(!el)return;
+  el.textContent=message;
+  el.className=`project-upload-status visible${type?` ${type}`:""}`;
+}
+function clearProjectUploadStatus(){
+  const el=document.getElementById("project-upload-status");
+  if(!el)return;
+  el.textContent="";
+  el.className="project-upload-status";
+}
+function documentScanFailureMessage(body,fallback="Datei wurde nicht aufgenommen."){
+  if(body&&typeof body.reason==="string"&&body.reason.trim())return body.reason.trim();
+  if(body&&typeof body.decision==="string"&&body.decision.trim())return `Scan-Entscheidung: ${body.decision}`;
+  return fallback;
+}
+async function uploadProjectFile(index,input){
+  const project=projects[index];
+  const file=input?.files?.[0];
+  if(!project||!file)return;
+  showProjectUploadStatus(`Prüfe Datei: ${file.name}`);
+  const form=new FormData();
+  form.append("file",file);
+  try{
+    const response=await fetch(`${API}/documents/scan`,{method:"POST",headers:documentUploadHeaders(),body:form});
+    let body=null;
+    try{body=await response.json()}catch{}
+    if(!response.ok||!isValidDocumentScanResponse(body)||body.allowed!==true){
+      showProjectUploadStatus(`Datei abgelehnt: ${documentScanFailureMessage(body,"Sicherheitsprüfung fehlgeschlagen.")}`,"err");
+      return;
+    }
+    project.files=getProjectFiles(project);
+    project.files.push({
+      name:file.name,
+      uploaded_at:new Date().toISOString(),
+      decision:body.decision,
+      highest_risk_class:body.highest_risk_class
+    });
+    saveProjects();
+    renderProjects();
+    renderProjectList();
+    showProjectUploadStatus(`Datei aufgenommen: ${file.name}`,"ok");
+  }catch{
+    showProjectUploadStatus("Datei abgelehnt: Sicherheitsprüfung nicht erreichbar.","err");
+  }finally{
+    if(input)input.value="";
+  }
+}
+function renderProjectFiles(project,index){
+  const files=getProjectFiles(project);
+  const items=files.length?files.map((file,fileIndex)=>`
+    <div class="project-file-item">
+      <div class="project-file-main">
+        <div class="project-file-name">${escapeHtml(file.name)}</div>
+        <div class="project-file-meta">Scan: ${escapeHtml(file.decision)} · Risiko: ${escapeHtml(file.highest_risk_class||"n/a")} · ${escapeHtml(file.uploaded_at||"")}</div>
+      </div>
+      <button class="project-file-delete" title="Datei entfernen" onclick="event.stopPropagation();deleteProjectFile(${index},${fileIndex})">✕</button>
+    </div>
+  `).join(""):'<div class="project-file-empty">Keine Dateien</div>';
+  return `<div class="project-files">
+    <div class="project-files-head">
+      <div class="project-files-title">Dateien</div>
+      <button class="project-file-upload" onclick="event.stopPropagation();document.getElementById('project-file-input-${index}').click()">＋ Datei</button>
+      <input class="project-file-input" id="project-file-input-${index}" type="file" onchange="uploadProjectFile(${index},this)">
+    </div>
+    <div class="project-file-list">${items}</div>
+  </div>`;
+}
+function deleteProjectFile(projectIndex,fileIndex){
+  const project=projects[projectIndex];
+  if(!project||!Array.isArray(project.files)||!project.files[fileIndex])return;
+  project.files.splice(fileIndex,1);
+  saveProjects();
+  renderProjects();
+  renderProjectList();
+  showProjectUploadStatus("Datei-Metadaten entfernt.","ok");
+}
 function updateChatProjectLabel(){
   const el=document.getElementById("active-project-name");if(!el)return;
   const project=getActiveProject();
@@ -1194,7 +1296,7 @@ function closeProjModal(){document.getElementById("proj-modal").classList.remove
 function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
 function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
 function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
-function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div></div>`).join("")}
+function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}</div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
