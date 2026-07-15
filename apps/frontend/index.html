@@ -407,7 +407,7 @@ body{
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
             <button class="tool-btn" id="tool-auto" onclick="toggleTool('auto')">⚡ Autonom</button>
             <button class="tool-btn" id="tool-chat-upload" onclick="document.getElementById('chat-file-input').click()" title="Textdatei einlesen (wird geprüft, bevor der Inhalt ins Eingabefeld übernommen wird)">📎 Datei</button>
-            <input type="file" id="chat-file-input" accept=".pdf,.docx,.xlsx,.txt,.csv" style="display:none" onchange="handleChatFileUpload(event)">
+            <input type="file" id="chat-file-input" accept=".pdf,.docx,.xlsx,.txt,.csv,.md,.html,.htm,.rtf,.json,.xml,.yaml,.yml,.sql,.js,.ts,.py,.css,.php" style="display:none" onchange="handleChatFileUpload(event)">
             <div class="dev-controls" style="display:none">
               <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
               <div class="tool-sep"></div>
@@ -855,7 +855,7 @@ async function scanFileForUpload(file){
 // ausgelesen. PDF, DOCX, XLSX, TXT und CSV gehen nach dem Pflicht-Scan
 // direkt an den sicheren Backend-Endpunkt /documents/agent-run.
 const CHAT_FILE_MAX_BYTES=10*1024*1024;
-const CHAT_FILE_EXTENSIONS=[".pdf",".docx",".xlsx",".txt",".csv"];
+const CHAT_FILE_EXTENSIONS=[".pdf",".docx",".xlsx",".txt",".csv",".md",".html",".htm",".rtf",".json",".xml",".yaml",".yml",".sql",".js",".ts",".py",".css",".php"];
 let pendingChatFile=null;
 
 function chatFileExtension(name){
@@ -969,7 +969,7 @@ function renderProjectFiles(project,index){
     <div class="project-files-head">
       <div class="project-files-title">Dateien</div>
       <button class="project-file-upload" onclick="event.stopPropagation();document.getElementById('project-file-input-${index}').click()">＋ Datei</button>
-      <input class="project-file-input" id="project-file-input-${index}" type="file" multiple onchange="uploadProjectFile(${index},this)">
+      <input class="project-file-input" id="project-file-input-${index}" type="file" multiple accept=".pdf,.docx,.xlsx,.txt,.csv,.md,.html,.htm,.rtf,.json,.xml,.yaml,.yml,.sql,.js,.ts,.py,.css,.php" onchange="uploadProjectFile(${index},this)">
     </div>
     <div class="project-file-list">${items}</div>
   </div>`;

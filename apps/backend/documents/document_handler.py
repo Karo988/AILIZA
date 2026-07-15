@@ -26,7 +26,22 @@ except ImportError:  # pragma: no cover
     from governance.data_matrix import PolicyDecision, check_data_target
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".csv"}
+# Karo-Wunsch 2026-07-15: Formaterweiterung in zwei Stufen.
+# Stufe 1 (jetzt): reine Text-/Code-/Daten-Formate ohne neue Abhaengigkeit -
+# werden wie .txt/.csv per einfachem UTF-8-Decode gelesen.
+# Stufe 2 (spaeter, noch offen): .xls/.tsv/.ods und .pptx/.ppt/.odt brauchen
+# je ein zusaetzliches Python-Paket (z.B. xlrd, odfpy, python-pptx) -
+# bewusst noch NICHT ergaenzt, da neue Abhaengigkeiten erst nach Ruecksprache.
+# Bilder (.png/.jpg/.jpeg/.webp/.gif) brauchen OCR/Vision-Pipeline, komplett
+# eigener Auftrag. .zip bewusst ausgeschlossen (Zip-Bomben/Pfad-Traversal-
+# Risiko, eigenes Sicherheitskonzept noetig).
+_PLAINTEXT_EXTENSIONS = {
+    ".txt", ".csv",
+    ".md", ".html", ".htm", ".rtf",
+    ".json", ".xml", ".yaml", ".yml", ".sql",
+    ".js", ".ts", ".py", ".css", ".php",
+}
+ALLOWED_EXTENSIONS = _PLAINTEXT_EXTENSIONS | {".pdf", ".docx", ".xlsx"}
 MAX_FILE_SIZE_MB = 10
 _RETENTION_DAYS = int(os.getenv("AILIZA_DOCUMENT_RETENTION_DAYS", "30"))
 
@@ -93,7 +108,7 @@ class DocumentScanResult:
 
 
 def _extract_text(ext: str, content: bytes) -> str:
-    if ext in {".txt", ".csv"}:
+    if ext in _PLAINTEXT_EXTENSIONS:
         try:
             return content.decode("utf-8", errors="ignore")
         except Exception:
