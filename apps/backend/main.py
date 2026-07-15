@@ -3089,6 +3089,34 @@ def contains_secret(text: str) -> bool:
             return True
     return False
 
+# Karo-Fund 2026-07-15: Ein erkanntes Geheimnis blockierte bisher die
+# GESAMTE Vorschau ("[BLOCKIERT: Sicherheitsverstoß erkannt]") statt nur
+# den Fund selbst zu entfernen - Nutzer sah dadurch nicht mehr, was sie
+# eigentlich schreiben wollten. Betreiber-Entscheidung: gezielt entfernen
+# (Platzhalter statt Komplett-Block), aber bewusst NIE wiedereinfuegen -
+# anders als PII wird ein Secret nicht nach der KI-Antwort zurueckgesetzt,
+# sonst koennte der echte Key am Ende unbemerkt in einem fertigen Entwurf
+# landen, den der Nutzer dann verschickt.
+_SECRET_STRIP_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bsk-[\w\-]{15,}\b"),
+    re.compile(r"\bgsk_[\w\-]{15,}\b"),
+    re.compile(r"\beyJ[\w\-\.]+\b"),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}\b"),
+]
+
+def strip_secrets_with_placeholder(text: str) -> tuple[str, bool]:
+    """
+    Entfernt erkannte Geheimnisse aus dem Text und ersetzt sie durch einen
+    sichtbaren Platzhalter. Gibt (bereinigter_text, gefunden) zurueck.
+    Der Originalwert wird an keiner Stelle zurueckgegeben oder gespeichert.
+    """
+    found = False
+    for pattern in _SECRET_STRIP_PATTERNS:
+        text, count = pattern.subn("[API-KEY ENTFERNT]", text)
+        if count:
+            found = True
+    return text, found
+
 def detect_prompt_injection(text: str) -> bool:
     """Prüft auf bekannte Prompt-Injection Muster"""
     injection_patterns = [
@@ -3249,30 +3277,25 @@ def policy_redact(
         # 1. SICHERHEITS-CHECKS
         # ─────────────────────────────────────────────────────────
 
-        # Geheimnis erkannt?
-        if contains_secret(text):
-            admin_block = None
-            if current_user and current_user.role == "admin":
-                admin_block = {
-                    "escalation_info": {
-                        "severity": "security",
-                        "security_finding": "SECRET_DETECTED",
-                        "reason": "API-Key, Token oder Geheimnis im Text erkannt",
-                        "required_action": "Geheimnis widerrufen/rotieren",
-                        "contact": "security@ailiza.de"
-                    }
-                }
-
-            return PolicyRedactResponse(
-                decision="security_block",
-                risk_level="critical",
-                safe_text="[BLOCKIERT: Sicherheitsverstoß erkannt]",
-                user_message_de="Ihre Anfrage enthält einen Sicherheitsfund (z.B. API-Key). Dieser wurde entfernt.",
-                can_send_to_llm=False,
-                requires_human_review=False,
-                documentation_required=False,
-                admin_only=admin_block
+        # Geheimnis erkannt? Gezielt entfernen (Platzhalter), NICHT die ganze
+        # Nachricht blockieren. Der Platzhalter wird auch in der finalen
+        # Antwort NICHT wieder durch den echten Wert ersetzt (siehe
+        # strip_secrets_with_placeholder-Kommentar).
+        text, secret_found = strip_secrets_with_placeholder(text)
+        secret_admin_note = None
+        if secret_found:
+            write_audit_entry(
+                action="policy_redact.secret_removed",
+                metadata={"security_finding": "SECRET_DETECTED"},
             )
+            if current_user and current_user.role == "admin":
+                secret_admin_note = {
+                    "severity": "security",
+                    "security_finding": "SECRET_DETECTED",
+                    "reason": "API-Key, Token oder Geheimnis im Text erkannt und entfernt",
+                    "required_action": "Geheimnis widerrufen/rotieren",
+                    "contact": "security@ailiza.de"
+                }
 
         # Prompt-Injection erkannt?
         if detect_prompt_injection(text):
@@ -3360,7 +3383,7 @@ def policy_redact(
             admin_only = {
                 "gdpr_reason_codes": [],  # TODO: aus policy_result
                 "ai_act_risk": "unknown",  # TODO: aus ai_act_evaluator
-                "escalation_info": build_escalation_info(risk_level, redaction_result.violations)
+                "escalation_info": secret_admin_note or build_escalation_info(risk_level, redaction_result.violations)
             }
 
         # ─────────────────────────────────────────────────────────
