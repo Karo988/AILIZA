@@ -10,7 +10,19 @@ FRONTEND = (
 
 
 def test_file_input_is_restricted_to_backend_formats():
-    assert 'accept=".pdf,.docx,.xlsx,.txt,.csv"' in FRONTEND
+    # Karo-Wunsch 2026-07-15 (Stufe 1): Formatliste um reine Text-/Code-
+    # Formate ohne neue Abhaengigkeit erweitert. Zip/Bilder/Office-Formate
+    # der Stufe 2 duerfen weiterhin NICHT im accept-Attribut stehen.
+    accept_start = FRONTEND.index('id="chat-file-input" accept="') + len('id="chat-file-input" accept="')
+    accept_end = FRONTEND.index('"', accept_start)
+    accepted = FRONTEND[accept_start:accept_end].split(",")
+    for ext in (".pdf", ".docx", ".xlsx", ".txt", ".csv",
+                ".md", ".html", ".htm", ".rtf",
+                ".json", ".xml", ".yaml", ".yml", ".sql",
+                ".js", ".ts", ".py", ".css", ".php"):
+        assert ext in accepted
+    for ext in (".zip", ".png", ".jpg", ".pptx", ".xls"):
+        assert ext not in accepted
     assert 'id="chat-file-input" multiple' not in FRONTEND
     assert "CHAT_FILE_MAX_BYTES=10*1024*1024" in FRONTEND
 
