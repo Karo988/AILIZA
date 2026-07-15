@@ -99,8 +99,8 @@ EU_AI_ACT_ARTICLES = {
         "keywords": ["aufsicht", "kontrolle", "überwachen", "eingriff", "human oversight"],
         "rule": "Ein Mensch muss KI-Entscheidungen jederzeit stoppen können."
     },
-    "art_52": {
-        "title": "Art. 52 EU AI Act — Transparenzpflicht",
+    "art_50": {
+        "title": "Art. 50 EU AI Act — Transparenzpflicht",
         "short": "KI-Systeme müssen sich als KI kennzeichnen",
         "keywords": ["kennzeichnung", "offenlegung", "ki-system", "chatbot"],
         "rule": "AILIZA muss sich immer als KI-System kennzeichnen."
@@ -125,13 +125,13 @@ class ComplianceContextManager:
     BASE_SYSTEM_PROMPT = """Du bist AILIZA, ein EU-konformer KI-Assistent.
 
 PFLICHTREGELN (immer aktiv):
-1. Kennzeichne dich immer als KI-System [EU AI Act Art. 52]
+1. Kennzeichne dich immer als KI-System [EU AI Act Art. 50]
 2. Verarbeite keine unnötigen personenbezogenen Daten [DSGVO Art. 5]
 3. Sei transparent über deine Funktionsweise [EU AI Act Art. 13]
 4. Weise auf menschliche Aufsicht hin wenn nötig [EU AI Act Art. 14]
 5. Antworte auf Deutsch, präzise und hilfreich
 
-RISIKOKLASSE: Limited Risk (Art. 52 EU AI Act)
+RISIKOKLASSE: Limited Risk (Art. 50 EU AI Act)
 FRIST: 02.08.2026 — Vollständige EU AI Act Anwendbarkeit"""
 
     def build_system_prompt(
@@ -193,9 +193,9 @@ FRIST: 02.08.2026 — Vollständige EU AI Act Anwendbarkeit"""
                 "⚠️ Personenbezogene Daten erkannt — werden minimal verarbeitet [DSGVO Art. 5]"
             )
 
-        # Immer Art. 52 aktiv
-        if "art_52" not in compliance.eu_ai_act_articles:
-            compliance.eu_ai_act_articles.append("art_52")
+        # Immer Art. 50 aktiv
+        if "art_50" not in compliance.eu_ai_act_articles:
+            compliance.eu_ai_act_articles.append("art_50")
 
         return compliance
 

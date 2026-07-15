@@ -22,12 +22,12 @@ export default function OnboardingWizard({ userId, sessionId, onDone }) {
   }
 
   const steps = [
-    // Step 0: EU AI Act Hinweis (Art. 52)
+    // Step 0: EU AI Act Hinweis (Art. 50)
     <div key="aiact" className="wizard-step">
       <div className="wizard-icon">⚖️</div>
-      <h2>EU AI Act — Art. 52 Transparenzpflicht</h2>
+      <h2>EU AI Act — Art. 50 Transparenzpflicht</h2>
       <p>
-        AILIZA ist ein KI-System nach EU AI Act Art. 52. Sie interagieren mit einer
+        AILIZA ist ein KI-System nach EU AI Act Art. 50. Sie interagieren mit einer
         künstlichen Intelligenz. AILIZA trifft <strong>keine</strong> automatisierten
         Kreditentscheidungen, Personalentscheidungen oder medizinischen Diagnosen.
         Sie behalten jederzeit die Kontrolle.

@@ -4,8 +4,19 @@ Legal Hold: Preservation of audit logs with reason code and technical details.
 Stores only whitelisted technical details (no free-form text).
 Details are copied to clean dict, not modified in-place.
 
-Status: Bereit für kontrollierte Testumgebung und Governance-Review.
-Nicht produktionsreif. Nicht zertifiziert.
+Status (Stand 2026-07-06): Bereit für kontrollierte Testumgebung und
+Governance-Review. Nicht produktionsreif. Nicht zertifiziert.
+
+Blocker:
+- Keine echte Datenbankanbindung: set_legal_hold() beschreibt das noetige
+  SQL nur als Kommentar (# SQL: INSERT INTO legal_holds ...), fuehrt es
+  nie aus.
+- Keine legal_holds-Tabelle in database.py vorhanden.
+- Keine Tests.
+- Nirgends in main.py eingebunden (totes Modul).
+
+Aktives Gegenstueck: KEINES. Diese Funktion (Legal Hold auf Audit-Logs)
+existiert derzeit nicht produktiv im System.
 """
 
 from dataclasses import dataclass

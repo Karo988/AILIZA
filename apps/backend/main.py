@@ -2,6 +2,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -15,7 +17,6 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -27,7 +28,7 @@ try:
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
-        create_approval_request,
+        create_approval_request, get_approval_request,
     )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
@@ -48,6 +49,7 @@ try:
     from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
     from .compliance_auditor import evaluate_compliance, Severity
+    from .kill_switch import enforce_kill_switch
 except ImportError:
     from agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from database import (
@@ -58,7 +60,7 @@ except ImportError:
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
-        create_approval_request,
+        create_approval_request, get_approval_request,
     )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
@@ -73,6 +75,56 @@ except ImportError:
     from governance.redaction import redact, reinsert
     from governance.data_matrix import check_data_target, PolicyDecision
     from compliance_auditor import evaluate_compliance, Severity
+    from kill_switch import enforce_kill_switch
+
+
+# ── B7 (P-C minimal): Nicht-produktionsreife Module beim Start erkennen ────────
+_NON_PRODUCTION_MODULES = [
+    "legal_hold.py",
+    "policy_engine.py",
+    "retention.py",
+    "policies/pii_taxonomy.py",
+]
+_NON_PRODUCTION_MARKER = "Nicht produktionsreif. Nicht zertifiziert."
+
+
+def _check_non_production_modules() -> list[str]:
+    """
+    Datei-basierter Scan (NICHT import-basiert): warnt auch dann, wenn eines
+    der Module spaeter versehentlich eingebunden wird, unabhaengig vom
+    aktuellen Import-Graph. Kein Startabbruch, nur Sichtbarkeit.
+
+    Gibt die Liste der Dateien zurueck, in denen der Marker gefunden wurde
+    (fuer Tests).
+    """
+    base_dir = Path(__file__).resolve().parent
+    _env_is_prod = os.getenv("AILIZA_ENV", "development").lower() == "production"
+    logger_ = logging.getLogger(__name__)
+    found: list[str] = []
+    for rel_path in _NON_PRODUCTION_MODULES:
+        try:
+            content = (base_dir / rel_path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _NON_PRODUCTION_MARKER not in content:
+            continue
+        found.append(rel_path)
+        if _env_is_prod:
+            logger_.error(
+                "SECURITY: Modul %s ist als 'nicht produktionsreif' markiert "
+                "(Docstring-Marker gefunden) und in Production aktiv.",
+                rel_path,
+            )
+            write_audit_entry(
+                action="startup.non_production_module_detected",
+                metadata={"module": rel_path, "env": "production"},
+            )
+        else:
+            logger_.warning(
+                "Modul %s ist als 'nicht produktionsreif' markiert.", rel_path,
+            )
+    return found
+# ── Ende B7 ─────────────────────────────────────────────────────────────────
 
 
 @asynccontextmanager
@@ -149,6 +201,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             metadata={"cors_origins": "*", "debug_mode": _is_debug},
         )
     # ── Ende CORS-Produktionswarnung ─────────────────────────────────────────
+
+    # ── Beta-Zugangsschutz-Warnung (B8a) ──────────────────────────────────────
+    _env_is_prod = os.getenv("AILIZA_ENV", "development").lower() == "production"
+    if _env_is_prod and not os.getenv("AILIZA_BETA_ACCESS_CODE"):
+        import logging as _log_beta
+        _log_beta.getLogger(__name__).warning(
+            "SECURITY: Beta ohne Zugangsschutz — AILIZA_ENV=production, aber "
+            "AILIZA_BETA_ACCESS_CODE ist nicht gesetzt. AILIZA ist ohne "
+            "Zugangscode oeffentlich nutzbar."
+        )
+        write_audit_entry(
+            action="startup.beta_access_code_missing",
+            metadata={"env": "production"},
+        )
+    # ── Ende Beta-Zugangsschutz-Warnung ───────────────────────────────────────
+
+    # ── B7: Nicht-produktionsreife Module (P-C minimal) ──────────────────────
+    _check_non_production_modules()
+    # ── Ende B7 ──────────────────────────────────────────────────────────────
 
     init_db()
 
@@ -330,6 +401,108 @@ app.add_middleware(_SecurityHeadersMiddleware)
 app.include_router(approvals_router)
 
 
+# ── B8a: Beta-Zugangsschutz ────────────────────────────────────────────────────
+_BETA_COOKIE_NAME = "ailiza_beta_access"
+_BETA_EXEMPT_PATHS = {"/health", "/api/health", "/beta", "/beta-access"}
+
+
+def _beta_cookie_value(code: str) -> str:
+    """
+    Deterministischer HMAC ueber (Secret-Key, Zugangscode) — kein Klartext-Code
+    im Cookie. An den Code gebunden: ein Code-Wechsel macht automatisch alle
+    bestehenden Cookies ungueltig (Betreiber-Anpassung, Freigabe B8a v2).
+    """
+    secret = os.getenv("AILIZA_SECRET_KEY", "")
+    return hmac.new(secret.encode(), f"beta:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def _beta_gate_page() -> str:
+    return """<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>AILIZA — Beta-Zugang</title>
+<style>body{font-family:-apple-system,sans-serif;background:#FAFAF7;color:#1A1815;
+display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.box{background:#fff;border:1px solid #E5E3DC;border-radius:12px;padding:32px;max-width:360px;width:90%}
+h1{font-size:16px;margin:0 0 12px}p{font-size:13px;color:#5A574F;margin:0 0 16px}
+input{width:100%;padding:8px;border:1px solid #E5E3DC;border-radius:6px;font-size:13px;box-sizing:border-box;margin-bottom:12px}
+button{width:100%;padding:8px;background:#2D5F3F;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer}
+#msg{font-size:12px;color:#8B2424;margin-top:8px}</style></head>
+<body><div class="box"><h1>AILIZA ist in einer geschlossenen Beta.</h1>
+<p>Bitte Zugangscode eingeben.</p>
+<form id="f"><input type="password" id="code" placeholder="Zugangscode" autofocus>
+<button type="submit">Zugang freischalten</button></form>
+<div id="msg"></div></div>
+<script>
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = document.getElementById("code").value;
+  const r = await fetch("/beta-access", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({code})});
+  if (r.ok) { location.reload(); }
+  else { document.getElementById("msg").textContent = "Zugangscode falsch. Bitte erneut versuchen."; }
+});
+</script></body></html>"""
+
+
+@app.middleware("http")
+async def beta_access_gate(request: Request, call_next):
+    """
+    B8a: Wenn AILIZA_BETA_ACCESS_CODE gesetzt ist, ist die gesamte App (inkl.
+    API) nur mit gueltigem Zugangs-Cookie nutzbar. /health bleibt immer frei.
+    """
+    code = os.getenv("AILIZA_BETA_ACCESS_CODE", "")
+    if not code:
+        return await call_next(request)
+
+    if request.url.path in _BETA_EXEMPT_PATHS:
+        return await call_next(request)
+
+    cookie_value = request.cookies.get(_BETA_COOKIE_NAME, "")
+    if cookie_value and hmac.compare_digest(cookie_value, _beta_cookie_value(code)):
+        return await call_next(request)
+
+    if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(_beta_gate_page(), status_code=200)
+
+    return JSONResponse(
+        status_code=403,
+        content={"detail": "AILIZA ist in einer geschlossenen Beta. Bitte Zugangscode eingeben."},
+    )
+
+
+@app.get("/beta")
+def beta_gate_page():
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(_beta_gate_page())
+
+
+class _BetaAccessRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=200)
+
+
+@app.post("/beta-access")
+@_limiter.limit("10/minute")
+def beta_access_check(request: Request, payload: _BetaAccessRequest):
+    configured_code = os.getenv("AILIZA_BETA_ACCESS_CODE", "")
+    if not configured_code or not hmac.compare_digest(payload.code, configured_code):
+        write_audit_entry(action="beta_access.failed", metadata={})
+        raise HTTPException(status_code=401, detail="Zugangscode falsch.")
+
+    write_audit_entry(action="beta_access.granted", metadata={})
+    is_prod = os.getenv("AILIZA_ENV", "development").lower() in ("production", "staging")
+    response = JSONResponse(content={"status": "ok"})
+    response.set_cookie(
+        key=_BETA_COOKIE_NAME,
+        value=_beta_cookie_value(configured_code),
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        max_age=24 * 60 * 60,
+        path="/",
+    )
+    return response
+# ── Ende B8a: Beta-Zugangsschutz ───────────────────────────────────────────────
+
+
 from fastapi.responses import JSONResponse
 from fastapi import Depends, UploadFile, File
 
@@ -417,6 +590,10 @@ class ToolFetchRequest(BaseModel):
 class AgentRunRequest(BaseModel):
     task: str = Field(..., min_length=1)
     history: list[dict[str, str]] | None = None
+    # Fall 3 (Compliance-Einwilligung): ID einer zuvor vom eingeloggten Nutzer
+    # bestaetigten Freigabe (/approvals/{id}/approve). Bindet ueber task_sha256
+    # an genau diese Anfrage.
+    consent_approval_id: int | None = None
 
     @field_validator("task")
     @classmethod
@@ -542,130 +719,149 @@ def debug_llm_status() -> dict[str, Any]:
     return result
 
 
-@app.get("/api/debug/provider-test")
-def debug_provider_test() -> dict[str, Any]:
-    """
-    Testet jeden Provider mit einer harmlosen Nachricht ohne Nutzerdaten.
-    Gibt sanitisierten Status je Provider zurück — keine Secrets, keine Keys.
-    Für Diagnose auf Render: zeigt welcher Provider fehlschlägt und warum.
-    WICHTIG: Deaktivieren wenn nicht gebraucht (AILIZA_DEBUG=false).
-    """
-    import uuid as _uuid
-    rid = _uuid.uuid4().hex[:8]
-    _test_prompt = "Antworte nur mit: AILIZA_PROVIDER_OK"
-    _test_messages = [{"role": "user", "content": _test_prompt}]
+def _debug_provider_test_enabled() -> bool:
+    return os.getenv("AILIZA_ENV", "development").strip().lower() != "production"
 
-    results: dict[str, Any] = {}
-    selected_provider: str | None = None
-    final_status = "all_failed"
 
-    # GROQ_MODEL — der häufigste Fehlergrund
-    groq_model_used = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
-    results["groq_model_resolved"] = groq_model_used
-    results["groq_model_env_raw"] = os.getenv("GROQ_MODEL", "(not set)")
+if _debug_provider_test_enabled():
+    @app.get("/api/debug/provider-test")
+    def debug_provider_test() -> dict[str, Any]:
+        """
+        Testet jeden Provider mit einer harmlosen Nachricht ohne Nutzerdaten.
+        Gibt sanitisierten Status je Provider zurück — keine Secrets, keine Keys.
+        Für Diagnose auf Render: zeigt welcher Provider fehlschlägt und warum.
+        In Production wird dieser Endpunkt nicht registriert.
+        """
+        import uuid as _uuid
+        rid = _uuid.uuid4().hex[:8]
+        _test_prompt = "Antworte nur mit: AILIZA_PROVIDER_OK"
+        _test_messages = [{"role": "user", "content": _test_prompt}]
 
-    _KEY_ENV_TEST = {
-        "groq": "GROQ_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-    }
-
-    # Effektive Provider-Reihenfolge aus AILIZA_PROVIDER_ORDER
-    from providers.orchestrator import _get_provider_order
-    provider_order_effective = _get_provider_order()
-
-    def _reg_meta(pid: str) -> dict[str, Any]:
         try:
-            from registry.registry_loader import get_registry
-            reg_entry = get_registry().get_provider(pid)
-            if reg_entry:
-                return {
-                    "registry_enabled": reg_entry.enabled,
-                    "registry_approved": reg_entry.admin_approved,
-                    "registry_health": reg_entry.health_status,
-                    "failover_priority": reg_entry.failover_priority,
-                }
-        except Exception:
-            pass
-        return {}
+            enforce_kill_switch()
+        except AILIZAError as exc:
+            return {
+                "request_id": rid,
+                "status": "blocked",
+                "final_status": "blocked",
+                "error": exc.to_dict(),
+                "provider_attempts_in_order": [],
+                "failed_providers": {},
+                "providers": {},
+                "note": "Kill-Switch aktiv: Provider-Test wurde vor externen Calls gestoppt.",
+            }
 
-    # Teste Provider in der konfigurierten Reihenfolge
-    all_pids = list(getattr(_orchestrator, "providers", {}).keys())
-    ordered_pids = [p for p in provider_order_effective if p in all_pids]
-    ordered_pids += [p for p in all_pids if p not in ordered_pids]
+        results: dict[str, Any] = {}
+        selected_provider: str | None = None
+        final_status = "all_failed"
 
-    attempts_in_order: list[str] = []
-    failed_providers: dict[str, str] = {}
+        # GROQ_MODEL — der häufigste Fehlergrund
+        groq_model_used = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
+        results["groq_model_resolved"] = groq_model_used
+        results["groq_model_env_raw"] = os.getenv("GROQ_MODEL", "(not set)")
 
-    for pid in ordered_pids:
-        provider = _orchestrator.providers[pid]
-        key_env = _KEY_ENV_TEST.get(pid, "")
-        configured = bool(os.getenv(key_env)) if key_env else True
-        model_used = getattr(provider, "model", "unknown")
-
-        entry: dict[str, Any] = {
-            "configured": configured,
-            "model": model_used,
-            "status": "skipped",
-            "error_type": None,
-            "error_sanitized": None,
-            **_reg_meta(pid),
+        _KEY_ENV_TEST = {
+            "groq": "GROQ_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
         }
 
-        if not configured:
-            entry["error_sanitized"] = f"API-Key nicht gesetzt — Render-Env: {key_env}"
+        # Effektive Provider-Reihenfolge aus AILIZA_PROVIDER_ORDER
+        from providers.orchestrator import _get_provider_order
+        provider_order_effective = _get_provider_order()
+
+        def _reg_meta(pid: str) -> dict[str, Any]:
+            try:
+                from registry.registry_loader import get_registry
+                reg_entry = get_registry().get_provider(pid)
+                if reg_entry:
+                    return {
+                        "registry_enabled": reg_entry.enabled,
+                        "registry_approved": reg_entry.admin_approved,
+                        "registry_health": reg_entry.health_status,
+                        "failover_priority": reg_entry.failover_priority,
+                    }
+            except Exception:
+                pass
+            return {}
+
+        # Teste Provider in der konfigurierten Reihenfolge
+        all_pids = list(getattr(_orchestrator, "providers", {}).keys())
+        ordered_pids = [p for p in provider_order_effective if p in all_pids]
+        ordered_pids += [p for p in all_pids if p not in ordered_pids]
+
+        attempts_in_order: list[str] = []
+        failed_providers: dict[str, str] = {}
+
+        for pid in ordered_pids:
+            provider = _orchestrator.providers[pid]
+            key_env = _KEY_ENV_TEST.get(pid, "")
+            configured = bool(os.getenv(key_env)) if key_env else True
+            model_used = getattr(provider, "model", "unknown")
+
+            entry: dict[str, Any] = {
+                "configured": configured,
+                "model": model_used,
+                "status": "skipped",
+                "error_type": None,
+                "error_sanitized": None,
+                **_reg_meta(pid),
+            }
+
+            if not configured:
+                entry["error_sanitized"] = f"API-Key nicht gesetzt — Render-Env: {key_env}"
+                results[pid] = entry
+                continue
+
+            attempts_in_order.append(pid)
+            try:
+                answer = provider.generate(_test_messages)
+                entry["status"] = "ok"
+                entry["answer_preview"] = (answer or "")[:40]
+                if selected_provider is None:
+                    selected_provider = pid
+                    final_status = "ok"
+            except AILIZAError as exc:
+                entry["status"] = "error"
+                entry["error_type"] = exc.code
+                _alts = exc.safe_alternatives or []
+                entry["error_sanitized"] = _alts[0] if _alts else exc.code
+                failed_providers[pid] = entry["error_sanitized"]
+            except Exception as exc:  # noqa: BLE001
+                entry["status"] = "error"
+                entry["error_type"] = type(exc).__name__
+                entry["error_sanitized"] = type(exc).__name__
+                failed_providers[pid] = entry["error_sanitized"]
+
+            print(
+                f"AILIZA PROVIDER TEST | request_id={rid} provider={pid} "
+                f"model={model_used} status={entry['status']} "
+                f"error={entry.get('error_type') or 'none'}",
+                flush=True,
+            )
             results[pid] = entry
-            continue
 
-        attempts_in_order.append(pid)
-        try:
-            answer = provider.generate(_test_messages)
-            entry["status"] = "ok"
-            entry["answer_preview"] = (answer or "")[:40]
-            if selected_provider is None:
-                selected_provider = pid
-                final_status = "ok"
-        except AILIZAError as exc:
-            entry["status"] = "error"
-            entry["error_type"] = exc.code
-            _alts = exc.safe_alternatives or []
-            entry["error_sanitized"] = _alts[0] if _alts else exc.code
-            failed_providers[pid] = entry["error_sanitized"]
-        except Exception as exc:  # noqa: BLE001
-            entry["status"] = "error"
-            entry["error_type"] = type(exc).__name__
-            entry["error_sanitized"] = type(exc).__name__
-            failed_providers[pid] = entry["error_sanitized"]
-
-        print(
-            f"AILIZA PROVIDER TEST | request_id={rid} provider={pid} "
-            f"model={model_used} status={entry['status']} "
-            f"error={entry.get('error_type') or 'none'}",
-            flush=True,
-        )
-        results[pid] = entry
-
-    return {
-        "request_id": rid,
-        "final_status": final_status,
-        "provider_order_effective": provider_order_effective,
-        "provider_attempts_in_order": attempts_in_order,
-        "first_successful_provider": selected_provider,
-        "selected_provider": selected_provider,
-        "failed_providers": failed_providers,
-        "groq_model_resolved": groq_model_used,
-        "groq_model_env_raw": results.pop("groq_model_env_raw", os.getenv("GROQ_MODEL", "(not set)")),
-        "providers": results,
-        "render_env_required": {
-            "openai": "OPENAI_API_KEY (+ optional OPENAI_MODEL, default: gpt-4o-mini)",
-            "openrouter": "OPENROUTER_API_KEY (+ optional OPENROUTER_MODEL, default: meta-llama/llama-3.1-8b-instruct)",
-            "groq": "GROQ_API_KEY + GROQ_MODEL (default: llama-3.1-8b-instant) — aktuell health_status=down",
-            "anthropic": "ANTHROPIC_API_KEY (+ optional ANTHROPIC_MODEL)",
-            "provider_order": "AILIZA_PROVIDER_ORDER (optional, default: openai,openrouter,groq,anthropic,local)",
-        },
-        "note": "Dieser Endpunkt sollte in Produktion durch AILIZA_DEBUG-Flag geschützt werden.",
-    }
+        return {
+            "request_id": rid,
+            "final_status": final_status,
+            "provider_order_effective": provider_order_effective,
+            "provider_attempts_in_order": attempts_in_order,
+            "first_successful_provider": selected_provider,
+            "selected_provider": selected_provider,
+            "failed_providers": failed_providers,
+            "groq_model_resolved": groq_model_used,
+            "groq_model_env_raw": results.pop("groq_model_env_raw", os.getenv("GROQ_MODEL", "(not set)")),
+            "providers": results,
+            "render_env_required": {
+                "openai": "OPENAI_API_KEY (+ optional OPENAI_MODEL, default: gpt-4o-mini)",
+                "openrouter": "OPENROUTER_API_KEY (+ optional OPENROUTER_MODEL, default: meta-llama/llama-3.1-8b-instruct)",
+                "groq": "GROQ_API_KEY + GROQ_MODEL (default: llama-3.1-8b-instant) — aktuell health_status=down",
+                "anthropic": "ANTHROPIC_API_KEY (+ optional ANTHROPIC_MODEL)",
+                "provider_order": "AILIZA_PROVIDER_ORDER (optional, default: openai,openrouter,groq,anthropic,local)",
+            },
+            "note": "Dieser Endpunkt ist in Dev/Staging verfügbar und Kill-Switch-geschützt.",
+        }
 
 
 @app.get("/api/debug/groq-diagnosis")
@@ -865,6 +1061,42 @@ def extract_agent_answer(result: dict[str, Any]) -> str:
 _orchestrator = ProviderOrchestrator()
 
 
+# Schwaerzungs-Platzhalter (z.B. "[GESCHWAERZT: Religion/... Art. 9 DSGVO ...]",
+# "[NAME_1]") duerfen die Compliance-Pruefung nicht selbst ausloesen — sie
+# enthalten Kategorienamen wie "Religion"/"Gesundheit" als Metadaten, nicht
+# als Inhalt. Vor evaluate_compliance() werden sie deshalb entfernt.
+_REDACTION_PLACEHOLDER_RE = re.compile(
+    r"\[GESCHWAERZT:[^\]]*\]|\[[A-ZÄÖÜ_]+(?:_\d+)?\]"
+)
+
+
+def _strip_redaction_placeholders(text: str) -> str:
+    return _REDACTION_PLACEHOLDER_RE.sub(" ", text)
+
+
+def _consent_task_hash(task: str) -> str:
+    """Bindet eine Compliance-Einwilligung an genau eine Anfrage (kein PII im Audit)."""
+    return hashlib.sha256(task.encode("utf-8")).hexdigest()
+
+
+def _valid_compliance_consent(approval_id: int, task: str) -> bool:
+    """
+    Prueft eine vom Nutzer erteilte Compliance-Einwilligung (Fall 3):
+    Freigabe existiert, wurde ueber /approvals/{id}/approve bestaetigt
+    (Login-Pflicht dort erzwungen) und gehoert zu GENAU dieser Anfrage.
+    """
+    try:
+        entry = get_approval_request(approval_id)
+    except Exception:
+        return False
+    if not entry or entry.get("status") != "approved":
+        return False
+    if entry.get("tool") != "compliance_consent":
+        return False
+    params = entry.get("input_params") or {}
+    return params.get("task_sha256") == _consent_task_hash(task)
+
+
 def _compliance_pre_check(
     task: str,
     tenant_id: str,
@@ -872,7 +1104,9 @@ def _compliance_pre_check(
     """
     DSGVO + EU-AI-Act Compliance Audit VOR Verarbeitung.
 
-    Pipeline-Platzierung: VOR _governance_pre_check (fail-closed auf Violations)
+    Pipeline-Platzierung: NACH _governance_pre_check — laeuft auf der bereits
+    geschwaerzten Fassung (Betreiber-Freigabe 2026-07-11: erst schwaerzen,
+    dann pruefen; Hinweis+Einwilligung nur wenn trotzdem nicht konform)
 
     Rückgabe:
       {"decision": "allow",          "audit_id": "..."}
@@ -920,6 +1154,19 @@ def _compliance_pre_check(
 
     # Blockierung bei kritischen Violations
     if compliance_report.status == Severity.BLOCK:
+        # B8b: Beta-Einschraenkung (Bewerbung/Scoring) bekommt die einfache,
+        # nutzerfreundliche Meldung statt der generischen Compliance-Meldung.
+        _beta_violation = next(
+            (v for v in compliance_report.violations if v.article == "Beta-Einschränkung"),
+            None,
+        )
+        if _beta_violation:
+            return {
+                "decision": "block",
+                "audit_id": audit_id,
+                "message": _beta_violation.description,
+                "violations": violations_summary,
+            }
         return {
             "decision": "block",
             "audit_id": audit_id,
@@ -996,18 +1243,68 @@ def _governance_pre_check(
     )
 
     if decision == PolicyDecision.BLOCK:
-        # Nur bei CREDENTIALS oder SPECIAL_CATEGORY → echter Block (EU AI Act Art. 5 / DSGVO Art. 9)
+        # CREDENTIALS oder SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
+        # Betreiber-Freigabe 2026-07-11: KEIN Hartblock mehr — die Rohdaten
+        # verlassen das System weiterhin NIE, aber statt abzubrechen wird
+        # vollstaendig geschwaerzt und nur die geschwaerzte Fassung laeuft
+        # weiter (dokumentationspflichtig, Login-Gate im Aufrufer).
+        from .governance.redaction_v2 import RedactionEngineV2
+        engine = RedactionEngineV2()
+        redaction_result = engine.redact(task)
+        dc_names = [c.value for c in data_classes]
+
+        # Sicherheitsnetz (fail-closed auf Schwaerzungsebene): Wenn der
+        # Klassifikator SPECIAL_CATEGORY/CREDENTIALS meldet, die Engine aber
+        # nichts (oder nicht alles) schwaerzt, wird der GESAMTE Inhalt durch
+        # einen Platzhalter ersetzt. Rohdaten verlassen das System NIE —
+        # auch nicht nach Nutzer-Einwilligung.
+        redacted_text = redaction_result.redacted_text
+        reinsertion_map = redaction_result.reinsertion_map
+        _still_critical = redacted_text == task
+        if not _still_critical:
+            try:
+                _recheck = classify(_strip_redaction_placeholders(redacted_text))
+                _recheck_classes = list(getattr(_recheck, "classes", getattr(_recheck, "data_classes", [])) or [])
+                _still_critical = any(
+                    c in (DataClass.SPECIAL_CATEGORY, DataClass.CREDENTIALS)
+                    for c in _recheck_classes
+                )
+            except Exception:
+                _still_critical = True  # fail-closed
+        if _still_critical:
+            redacted_text = (
+                f"[GESCHWAERZT: {', '.join(dc_names)} - Art. 9 DSGVO / "
+                "EU AI Act Art. 5 - Inhalt vollständig geschwärzt]"
+            )
+            reinsertion_map = {}
+
         write_audit_entry(
-            action="governance.task_blocked",
+            action="governance.special_category_redacted",
             tenant_id=tenant_id,
-            metadata={"data_classes": [c.value for c in data_classes]},
+            metadata={
+                "data_classes": dc_names,
+                "redaction_applied": True,
+                "full_redaction_fallback": _still_critical,
+            },
         )
         return {
-            "decision": "block",
-            "message": (
-                "Diese Anfrage enthält Daten, die nach EU AI Act Art. 5 / DSGVO Art. 9 "
-                f"nicht extern verarbeitet werden dürfen ({', '.join(c.value for c in data_classes)})."
+            "decision": "allow_with_notice",
+            "task": redacted_text,
+            # reinsertion_map: NUR lokal im RAM — NIEMALS loggen oder persistieren
+            "reinsertion_map": reinsertion_map,
+            "notice": (
+                "Besonders geschützte Daten erkannt "
+                f"({', '.join(dc_names)}) und vollständig geschwärzt "
+                "(DSGVO Art. 9 / EU AI Act Art. 5). Nur die geschwärzte "
+                "Fassung wurde verarbeitet."
             ),
+            "is_draft": True,
+            "approval_id": None,
+            "pii_detected": {
+                "has_pii": True,
+                "requires_consent": True,
+                "items": [{"type": m, "requires_consent": True} for m in getattr(classification, "matched_rules", [])],
+            },
         }
 
     if decision in (PolicyDecision.APPROVAL_REQUIRED, PolicyDecision.REDACT_REQUIRED):
@@ -1133,7 +1430,7 @@ def _ask_llm_directly(
     system_prompt = (
         "Du bist AILIZA — ein EU-konformer, autonomer KI-Assistent speziell für kleine und mittlere "
         "Unternehmen (KMU). AILIZA steht für: KI-gestützte Kommunikation, DSGVO-Konformität, "
-        "EU AI Act Art. 52, Privacy by Design und Human-in-the-Loop. "
+        "EU AI Act Art. 50, Privacy by Design und Human-in-the-Loop. "
         "AILIZA wurde von Karo Fromm entwickelt und läuft auf Render.com. "
         "Wenn Nutzer nach 'AILIZA', 'dir', 'dem System' oder 'diesem Assistenten' fragen, "
         "beziehen sie sich IMMER auf dich selbst — niemals auf ein fremdes Unternehmen. "
@@ -1194,6 +1491,26 @@ def _ask_llm_directly(
         return None, "internal_error", [f"Unerwarteter Fehler: {_etype}"]
 
 
+def _test_mode_fields(provider: str | None, model: str | None) -> dict[str, Any] | None:
+    """
+    V-8 (Freigabe Stufe 1, P-A): JEDE Antwort im Testmodus muss sichtbar
+    Provider + Modell + Testmodus-Hinweis tragen. Gibt None im Normalbetrieb
+    zurueck (kein Feld im Response), damit sich am normalen Verhalten nichts
+    aendert.
+    """
+    try:
+        from .kill_switch import is_test_mode
+    except ImportError:
+        from kill_switch import is_test_mode
+    if not is_test_mode():
+        return None
+    return {
+        "test_mode": True,
+        "provider": provider or "unbekannt",
+        "model": model or "unbekannt",
+    }
+
+
 @app.post("/agent/run")
 @_limiter.limit("30/minute")
 def run_agent(
@@ -1214,40 +1531,42 @@ def run_agent(
             "results": [],
         }
 
-    # ── COMPLIANCE PRE-CHECK (VOR Governance): DSGVO + EU-AI-Act Audit ────────
-    # Fail-closed: 🔴 BLOCK → sofort ablehnen, 🟠 REVIEW → Admin-Queue
-    compliance_check = _compliance_pre_check(payload.task, tenant_id=tenant)
-
-    if compliance_check["decision"] == "block":
+    # ── B8b: Beta-Hochrisiko-Sperre auf dem ROHEN Text ────────────────────────
+    # Muss VOR der Schwaerzung laufen: die Sperre gilt der Nutzerabsicht
+    # (Bewerbung/Scoring), deren Schluesselwoerter die Schwaerzung entfernt.
+    try:
+        from .compliance_auditor import check_beta_highrisk
+    except ImportError:
+        from compliance_auditor import check_beta_highrisk
+    _beta_violation = check_beta_highrisk(payload.task)
+    if _beta_violation is not None:
+        write_audit_entry(
+            action="compliance.beta_highrisk_blocked",
+            tenant_id=tenant,
+            metadata={"title": _beta_violation.title},
+        )
         return {
             "status": "compliance_blocked",
-            "message": compliance_check["message"],
-            "ai_response": compliance_check["message"],
-            "compliance_violations": compliance_check.get("violations", []),
-            "audit_id": compliance_check.get("audit_id"),
+            "message": _beta_violation.description,
+            "ai_response": _beta_violation.description,
+            "compliance_violations": [{
+                "severity": _beta_violation.severity.value,
+                "article": _beta_violation.article,
+                "title": _beta_violation.title,
+            }],
             "steps": [],
             "results": [],
         }
 
-    if compliance_check["decision"] == "review_required":
-        return {
-            "status": "compliance_review",
-            "message": compliance_check["message"],
-            "ai_response": compliance_check["message"],
-            "compliance_violations": compliance_check.get("violations", []),
-            "audit_id": compliance_check.get("audit_id"),
-            "notice": "Diese Anfrage wurde zur Admin-Genehmigung gekennzeichnet.",
-            "steps": [],
-            "results": [],
-        }
-
-    # ── Governance Pre-Check: classify → data_matrix → redact/block ─────────
-    # Läuft NACH Compliance-Check.
-    # BLOCK: nur bei CREDENTIALS / SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
-    # PERSONAL_DATA/HR/LEGAL/FINANCIAL: lokal redacten, als Entwurf weiterlaufen.
+    # ── Governance Pre-Check ZUERST: classify → data_matrix → redact ─────────
+    # Betreiber-Freigabe 2026-07-11 (drei Stufen statt Hartblock):
+    #   Fall 1: keine sensiblen Daten → direkt senden, kein Login noetig.
+    #   Fall 2: Schwaerzung loest das Problem → Login noetig (Dokumentationspflicht).
+    #   Fall 3: auch nach Schwaerzung nicht konform → Login + explizite Einwilligung.
     pre_check = _governance_pre_check(payload.task, tenant_id=tenant)
 
     if pre_check["decision"] == "block":
+        # Nur noch fail-closed (Klassifizierungsfehler) — kein Inhalts-Hartblock mehr.
         return {
             "status": "blocked",
             "message": pre_check["message"],
@@ -1262,6 +1581,118 @@ def run_agent(
     reinsertion_map: dict[str, str] = pre_check.get("reinsertion_map", {})
     pii_detected = pre_check.get("pii_detected")
     governance_is_draft = pre_check.get("is_draft", False)
+    redaction_applied = bool(pii_detected) or bool(reinsertion_map)
+
+    # ── COMPLIANCE-Check auf der GESCHWAERZTEN Fassung ────────────────────────
+    # Platzhalter ([GESCHWAERZT: ...], [NAME_1]) vorher entfernen — sie nennen
+    # Kategorien als Metadaten und wuerden die Pruefung sonst selbst ausloesen.
+    compliance_check = _compliance_pre_check(
+        _strip_redaction_placeholders(effective_task), tenant_id=tenant
+    )
+
+    if compliance_check["decision"] == "block":
+        _violations = compliance_check.get("violations", [])
+        # B8b: Beta-Einschraenkung (Bewerbung/Scoring) bleibt harte Sperre —
+        # separate Betreiber-Freigabe, gilt fuer Gaeste UND eingeloggte Nutzer.
+        if any(v.get("article") == "Beta-Einschränkung" for v in _violations):
+            return {
+                "status": "compliance_blocked",
+                "message": compliance_check["message"],
+                "ai_response": compliance_check["message"],
+                "compliance_violations": _violations,
+                "audit_id": compliance_check.get("audit_id"),
+                "steps": [],
+                "results": [],
+            }
+
+        # Fall 3: auch nach Schwaerzung nicht DSGVO-/EU-AI-Act-konform.
+        if token is None:
+            _msg = (
+                "Diese Anfrage entspricht auch nach der Schwärzung nicht den "
+                "DSGVO-/EU-AI-Act-Richtlinien. Bitte loggen Sie sich ein, um sie "
+                "nach ausdrücklicher Bestätigung dennoch zu senden (dokumentationspflichtig)."
+            )
+            return {
+                "status": "login_required",
+                "login_required": True,
+                "login_reason": "consent",
+                "message": _msg,
+                "ai_response": _msg,
+                "compliance_violations": _violations,
+                "audit_id": compliance_check.get("audit_id"),
+                "steps": [],
+                "results": [],
+            }
+
+        if payload.consent_approval_id and _valid_compliance_consent(
+            payload.consent_approval_id, payload.task
+        ):
+            # Einwilligung liegt vor → dokumentieren, dann mit der
+            # geschwaerzten Fassung normal weiterlaufen.
+            write_audit_entry(
+                action="compliance.consent_used",
+                tenant_id=tenant,
+                metadata={
+                    "approval_id": payload.consent_approval_id,
+                    "user_id": token.user_id,
+                    "audit_id": compliance_check.get("audit_id"),
+                    "violations_summary": _violations[:5],
+                },
+            )
+        else:
+            approval = create_approval_request(
+                tool="compliance_consent",
+                input_params={
+                    "task_sha256": _consent_task_hash(payload.task),
+                    "articles": [v.get("article") for v in _violations[:5]],
+                },
+                risk_level="high",
+                risk_reason="Anfrage auch nach Schwärzung nicht DSGVO-/EU-AI-Act-konform — Nutzer-Einwilligung erforderlich.",
+                tenant_id=tenant,
+            )
+            _msg = (
+                "Diese Anfrage entspricht nicht den DSGVO-/EU-AI-Act-Richtlinien. "
+                "Möchten Sie trotzdem senden? Ihre Bestätigung wird dokumentiert."
+            )
+            return {
+                "status": "consent_required",
+                "message": _msg,
+                "ai_response": _msg,
+                "approval_id": approval.get("id"),
+                "compliance_violations": _violations,
+                "audit_id": compliance_check.get("audit_id"),
+                "steps": [],
+                "results": [],
+            }
+    # REVIEW-Schwere ist nicht blockierend (Betreiber-Freigabe 2026-07-11):
+    # bereits in _compliance_pre_check auditiert, Anfrage laeuft normal weiter.
+
+    # ── Fall 2: Schwaerzung angewandt → Dokumentationspflicht → Login-Gate ────
+    if redaction_applied:
+        if token is None:
+            _msg = (
+                "Bitte loggen Sie sich ein — diese Anfrage enthält personenbezogene "
+                "Daten und ist dokumentationspflichtig. Die Daten wurden bereits "
+                "lokal geschwärzt und verlassen das System nicht im Klartext."
+            )
+            return {
+                "status": "login_required",
+                "login_required": True,
+                "login_reason": "documentation",
+                "message": _msg,
+                "ai_response": _msg,
+                "steps": [],
+                "results": [],
+            }
+        write_audit_entry(
+            action="compliance.documented_processing",
+            tenant_id=tenant,
+            metadata={
+                "user_id": token.user_id,
+                "redaction_applied": True,
+                "audit_id": compliance_check.get("audit_id"),
+            },
+        )
 
     # ── Schreibaufgaben: direkt LLM ohne AgentRuntime / Tavily ────────────────
     _is_writing = (
@@ -1316,6 +1747,9 @@ def run_agent(
                 final["pii_detected"] = pii_detected
             if pre_check["decision"] == "allow_with_notice":
                 final["governance_notice"] = pre_check.get("notice", "")
+            _tmf = _test_mode_fields(_used_provider, _used_model)
+            if _tmf:
+                final.update(_tmf)
             write_audit_entry(
                 action="agent.writing_task.completed",
                 tenant_id=tenant,
@@ -1390,6 +1824,12 @@ def run_agent(
                 result["draft_notice"] = (
                     "Entwurf — personenbezogene Daten lokal maskiert, menschliche Prüfung erforderlich."
                 )
+            _tmf = _test_mode_fields(
+                getattr(_orchestrator, "last_provider_id", None),
+                getattr(_orchestrator, "last_model", None),
+            )
+            if _tmf:
+                result.update(_tmf)
             return result
         # LLM auch nicht verfügbar → lokale Antwort zurückgeben
         result["ai_response"] = result.get("message", "")
@@ -1458,6 +1898,12 @@ def run_agent(
         result["pii_detected"] = pii_detected
     if pre_check["decision"] == "allow_with_notice":
         result["governance_notice"] = pre_check.get("notice", "")
+    _tmf = _test_mode_fields(
+        getattr(_orchestrator, "last_provider_id", None),
+        getattr(_orchestrator, "last_model", None),
+    )
+    if _tmf:
+        result.update(_tmf)
     return result
 @app.get("/agent/runs")
 def get_agent_runs(
@@ -2457,6 +2903,13 @@ class PolicyRedactResponse(BaseModel):
     redaction_engine: str = "RedactionEngineV2"
     policy_version: str = "1.3.3"
 
+    # Nur gesetzt bei requires_human_review (SCHWARZ/KRITISCH): deterministische
+    # Risiko-Zusammenfassung. Frontend zeigt diese standardmaessig statt des
+    # vollen geschwaerzten Texts; Volltext bleibt ueber einen expliziten Klick
+    # einsehbar (safe_text ist weiterhin die vollstaendige, korrekt
+    # geschwaerzte Fassung und bleibt unveraendert).
+    risk_summary: str | None = None
+
 def contains_secret(text: str) -> bool:
     """Prüft auf Geheimnisse: API-Keys, Tokens, etc."""
     secret_patterns = [
@@ -2496,6 +2949,36 @@ def map_risk_to_user_message(level: str) -> str:
         "critical": "Es wurde ein Datenschutzverstoß erkannt. Bitte kontaktieren Sie den Datenschutz."
     }
     return messages.get(level, "Ihre Anfrage wurde verarbeitet.")
+
+def build_risk_summary(risk_level: str, violations: list[str] | None = None) -> str:
+    """
+    Deterministische Ersatzansicht fuer Hochrisiko-Faelle (SCHWARZ/KRITISCH).
+
+    Kein KI-generierter Text (keine neue Fehlerquelle, keine Zusatzkosten) —
+    nur eine aus bereits serverseitig erkannten Fakten zusammengebaute
+    Zusammenfassung. Der vollstaendige geschwaerzte Text bleibt in safe_text
+    erhalten und ist ueber einen expliziten Klick im Frontend einsehbar.
+    """
+    level_label = {
+        "black": "Automatisierte Entscheidung mit Rechtswirkung",
+        "critical": "DSGVO-Verstoß",
+    }.get(risk_level, "Hochrisiko-Inhalt")
+
+    lines = [
+        f"⚠️ {level_label} erkannt — dieser Fall erfordert eine menschliche Prüfung.",
+        "",
+    ]
+    if violations:
+        lines.append("Erkannte Auffälligkeiten:")
+        for v in violations:
+            lines.append(f"  • {v}")
+        lines.append("")
+    lines.append(
+        "Der vollständige, geschwärzte Text ist auf Wunsch einsehbar "
+        "(\"Trotzdem Volltext anzeigen\")."
+    )
+    return "\n".join(lines)
+
 
 def build_detected_items(redaction_result: Any) -> list[dict[str, str]]:
     """
@@ -2718,6 +3201,11 @@ def policy_redact(
         # 7. RESPONSE
         # ─────────────────────────────────────────────────────────
 
+        risk_summary = (
+            build_risk_summary(risk_level, redaction_result.violations)
+            if decision == "requires_human_review"
+            else None
+        )
         detected_items = build_detected_items(redaction_result)
         logger.info(f"📤 PolicyRedact response | decision={decision} | risk_level={risk_level} | can_send_to_llm={can_send_to_llm}")
         return PolicyRedactResponse(
@@ -2729,6 +3217,7 @@ def policy_redact(
             requires_human_review=decision in ["requires_human_review"],
             documentation_required=risk_level in ["black", "critical"],
             admin_only=admin_only,
+            risk_summary=risk_summary,
             detected_items=detected_items
         )
 
@@ -2764,17 +3253,48 @@ def policy_redact(
 
 
 
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
-
-
-@app.get("/config.js")
-def config_js():
-    return FileResponse(FRONTEND_DIR / "config.js")
-
-
-@app.get("/")
-def index():
+# Kein StaticFiles-Catch-All-Mount mehr (Sicherheits-Whitelist, Phase 3e/B2):
+# NUR diese 6 Pfade sind oeffentlich erreichbar. Alles andere unter
+# apps/frontend/ (React/Vite-App-Quellcode, package.json, README, .env.example
+# etc.) bleibt im Repo, wird aber von keiner Route mehr ausgeliefert.
+@app.get("/static/index.html")
+def static_index_html():
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/static/icon.svg")
+def static_icon_svg():
+    return FileResponse(FRONTEND_DIR / "icon.svg")
+
+
+@app.get("/static/manifest.json")
+def static_manifest_json():
+    return FileResponse(FRONTEND_DIR / "manifest.json")
+
+
+@app.get("/static/public/favicon.svg")
+def static_public_favicon_svg():
+    return FileResponse(FRONTEND_DIR / "public" / "favicon.svg")
+
+
+@app.get("/static/public/icons.svg")
+def static_public_icons_svg():
+    return FileResponse(FRONTEND_DIR / "public" / "icons.svg")
+
+
+@app.get("/sw.js")
+def service_worker():
+    """
+    Muss auf Root-Scope liegen (nicht /static/sw.js), sonst kann der neue
+    Selbstzerstoerungs-Worker den alten, root-scope-registrierten Worker
+    nicht ersetzen (SW-Scope = Verzeichnis der Skript-URL). Kein Caching
+    der Datei selbst, damit Browser die Aktualisierung sofort sehen.
+    """
+    return FileResponse(
+        FRONTEND_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/")

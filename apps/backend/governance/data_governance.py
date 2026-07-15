@@ -92,6 +92,15 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z._\-]{20,}\b")),
     ("github_token", re.compile(r"\bghp_[A-Za-z0-9]{16,}\b")),
     ("secret_assignment", re.compile(r"\b(password|passwd|token|api[_-]?key|secret)\s*[=:]\s*\S+", re.I)),
+    # Deutsche Zugangsdaten-Schluesselwoerter im Fliesstext (Karo-Fund
+    # 2026-07-11, erweiterter Amun-Testbrief): "Passwort: Sommer2026!" wurde
+    # von der Klassifikation bisher nicht als secret erkannt, da nur
+    # englische Code-Stil-Schluesselwoerter geprueft wurden.
+    ("secret_assignment_de", re.compile(
+        r"\b(Passwort|Kennwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
+        r"|Wiederherstellungscode|Zugangscode|Zwei-Faktor-Authentifizierungsschlüssel)"
+        r"\s*[=:]\s*\S+", re.I,
+    )),
 ]
 
 # ── Kontakt / Identifikatoren (DSGVO Art. 4 Nr. 1) ──────────────────────────
