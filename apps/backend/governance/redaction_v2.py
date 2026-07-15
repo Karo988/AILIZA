@@ -134,7 +134,17 @@ class RedactionEngineV2:
             r"\b(?:Geburtsdatum|geb\.|geboren[ \t]+am)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}",
             re.IGNORECASE,
         ),
-        "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
+        # Karo-Fund 2026-07-15: Kopplungsverbot - der zur IBAN gehoerende
+        # Kontostand ist Teil desselben Finanzdatensatzes und muss mit
+        # geschwaerzt werden, sonst bleibt die eigentlich sensible Zahl
+        # (Vermoegen/Umsatz) trotz geschwaerzter IBAN im Klartext stehen.
+        # Optionales, mehrsprachiges Label (Stand/Saldo/салдо/zůstatek)
+        # direkt nach der IBAN auf derselben Zeile wird mit erfasst.
+        "iban": re.compile(
+            r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"
+            r"(?:[ \t]*,?[ \t]*(?i:Stand|Saldo|салдо|zůstatek|Balance)[ \t]*:"
+            r"[ \t]*[\d.,]+[ \t]*[A-Z]{3})?"
+        ),
         "bic": re.compile(r"\bBIC[ \t]*:?[ \t]*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b", re.IGNORECASE),
         "card": re.compile(r"\b(?:\d{4}[\s\-]?){3}\d{4}\b"),
         # Amtliche Ausweis-/ID-Nummern (Karo-Fund 2026-07-11, erweiterter
@@ -167,10 +177,23 @@ class RedactionEngineV2:
         # Fragment ("...ht mehr rein!)") hinter dem Platzhalter stehen
         # blieb. Grenze auf 300 Zeichen angehoben (deckt realistische
         # Zeilenlaengen ab, faengt weiterhin bei Zeilenende).
+        # Karo-Fund 2026-07-15 (Golden-Brief, Root-Zugang zu Patientenakten):
+        # "User: admin_root" blieb unredigiert, weil "Benutzername" nur die
+        # deutsche Form abdeckte. Internationale Mails nutzen haeufig
+        # englische Labels. "User"/"Username" ergaenzt (Doppelpunkt-Pflicht
+        # bleibt bestehen, sonst wuerde "User" beliebigen Fliesstext fressen
+        # wie einst "Antwort" - siehe Karo-Fund 2026-07-12 oben).
         "credential": re.compile(
-            r"(?i:Benutzername|Passwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
+            r"(?i:Benutzername|User(?:name)?|Passwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
             r"|Wiederherstellungscode|Zwei-Faktor-Authentifizierungsschlüssel)"
             r"[ \t]*:[ \t]*[^\n]{1,300}",
+        ),
+        # Karo-Fund 2026-07-15: Server-/Dateipfade verraten interne
+        # Systemstruktur (z.B. wo Patientenakten liegen) unabhaengig von
+        # eigentlichen Zugangsdaten - eigenes Muster, Label-basiert wie
+        # "credential".
+        "server_path": re.compile(
+            r"(?i:Pfad|Path)[ \t]*:[ \t]*[^\n]{1,300}",
         ),
         # Technische Kennungen mit Standort-/Identifizierungsbezug.
         "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
@@ -534,6 +557,7 @@ class RedactionEngineV2:
             "reference": "Referenznummer",
             "official_id": "Ausweisnummer",
             "credential": "Zugangsdaten",
+            "server_path": "Systempfad",
             "ip_address": "IP-Adresse",
             "gps_coords": "Standort",
             "device_id": "Gerätekennung",

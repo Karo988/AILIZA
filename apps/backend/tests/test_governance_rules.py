@@ -912,3 +912,79 @@ class TestMultilingualRedactionBgCz:
         assert "Berlin" not in result
         assert "[Adresse]" in result
         assert "[Ort]" in result
+
+
+# ── Karo-Fund 2026-07-15: User-Label, Serverpfad, Kontostand (Golden-Brief) ──
+class TestCredentialPathAndBalanceRedaction:
+    """
+    Golden-Brief-Nachtest: "User: admin_root" und
+    "Pfad: /var/www/internal/data/health_records_2026/" blieben unredigiert
+    (Root-Zugang zu einem Server mit Patientenakten im Klartext an die KI).
+    Ausserdem blieb der zur IBAN gehoerende Kontostand ungeschwaerzt.
+    """
+
+    def _redact(self, text: str) -> str:
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        return RedactionEngineV2().redact(text).redacted_text
+
+    def test_english_user_label_redacted(self):
+        result = self._redact("User: admin_root")
+        assert "admin_root" not in result
+        assert "[Zugangsdaten]" in result
+
+    def test_username_label_redacted(self):
+        result = self._redact("Username: admin_root")
+        assert "admin_root" not in result
+        assert "[Zugangsdaten]" in result
+
+    def test_german_benutzername_still_works(self):
+        # Regression: bestehendes deutsches Label darf nicht brechen.
+        result = self._redact("Benutzername: karo123")
+        assert "karo123" not in result
+        assert "[Zugangsdaten]" in result
+
+    def test_server_path_redacted(self):
+        result = self._redact("Pfad: /var/www/internal/data/health_records_2026/")
+        assert "health_records" not in result
+        assert "[Systempfad]" in result
+
+    def test_english_path_label_redacted(self):
+        result = self._redact("Path: /etc/secrets/db.conf")
+        assert "db.conf" not in result
+        assert "[Systempfad]" in result
+
+    def test_iban_with_german_balance_fully_redacted(self):
+        result = self._redact("Konto: DE89370400440532013000, Stand: 42.500,20 EUR")
+        assert "42.500,20" not in result
+        assert "EUR" not in result
+        assert "[IBAN]" in result
+
+    def test_iban_with_bulgarian_balance_fully_redacted(self):
+        result = self._redact("Сметка: BG80BNBG96611020345678, салдо: 12.450,00 BGN")
+        assert "12.450,00" not in result
+        assert "BGN" not in result
+        assert "[IBAN]" in result
+
+    def test_iban_with_czech_balance_fully_redacted(self):
+        result = self._redact("Účet: CZ6508000000192000145399, zůstatek: 850.000,00 CZK")
+        assert "850.000,00" not in result
+        assert "CZK" not in result
+        assert "[IBAN]" in result
+
+    def test_iban_without_balance_still_works(self):
+        # Regression: IBAN allein (ohne Kontostand-Zusatz) muss weiter
+        # erkannt werden.
+        result = self._redact("IBAN: DE89370400440532013000")
+        assert "DE89370400440532013000" not in result
+        assert "[IBAN]" in result
+
+    def test_full_golden_brief_credential_block(self):
+        text = (
+            "Pfad: /var/www/internal/data/health_records_2026/\n\n"
+            "User: admin_root\n\n"
+            "Passwort: geheim123"
+        )
+        result = self._redact(text)
+        assert "health_records" not in result
+        assert "admin_root" not in result
+        assert "geheim123" not in result
