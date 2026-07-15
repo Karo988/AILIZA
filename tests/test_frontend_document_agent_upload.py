@@ -53,3 +53,16 @@ def test_file_is_preserved_across_login_and_consent_gates():
 
 def test_consent_id_is_sent_with_document():
     assert 'form.append("consent_approval_id",String(consentApprovalId))' in FRONTEND
+
+def test_project_file_input_click_does_not_bubble_to_card():
+    # Karo-Fund 2026-07-15: Der "+ Datei"-Button ruft stopPropagation() nur
+    # fuer seinen EIGENEN Klick auf, loest dann aber programmatisch .click()
+    # auf dem versteckten <input type="file"> aus. Dieser synthetische Klick
+    # ist ein eigenes Event, das erneut durch die Karte (onclick=
+    # openProjectChat) blubbert, wenn der Input selbst kein stopPropagation
+    # hat - der Chat oeffnete sich dadurch VOR dem Datei-Dialog.
+    assert 'class="project-file-input"' in FRONTEND
+    idx = FRONTEND.index('class="project-file-input"')
+    input_tag_end = FRONTEND.index(">", idx)
+    input_tag = FRONTEND[idx:input_tag_end]
+    assert 'onclick="event.stopPropagation()"' in input_tag

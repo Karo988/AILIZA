@@ -969,7 +969,7 @@ function renderProjectFiles(project,index){
     <div class="project-files-head">
       <div class="project-files-title">Dateien</div>
       <button class="project-file-upload" onclick="event.stopPropagation();document.getElementById('project-file-input-${index}').click()">＋ Datei</button>
-      <input class="project-file-input" id="project-file-input-${index}" type="file" multiple accept=".pdf,.docx,.xlsx,.txt,.csv,.md,.html,.htm,.rtf,.json,.xml,.yaml,.yml,.sql,.js,.ts,.py,.css,.php" onchange="uploadProjectFile(${index},this)">
+      <input class="project-file-input" id="project-file-input-${index}" type="file" multiple onclick="event.stopPropagation()" accept=".pdf,.docx,.xlsx,.txt,.csv,.md,.html,.htm,.rtf,.json,.xml,.yaml,.yml,.sql,.js,.ts,.py,.css,.php" onchange="uploadProjectFile(${index},this)">
     </div>
     <div class="project-file-list">${items}</div>
   </div>`;
