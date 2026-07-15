@@ -99,13 +99,30 @@ def reinsert(text: str, reinsertion_map: dict[str, str]) -> tuple[str, bool]:
     Gibt (reinserted_text, fully_reinserted) zurueck.
     fully_reinserted=False wenn Platzhalter in der Antwort vorkommen, die nicht
     im Map sind (z.B. weil das Modell den Platzhalter veraendert hat).
+
+    Karo-Fund 2026-07-12: Ein einzelner Ersetzungs-Durchlauf reicht NICHT,
+    wenn ein Platzhalter-Wert selbst wieder einen (bereits verarbeiteten)
+    Platzhalter als Literal-Text enthaelt -- z.B. wenn ein grob greifendes
+    Muster einen bereits redigierten Abschnitt erneut einschliesst
+    ("[Zugangsdaten]" -> "... [E-Mail] ... [Name] ..."). Ein Einzel-Durchlauf
+    ersetzt "[Zugangsdaten]" zwar korrekt, fuegt dabei aber NEUE, unaufgeloeste
+    "[E-Mail]"/"[Name]"-Literale ein, die anschliessend nicht mehr aufgeloest
+    wurden. Fix: wiederholte Durchlaeufe, bis sich der Text nicht mehr
+    aendert -- mit einem Schleifen-Limit (Anzahl bekannter Platzhalter + 1)
+    gegen Endlosfaelle (z.B. ein Wert, der sich selbst als Platzhalter
+    referenziert).
     """
     if not reinsertion_map or not text:
         return text, True
 
     result = text
-    for placeholder, original in reinsertion_map.items():
-        result = result.replace(placeholder, original)
+    max_passes = len(reinsertion_map) + 1
+    for _ in range(max_passes):
+        previous = result
+        for placeholder, original in reinsertion_map.items():
+            result = result.replace(placeholder, original)
+        if result == previous:
+            break  # kein bekannter Platzhalter mehr aufgeloest -> fertig
 
     # Prüfen ob noch Platzhalter-Reste übrig sind
     remaining = re.findall(r"\[[A-Z]+_\d+\]", result)

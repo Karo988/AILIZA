@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ..auth.rbac import Role, TokenData, require_role
 from ..database import (
     get_approval_request,
     list_approval_requests,
@@ -54,19 +55,21 @@ def get_approval(approval_id: int) -> dict[str, Any]:
 def approve_approval(
     approval_id: int,
     payload: ResolveApprovalPayload | None = None,
+    token: TokenData = Depends(require_role(Role.USER)),
 ) -> dict[str, Any]:
-    return resolve_approval(approval_id, "approved", payload.note if payload else "")
+    return resolve_approval(approval_id, "approved", payload.note if payload else "", token)
 
 
 @router.post("/{approval_id}/reject")
 def reject_approval(
     approval_id: int,
     payload: ResolveApprovalPayload | None = None,
+    token: TokenData = Depends(require_role(Role.USER)),
 ) -> dict[str, Any]:
-    return resolve_approval(approval_id, "rejected", payload.note if payload else "")
+    return resolve_approval(approval_id, "rejected", payload.note if payload else "", token)
 
 
-def resolve_approval(approval_id: int, status: str, note: str) -> dict[str, Any]:
+def resolve_approval(approval_id: int, status: str, note: str, token: TokenData) -> dict[str, Any]:
     existing = get_approval_request(approval_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Approval request not found")
@@ -86,6 +89,7 @@ def resolve_approval(approval_id: int, status: str, note: str) -> dict[str, Any]
             "tool": entry["tool"],
             "status": status,
             "note": note,
+            "approved_by_user_id": token.user_id,
         },
     )
 

@@ -7,8 +7,18 @@ Implements 4-tier decision system:
   🟠 Orange (approval) → Contains special categories (Art. 9), needs approval
   🔴 Red (block)      → Contains secrets, never allow
 
-Status: Bereit für kontrollierte Testumgebung und Governance-Review.
-Nicht produktionsreif. Nicht zertifiziert.
+Status (Stand 2026-07-06): Bereit für kontrollierte Testumgebung und
+Governance-Review. Nicht produktionsreif. Nicht zertifiziert.
+
+Blocker:
+- Nirgends in main.py eingebunden — parallele, unabhaengige
+  Entscheidungslogik zur tatsaechlich aktiven Pipeline, nie verdrahtet.
+- Haengt von policies/pii_taxonomy.py ab, das selbst unverdrahtet ist.
+- Keine Tests.
+
+Aktives Gegenstueck: der tatsaechlich genutzte Governance-Pfad ist
+_governance_pre_check() in main.py, der RedactionEngineV2
+(apps/backend/governance/redaction_v2.py) nutzt — nicht diese Datei.
 """
 
 from dataclasses import dataclass

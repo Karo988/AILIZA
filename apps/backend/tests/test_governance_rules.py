@@ -138,10 +138,13 @@ class TestProviderProfiles:
         allowed, _ = check_provider_policy("groq", [DataClass.SPECIAL_CATEGORY])
         assert not allowed
 
-    def test_anthropic_blocks_personal_data_without_avv(self, monkeypatch):
+    def test_anthropic_allows_personal_data_with_documented_avv(self, monkeypatch):
+        """Betreiber-Entscheidung 2026-07-06: Anthropic AVV/DPA als vorhanden
+        dokumentiert (avv_signed=True) — PERSONAL_DATA ist damit auch OHNE
+        Testmodus erlaubt (Redaction-Gate greift unabhaengig davon weiterhin)."""
         monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
         allowed, reason = check_provider_policy("anthropic", [DataClass.PERSONAL_DATA])
-        assert not allowed
+        assert allowed, reason
 
     def test_local_allows_all(self):
         for dc in DataClass:
@@ -169,10 +172,13 @@ class TestProviderProfiles:
         assert allowed, reason
         monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
 
-    def test_openai_blocks_personal_data_without_avv(self, monkeypatch):
+    def test_openai_allows_personal_data_with_documented_avv(self, monkeypatch):
+        """Betreiber-Entscheidung 2026-07-06: OpenAI AVV/DPA als vorhanden
+        dokumentiert (avv_signed=True) — PERSONAL_DATA ist damit auch OHNE
+        Testmodus erlaubt (Redaction-Gate greift unabhaengig davon weiterhin)."""
         monkeypatch.delenv("AILIZA_TEST_MODE", raising=False)
         allowed, reason = check_provider_policy("openai", [DataClass.PERSONAL_DATA])
-        assert not allowed
+        assert allowed, reason
 
     def test_openai_failover_priority_lower_than_groq(self):
         from apps.backend.providers.provider_profiles import get_profile
@@ -487,6 +493,110 @@ class TestPIIReinsertion:
         for v in result.reinsertion_map.values():
             assert secret_text not in v, "Secret-Wert im reinsertion_map!"
 
+    def test_reinsert_resolves_nested_placeholders(self):
+        """
+        Karo-Fund 2026-07-12: Wenn der Wert eines Platzhalters selbst einen
+        anderen (bereits bekannten) Platzhalter als Literal-Text enthaelt,
+        muss reinsert() das ueber mehrere Durchlaeufe korrekt aufloesen —
+        nicht nur, wenn die Verarbeitungsreihenfolge zufaellig passt.
+        """
+        from apps.backend.governance.redaction import reinsert
+        # Worst-Case-Reihenfolge: der AEUSSERE Platzhalter [OUTER_1] wird vor
+        # dem darin enthaltenen [INNER_1] verarbeitet — ein Einzel-Durchlauf
+        # wuerde [INNER_1] frisch einfuegen und nie wieder aufloesen.
+        text = "Ergebnis: [OUTER_1]"
+        reinsertion_map = {
+            "[OUTER_1]": "Wert enthaelt [INNER_1] als Text",
+            "[INNER_1]": "den echten inneren Wert",
+        }
+        reinserted, fully = reinsert(text, reinsertion_map)
+        assert "[INNER_1]" not in reinserted
+        assert "[OUTER_1]" not in reinserted
+        assert "den echten inneren Wert" in reinserted
+        assert fully is True
+
+    def test_reinsert_nested_placeholder_loop_has_limit(self):
+        """Ein Platzhalter, der sich selbst referenziert, darf keine
+        Endlosschleife verursachen — Schleifen-Limit muss greifen."""
+        from apps.backend.governance.redaction import reinsert
+        text = "Start [A_1]"
+        reinsertion_map = {"[A_1]": "Text mit [A_1] drin"}
+        # Darf nicht haengen bleiben — reines Terminierungsverhalten wird geprueft.
+        reinserted, fully = reinsert(text, reinsertion_map)
+        assert isinstance(reinserted, str)
+
+    def test_end_to_end_reply_mail_no_placeholders_leak(self, monkeypatch):
+        """
+        Karo-Fund 2026-07-12 (End-zu-End-Reproduktion): 'Antwort-Mail an
+        mueller@example.com ... von Herrn Mueller' loeste durch das zu
+        allgemeine 'Antwort'-Schluesselwort im credential-Muster eine
+        verschachtelte Platzhalter-Situation aus. Die Nutzer-Antwort MUSS
+        die echten Werte enthalten, KEINE Platzhalter-Reste.
+        """
+        import os as _os
+        _os.environ.setdefault("AILIZA_SECRET_KEY", "test-secret-key-minimum-32-chars-ok")
+        _os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+        monkeypatch.setenv("AILIZA_TEST_MODE", "true")
+
+        from fastapi.testclient import TestClient
+        from apps.backend.main import app, _orchestrator
+        from apps.backend.database import init_db, metadata_obj, engine
+        metadata_obj.drop_all(engine)
+        init_db()
+
+        class EchoProvider:
+            model = "echo-test"
+            def count_tokens(self, text):
+                return len(text.split())
+            def generate(self, messages, context=None, **kwargs):
+                last_user = [m["content"] for m in messages if m["role"] == "user"][-1]
+                return f"Sehr geehrter {last_user}, vielen Dank fuer Ihre Nachricht."
+
+        # monkeypatch.setattr statt direkter Zuweisung -- setzt den
+        # ORIGINALEN _get_provider_order nach dem Test automatisch zurueck
+        # (Karo-Fund 2026-07-12: direkte Zuweisung ohne Rueckgabe verschmutzte
+        # globalen Modul-Zustand und liess spaetere Tests im selben Lauf
+        # fehlschlagen, z.B. test_provider_order_env_respected).
+        monkeypatch.setitem(_orchestrator.providers, "groq", EchoProvider())
+        import apps.backend.providers.orchestrator as orch_mod
+        monkeypatch.setattr(orch_mod, "_get_provider_order", lambda: ["groq"])
+
+        client = TestClient(app, cookies={})
+        client.post("/auth/self-register", json={"user_id": "e2ereinsert", "password": "SicherPass1!Xyz"})
+        client.post("/auth/login", json={"user_id": "e2ereinsert", "password": "SicherPass1!Xyz"})
+
+        task = "Schreibe eine Antwort-Mail an mueller@example.com bezueglich seiner Anfrage von Herrn Mueller."
+        resp = client.post("/agent/run", json={"task": task})
+        assert resp.status_code == 200
+        answer = resp.json().get("ai_response") or resp.json().get("message") or ""
+        assert "mueller@example.com" in answer
+        assert "Herrn Mueller" in answer
+        assert "[" not in answer, f"Platzhalter-Rest in der Antwort: {answer!r}"
+
+    def test_antwort_credential_requires_colon(self):
+        """
+        Karo-Entscheidung 2026-07-12 (Option 1): 'Antwort' bleibt im
+        credential-Muster, aber der Doppelpunkt ist Pflicht. 'Antwort-Mail'
+        (kein Doppelpunkt) darf NICHT matchen, 'Antwort: Lucky'
+        (Sicherheitsfrage) MUSS weiterhin geschwaerzt werden.
+        """
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        r1 = RedactionEngineV2().redact(
+            "Schreibe eine Antwort-Mail an mueller@example.com von Herrn Mueller."
+        )
+        assert "mueller@example.com" not in r1.redacted_text
+        assert "Herrn Mueller" not in r1.redacted_text
+        # Der Rest des Satzes ("Antwort-Mail an ... von ...") darf NICHT als
+        # ein einziger Zugangsdaten-Block verschluckt worden sein.
+        assert "Zugangsdaten" not in r1.redacted_text
+
+        r2 = RedactionEngineV2().redact(
+            "* Sicherheitsfrage: Name des ersten Haustieres\n* Antwort: Lucky"
+        )
+        assert "Lucky" not in r2.redacted_text
+        assert "Zugangsdaten" in r2.redacted_text
+
     def test_person_name_redacted_mitarbeiter(self):
         """'Mitarbeiter Max Müller' → [PERSON_1], redaction_applied=True."""
         from apps.backend.governance.redaction import redact, reinsert
@@ -646,3 +756,159 @@ class TestKillSwitch:
         import apps.backend.kill_switch as ks
         reload(ks)
         assert ks._env_enabled() is False
+
+
+# ── Karo-Fund 2026-07-13: Name ohne Anrede + europaeische Adressen ────────────
+class TestNameContextAndEuropeanAddressRedaction:
+    """
+    Befund: "schreibe eine E-Mail, möchte kontakt mit paul sender in der
+    Mathestr. 12 in 15823 Pingelhausen" liess Name ("paul") und Strasse
+    ("Mathestr. 12") unredigiert durch, weil (a) die Namens-Muster eine
+    Anrede + Grossschreibung voraussetzten und (b) das Adress-Muster nur
+    die vollen Formen "strasse/straße" kannte, nicht die Abkuerzung "str.".
+    Betreiber-Entscheidung: Option B (Namen auch ohne Anrede/Grossschreibung
+    erkennen, aber nur mit engem Kontext-Ausloeser) + lokale, sprachueber-
+    greifende Adress-Heuristik ohne externe Validierung (Datensparsamkeit).
+    """
+
+    def _redact(self, text: str) -> str:
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        return RedactionEngineV2().redact(text).redacted_text
+
+    def test_original_karo_fund_case_fully_redacted(self):
+        text = ("schreibe eine E-Mail, möchte kontakt mit paul sender in der "
+                "Mathestr. 12 in 15823 Pingelhausen")
+        result = self._redact(text)
+        assert "paul" not in result
+        assert "sender" not in result
+        assert "Mathestr" not in result
+        assert "Pingelhausen" not in result
+        assert "[Name]" in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result
+
+    def test_name_context_lowercase_without_title(self):
+        result = self._redact("Bitte kontaktiere klaus mueller wegen des Projekts.")
+        assert "klaus" not in result
+        assert "mueller" not in result
+        assert "[Name]" in result
+
+    def test_name_context_false_positive_guard_pronoun(self):
+        result = self._redact("Schreibe an ihn direkt, das ist dringend.")
+        assert result == "Schreibe an ihn direkt, das ist dringend."
+
+    def test_name_context_false_positive_guard_generic_phrase(self):
+        result = self._redact("Wir sind in Kontakt mit anderen Abteilungen.")
+        assert result == "Wir sind in Kontakt mit anderen Abteilungen."
+
+    def test_name_context_false_positive_guard_no_trigger(self):
+        result = self._redact("Berlin Mitte ist ein Stadtteil.")
+        assert result == "Berlin Mitte ist ein Stadtteil."
+
+    def test_address_abbreviation_str_punkt(self):
+        result = self._redact("Die Adresse lautet Mathestr. 12.")
+        assert "Mathestr" not in result
+        assert "[Adresse]" in result
+
+    def test_address_english_number_first_format(self):
+        result = self._redact("Bitte senden an 12 Main Street, 90210 Los Angeles.")
+        assert "Main Street" not in result
+        assert "Los Angeles" not in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result
+
+    def test_address_french_prefix_format(self):
+        result = self._redact("Rue de la Paix 12, 75001 Paris")
+        assert "Rue de la Paix" not in result
+        assert "Paris" not in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result
+
+    def test_existing_antwort_lucky_still_blocked(self):
+        # Regression: der frueher gefixte "Antwort"-Credential-Fall
+        # (f2913c3) darf durch die neuen Muster nicht beeinflusst werden.
+        result = self._redact("Antwort: Lucky")
+        assert result == "[Zugangsdaten]"
+
+    def test_existing_antwort_mail_case_still_correct(self):
+        # Regression: verschachtelte Platzhalter-Situation (f2913c3) darf
+        # durch das neue name_context-Muster nicht wieder auftreten.
+        result = self._redact("Antwort-Mail an mueller@example.com von Herrn Mueller")
+        assert "mueller@example.com" not in result
+        assert "[E-Mail]" in result
+        assert "[Name]" in result
+
+    def test_credential_60_char_cutoff_bug_fixed(self):
+        # Karo-Fund 2026-07-14 (Golden-Brief): "Passwort: <langer Wert>"
+        # wurde bei >60 Zeichen mitten im Wort abgeschnitten, sodass ein
+        # unredigiertes Rest-Fragment hinter dem Platzhalter stehen blieb.
+        text = "Passwort: Xy9!Zz-supergeheim-lang (kommt da nicht mehr rein!)"
+        result = self._redact(text)
+        assert result == "[Zugangsdaten]"
+        assert "rein!)" not in result
+        assert "ht mehr" not in result
+
+
+# ── Karo-Fund 2026-07-14: mehrsprachige Redaction BG/CZ (Golden-Brief) ────────
+class TestMultilingualRedactionBgCz:
+    """
+    Golden-Brief-Befund: Namens-/Adress-/Diagnose-Angaben in Bulgarisch
+    (kyrillisch) und Tschechisch (Diakritika) rutschten unredigiert durch,
+    weil alle Muster deutsche Schluesselwoerter + lateinische Zeichen-
+    klassen voraussetzten. Betreiber-Entscheidung (Option 1): gezielt nur
+    BG/CZ ergaenzen, nicht EU-weit. Label-basiert + Wert bis Zeilenende.
+    """
+
+    def _redact(self, text: str) -> str:
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        return RedactionEngineV2().redact(text).redacted_text
+
+    def test_bulgarian_name_redacted(self):
+        result = self._redact("Име: Димитър Иванов (Dimitar Ivanov)")
+        assert "Димитър" not in result
+        assert "Иванов" not in result
+        assert "Dimitar" not in result
+        assert "[Name]" in result
+
+    def test_bulgarian_address_redacted(self):
+        result = self._redact('Адрес: ул. "Граф Игнатиев" 15, 1000 София')
+        assert "Граф Игнатиев" not in result
+        assert "София" not in result
+        assert "1000" not in result
+        assert "[Adresse]" in result
+
+    def test_bulgarian_diagnosis_redacted(self):
+        result = self._redact(
+            "Диагноза: Диабет тип 2, необходимо е ежедневно проследяване."
+        )
+        assert "Диабет" not in result
+        assert "проследяване" not in result
+        assert "GESCHWAERZT" in result
+
+    def test_czech_name_redacted(self):
+        result = self._redact("Jméno: Jan Novák")
+        assert "Novák" not in result
+        assert "[Name]" in result
+
+    def test_czech_address_redacted(self):
+        result = self._redact("Adresa: Na Příkopě 854/14, 110 00 Praha 1")
+        assert "Příkopě" not in result
+        assert "Praha" not in result
+        assert "[Adresse]" in result
+
+    def test_czech_diagnosis_redacted(self):
+        result = self._redact(
+            "Diagnóza: Diagnostikována klinická deprese, farmakologická léčba."
+        )
+        assert "deprese" not in result
+        assert "léčba" not in result
+        assert "GESCHWAERZT" in result
+
+    def test_german_address_still_finegrained(self):
+        # Regression: das deutsche "Adresse:" darf NICHT vom intl-Label
+        # erfasst werden — feine Aufloesung [Adresse] + [Ort] bleibt.
+        result = self._redact("Adresse: Hauptstr. 5, 10115 Berlin")
+        assert "Hauptstr" not in result
+        assert "Berlin" not in result
+        assert "[Adresse]" in result
+        assert "[Ort]" in result

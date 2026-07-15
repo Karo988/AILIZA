@@ -100,9 +100,9 @@ AILIZA ist ein vollständig EU-konformer KI-Assistent — einfach nutzbar für j
 | Art. 9 | Risikomanagementsystem | ✅ |
 | Art. 13 | Transparenz | ✅ |
 | Art. 14 | Menschliche Aufsicht | ✅ |
-| Art. 52 | Transparenzpflicht (Limited Risk) | ✅ |
+| Art. 50 | Transparenzpflicht (Limited Risk) | ✅ |
 
-**Risikoklasse:** Limited Risk (Art. 52 EU AI Act)
+**Risikoklasse:** Limited Risk (Art. 50 EU AI Act)
 
 ---
 

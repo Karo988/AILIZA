@@ -115,7 +115,7 @@ AILIZA ist vollständig EU-konform:
 - ✅ Audit-Trail für alle Aktionen
 - ✅ Human Oversight für kritische Entscheidungen
 
-**Wichtig:** AILIZA kennzeichnet sich immer als KI-System (EU AI Act Art. 52)
+**Wichtig:** AILIZA kennzeichnet sich immer als KI-System (EU AI Act Art. 50)
 
 ---
 

@@ -60,6 +60,17 @@ class ProviderProfile:
     notes: str = ""
     tags: list[str] = field(default_factory=list)
 
+    # AVV/DPA-Dokumentation (Betreiber-Entscheidung, 2026-07-06): "avv_signed"
+    # bedeutet, dass der AVV/DPA ueber kommerzielle Vertragsbedingungen,
+    # Online-DPA-Prozess oder Cloud-Vertrag wirksam eingebunden wurde — nicht,
+    # dass keine weitere Pruefung noetig ist. Drittlandtransfer/SCC/TIA bleiben
+    # eigene Pruefpunkte (siehe transfer_basis + transfer_review_required).
+    avv_status: str = "not_documented"      # "documented" | "not_documented"
+    avv_basis: str = ""                     # z.B. "commercial_terms_or_online_dpa"
+    avv_checked_at: str = ""                # Datum der Dokumentation (ISO, YYYY-MM-DD)
+    avv_source_url: str = ""                # Offizieller Anbieter-Link zum Nachweis
+    transfer_review_required: bool = False  # Drittlandtransfer/SCC/TIA gesondert pruefen
+
     def allows(self, data_class: DataClass) -> bool:
         return (
             self.active
@@ -101,21 +112,31 @@ _PROFILES: dict[str, ProviderProfile] = {
         name="OpenAI",
         region="US",
         transfer_basis=TransferBasis.SCC,
-        avv_signed=False,               # ⚠ DPA noch zu unterzeichnen
+        avv_signed=True,                 # Betreiber-Entscheidung 2026-07-06, siehe avv_status/avv_basis
         allowed_data_classes=[
             DataClass.PUBLIC, DataClass.SYNTHETIC, DataClass.DEMO,
-            DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.INTERNAL,
+            # CONFIDENTIAL bewusst NICHT enthalten (Betreiber-Entscheidung 2026-07-06,
+            # Option B): AVV/DPA deckt die vertragliche Datenschutzgrundlage ab, ist
+            # aber keine pauschale Freigabe fuer vertrauliche Unternehmensdaten.
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
         allowed_use_cases=["kmu_assistant", "summarization", "classification", "text_generation"],
         logs_prompts=False,
         used_for_training=False,
         active=True,
-        profile_version="1.0.0",
+        profile_version="1.1.0",
         failover_priority=2,
+        avv_status="documented",
+        avv_basis="commercial_terms_or_online_dpa",
+        avv_checked_at="2026-07-06",
+        avv_source_url="https://openai.com/policies/data-processing-addendum",
+        transfer_review_required=True,
         notes="US-Provider, SCC. Fallback wenn Groq nicht verfügbar. "
               "Nach Redaction erlaubt für PERSONAL_DATA/HR/LEGAL/FINANCIAL. "
-              "AVV/DPA noch zu unterzeichnen.",
+              "AVV/DPA als vorhanden dokumentiert (OpenAI Business/API-Vertrag + Data Processing "
+              "Addendum, Betreiber-Entscheidung 2026-07-06); Drittlandtransfer und Anbieterprüfung "
+              "bleiben separate Prüfpunkte.",
         tags=["llm", "openai", "us", "scc", "fallback"],
     ),
     "anthropic": ProviderProfile(
@@ -123,20 +144,30 @@ _PROFILES: dict[str, ProviderProfile] = {
         name="Anthropic",
         region="US",
         transfer_basis=TransferBasis.SCC,
-        avv_signed=False,               # ⚠ Commercial API Terms prüfen
+        avv_signed=True,                 # Betreiber-Entscheidung 2026-07-06, siehe avv_status/avv_basis
         allowed_data_classes=[
             DataClass.PUBLIC, DataClass.SYNTHETIC, DataClass.DEMO,
-            DataClass.INTERNAL, DataClass.CONFIDENTIAL,
+            DataClass.INTERNAL,
+            # CONFIDENTIAL bewusst NICHT enthalten (Betreiber-Entscheidung 2026-07-06,
+            # Option B): AVV/DPA deckt die vertragliche Datenschutzgrundlage ab, ist
+            # aber keine pauschale Freigabe fuer vertrauliche Unternehmensdaten.
             DataClass.PERSONAL_DATA, DataClass.FINANCIAL, DataClass.HR, DataClass.LEGAL,
         ],
         allowed_use_cases=["kmu_assistant", "summarization", "code_assist", "classification", "text_generation"],
         logs_prompts=False,
         used_for_training=False,
         active=True,
-        profile_version="1.2.0",
+        profile_version="1.3.0",
         failover_priority=2,
+        avv_status="documented",
+        avv_basis="commercial_terms_or_online_dpa",
+        avv_checked_at="2026-07-06",
+        avv_source_url="https://www.anthropic.com/legal/commercial-terms",
+        transfer_review_required=True,
         notes="US-Provider, SCC. Nach Redaction erlaubt für PERSONAL_DATA/HR/LEGAL/FINANCIAL. "
-              "AVV/DPA noch zu unterzeichnen.",
+              "AVV/DPA als vorhanden dokumentiert (Anthropic Commercial Terms + Data Processing "
+              "Addendum, Betreiber-Entscheidung 2026-07-06); Drittlandtransfer und Anbieterprüfung "
+              "bleiben separate Prüfpunkte.",
         tags=["llm", "anthropic", "us", "scc"],
     ),
     "openrouter": ProviderProfile(
@@ -259,6 +290,11 @@ def profile_to_dict(profile: ProviderProfile) -> dict[str, Any]:
         "region": profile.region,
         "transfer_basis": profile.transfer_basis.value,
         "avv_signed": profile.avv_signed,
+        "avv_status": profile.avv_status,
+        "avv_basis": profile.avv_basis,
+        "avv_checked_at": profile.avv_checked_at,
+        "avv_source_url": profile.avv_source_url,
+        "transfer_review_required": profile.transfer_review_required,
         "allowed_data_classes": [c.value for c in profile.allowed_data_classes],
         "allowed_use_cases": profile.allowed_use_cases,
         "logs_prompts": profile.logs_prompts,

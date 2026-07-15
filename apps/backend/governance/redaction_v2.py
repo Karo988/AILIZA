@@ -74,12 +74,130 @@ class RedactionEngineV2:
         "name_standalone_line": re.compile(
             r"^[A-ZÄÖÜ][a-zäöüß\-]+[ \t]+[A-ZÄÖÜ][a-zäöüß\-]+$", re.MULTILINE,
         ),
+        # "mein Name ist Paula Ronder" — haeufigste Selbstauskunfts-Formulierung
+        # in Briefen/E-Mails, wurde bisher von keinem Muster erfasst (nur
+        # "Name:" mit Doppelpunkt und Titel-Anreden wie "Frau X").
+        "name_self_intro": re.compile(
+            r"(?i:mein(?:e)?|unser(?:e)?)[ \t]+Name[ \t]+ist[ \t]+"
+            r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
+        ),
+        # Name in der Grussformel-Signatur ("Mit freundlichen Gruessen, X Y").
+        # Gr(üe|ü|ue)ß(en)? deckt auch ASCII-Ersatzschreibung ohne Umlaut-
+        # Tastatur ab ("Gruessen" statt "Grüßen").
+        "name_signature": re.compile(
+            r"(?i:Mit[ \t]+freundlichen[ \t]+Gr(?:ü|ue)(?:ß|ss)en"
+            r"|Mit[ \t]+besten[ \t]+Gr(?:ü|ue)(?:ß|ss)en"
+            r"|Viele[ \t]+Gr(?:ü|ue)(?:ß|ss)e\b"
+            r"|Beste[ \t]+Gr(?:ü|ue)(?:ß|ss)e\b)[,]?[ \t]*"
+            r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
+        ),
+        # Karo-Fund 2026-07-14 (Golden-Brief, mehrsprachiger Testbrief):
+        # Namens-/Adress-/Diagnose-Angaben in Bulgarisch (kyrillisch) und
+        # Tschechisch (lateinisch mit Diakritika) wurden komplett NICHT
+        # erkannt, weil alle Muster deutsche Schluesselwoerter + lateinische
+        # Zeichenklassen ([A-ZÄÖÜ]) voraussetzten. Betreiber-Entscheidung
+        # (Option 1): gezielt nur BG/CZ ergaenzen, nicht EU-weit ausrollen.
+        # Ansatz: label-basiert + Wert bis Zeilenende — so werden kyrillische/
+        # diakritische Werte erfasst, ohne fuer jede Sprache eigene
+        # Zeichenklassen pflegen zu muessen.
+        "name_field_intl": re.compile(
+            r"(?i:Име|Jméno)[ \t]*:[ \t]*[^\n]{1,120}",
+        ),
+        # Karo-Fund 2026-07-13: Namen ohne Anrede-Keyword und ohne
+        # Grossschreibung ("kontakt mit paul sender") wurden bisher NICHT
+        # erkannt, weil alle bisherigen Namens-Muster entweder eine Anrede
+        # (Herr/Frau) oder ein Label (Name:) voraussetzen UND grossge-
+        # schriebene Namen erwarten. Betreiber-Entscheidung (Option B):
+        # Namen auch OHNE Anrede und OHNE Grossschreibung erkennen, aber nur
+        # wenn ein enger Kontext-Ausloeser (Kontaktaufnahme-Formulierung)
+        # unmittelbar davorsteht — sonst waere praktisch jedes Wortpaar ein
+        # falscher Treffer (z.B. "Berlin Mitte", "Team Alpha"). Verneinende
+        # Vorschau schliesst haeufige Funktionswoerter/Pronomen aus, damit
+        # z.B. "schreibe an ihn direkt" nicht faelschlich als Name gilt.
+        # Bekannte Grenze: nicht jedes Funktionswort ist in der Ausschluss-
+        # liste, daher bleibt ein Rest-Risiko an False Positives bestehen —
+        # bewusst in Kauf genommen (Betreiber-Vorgabe: lieber zu viel als zu
+        # wenig schwaerzen bei Kontaktaufnahme-Formulierungen).
+        "name_context": re.compile(
+            r"(?i:in[ \t]+kontakt[ \t]+mit|kontakt[ \t]+mit|kontaktiere(?:n)?|schreibe[ \t]+an"
+            r"|sende(?:n)?[ \t]+an|wende(?:n)?[ \t]+dich[ \t]+an|adressiert[ \t]+an"
+            r"|erreichbar[ \t]+unter|zu[ \t]+erreichen[ \t]+unter)"
+            r"[ \t]+(?!(?:der|die|das|den|dem|ihm|ihr|ihn|sie|es|uns|euch|ihnen|mich|dich|sich"
+            r"|einem|einer|einen|anderen|anderer|anderem|diesen|jenen|allen|vielen|unserem"
+            r"|unserer|unseren|niemand|jemand)\b)"
+            r"[A-Za-zÄÖÜäöüß]{2,20}[ \t]+[A-Za-zÄÖÜäöüß]{2,20}\b",
+        ),
         "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
+        # "geboren am X" ist die haeufigste Alltagsformulierung in Briefen/
+        # E-Mails und wurde bisher NICHT erkannt (nur "Geburtsdatum:"/"geb.").
         "birthdate": re.compile(
-            r"\b(?:Geburtsdatum|geb\.)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}", re.IGNORECASE,
+            r"\b(?:Geburtsdatum|geb\.|geboren[ \t]+am)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}",
+            re.IGNORECASE,
         ),
         "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
+        "bic": re.compile(r"\bBIC[ \t]*:?[ \t]*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b", re.IGNORECASE),
         "card": re.compile(r"\b(?:\d{4}[\s\-]?){3}\d{4}\b"),
+        # Amtliche Ausweis-/ID-Nummern (Karo-Fund 2026-07-11, erweiterter
+        # Amun-Testbrief): Personalausweis, Reisepass, Steuer-ID, Sozial-
+        # versicherung, Fuehrerschein, Krankenversicherung. Label-basiert,
+        # da die Nummernformate je Dokumenttyp variieren.
+        "official_id": re.compile(
+            r"(?i:Personalausweisnummer|Reisepassnummer|Steueridentifikationsnummer"
+            r"|Steuer-?ID|Sozialversicherungsnummer|Führerscheinnummer"
+            r"|Krankenversicherungsnummer)[ \t]*:?[ \t]*[\w \-]{4,25}",
+        ),
+        # Zugangsdaten/Geheimnisse (DSGVO/CLAUDE.md-Kategorie "secret" ⚫ —
+        # nie ausgeben). Label-basiert: die Werte selbst haben kein
+        # einheitliches Format (Woerter, Zahlen, Base32-Schluessel, ...).
+        #
+        # Karo-Fund 2026-07-12: "Antwort" ist ein sehr allgemeines deutsches
+        # Wort (= "Reply") und matchte mit optionalem Doppelpunkt (":?")
+        # beliebigen Fliesstext ("Antwort-Mail an ...") — dabei wurden
+        # bereits redigierte Platzhalter ([E-Mail], [Name]) erneut mit
+        # eingeschlossen und so eine verschachtelte Platzhalter-Situation
+        # erzeugt. Betreiber-Entscheidung (Option 1): "Antwort" bleibt im
+        # Muster (schuetzt weiterhin z.B. "Antwort: Lucky" bei Sicherheits-
+        # fragen), aber der Doppelpunkt ist jetzt fuer ALLE Schluesselwoerter
+        # PFLICHT (":" statt ":?") -- "Antwort-Mail" (kein Doppelpunkt)
+        # matcht dadurch nicht mehr, "Antwort: Lucky" weiterhin.
+        # Karo-Fund 2026-07-14 (Golden-Brief, mehrsprachiger Testbrief): Die
+        # bisherige Obergrenze von 60 Zeichen war zu knapp bemessen — bei
+        # laengeren Werten (z.B. Passwort + Klammer-Hinweis) wurde die Zeile
+        # MITTEN IM WORT abgeschnitten, sodass ein unredigiertes Rest-
+        # Fragment ("...ht mehr rein!)") hinter dem Platzhalter stehen
+        # blieb. Grenze auf 300 Zeichen angehoben (deckt realistische
+        # Zeilenlaengen ab, faengt weiterhin bei Zeilenende).
+        "credential": re.compile(
+            r"(?i:Benutzername|Passwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
+            r"|Wiederherstellungscode|Zwei-Faktor-Authentifizierungsschlüssel)"
+            r"[ \t]*:[ \t]*[^\n]{1,300}",
+        ),
+        # Technische Kennungen mit Standort-/Identifizierungsbezug.
+        "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+        "gps_coords": re.compile(r"\b-?\d{1,3}\.\d{3,6},[ \t]*-?\d{1,3}\.\d{3,6}\b"),
+        "device_id": re.compile(
+            r"(?i:Gerätekennung|Geräte-ID|Device-ID|Browser-Fingerprint)[ \t]*:?[ \t]*[\w\-]{4,30}",
+        ),
+        # Finanzielle Detailangaben — label-basiert, Wert bis Zeilenende.
+        "financial_detail": re.compile(
+            r"(?i:Monatliches Nettoeinkommen|Monatliche Mietkosten|Laufender Ratenkredit"
+            r"|Dispositionskredit|Aktueller Kontostand|Bonitätsscore"
+            r"|SCHUFA-ähnliche Risikoeinstufung)[ \t]*:?[ \t]*[^\n]{1,300}",
+        ),
+        # SCHUFA/Bonität auch als freistehende Erwaehnung erkennen (nicht nur
+        # in der exakten Label-Zeile oben) — Karo-Fund 2026-07-11.
+        "financial_keyword": re.compile(r"\b(?:schufa|bonität(?:sscore)?)[\wäöüÄÖÜß\-]*", re.IGNORECASE),
+        # Kartenpruefnummer/Gueltigkeitsdatum (getrennt von der Kartennummer
+        # selbst, damit CVV nicht zufaellig als 3-4-stellige "Kartennummer"
+        # durchrutscht oder umgekehrt zerstoert wird).
+        "card_cvv": re.compile(r"(?i:Kartenprüfnummer|CVV|CVC)[ \t]*:?[ \t]*\d{3,4}"),
+        "card_expiry": re.compile(r"(?i:Gültig bis)[ \t]*:?[ \t]*\d{1,2}[ \t]*/[ \t]*\d{2,4}"),
+        # Kinderdaten (DSGVO Art. 8 — eigene, striktere Rechtsgrundlage fuer
+        # Daten Minderjaehriger, unabhaengig von der sonstigen Kategorie).
+        "child_field": re.compile(
+            r"(?i:Schule des Kindes|Schulweg|Kindergarten|Name des Kindes"
+            r"|Geburtsdatum des Kindes)[ \t]*:?[ \t]*[^\n]{1,300}",
+        ),
         "address": re.compile(
             # Kein IGNORECASE: Strassenname ist im Deutschen konventionell
             # grossgeschrieben — case-sensitiv verhindert Ueberdehnung auf
@@ -87,8 +205,41 @@ class RedactionEngineV2:
             # "weg" als Teilstring). Nicht-gieriges *? vor dem Suffix, damit
             # die Suffix-Gruppe zuverlaessig genau an der richtigen Stelle
             # matcht statt sich auf Backtracking zu verlassen.
-            r"\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]*?(?:stra(?:ße|sse)|gasse|weg|platz|allee|ring|damm|ufer)"
-            r"[ \t]+\d+[a-z]?(?:/\d+[a-z]?)?",
+            #
+            # Karo-Fund 2026-07-13: "Mathestr. 12" wurde bisher NICHT erkannt,
+            # weil nur die vollen Formen "strasse/straße" abgedeckt waren,
+            # nicht die im Alltag sehr haeufige Abkuerzung "str.". Ausserdem
+            # soll das europaweit funktionieren (Betreiber-Vorgabe: "muss
+            # auch auf auslaendischen Briefen funktionieren"), OHNE externe
+            # Adress-Validierung (Datensparsamkeit — ein Geocoding-API-Call
+            # waere selbst eine unkontrollierte Drittanbieter-Uebermittlung).
+            # Deshalb: rein lokale, sprachuebergreifende Heuristik ueber
+            # bekannte Strassen-Suffixe/-Praefixe mehrerer europaeischer
+            # Sprachen, ohne Datenbank-Abgleich.
+            r"\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]*?(?:stra(?:ße|sse)|str\.|gasse|weg|platz|allee|ring|damm|ufer"
+            r"|straat|laan|gata|gatan|katu|utca)"
+            r"[ \t]+\d+[a-z]?(?:/\d+[a-z]?)?"
+            # Auslaendische Formate, bei denen das Strassen-Schluesselwort
+            # ein eigenes, vorangestelltes Wort ist statt eines Suffixes
+            # (z.B. "Rue de la Paix 12", "Via Roma 4", "Calle Mayor 10").
+            r"|\b(?:Rue|Via|Viale|Calle|Avenida|Rua|Ulica|Piazza|Plaza)[ \t]+"
+            r"[A-ZÀ-ÖØ-Ýa-zà-öø-ý][A-Za-zÀ-ÖØ-Ýà-öø-ý\-]*(?:[ \t]+[A-ZÀ-ÖØ-Ýa-zà-öø-ý][A-Za-zÀ-ÖØ-Ýà-öø-ý\-]*){0,3}"
+            r"(?:[ \t]*,?[ \t]*\d+[a-z]?)?"
+            # Englisches Format: Hausnummer VOR dem Strassennamen, Suffix als
+            # eigenes Wort am Ende ("12 Main Street", "221B Baker Street").
+            r"|\b\d{1,4}[A-Za-z]?[ \t]+[A-Z][A-Za-z\-]*(?:[ \t]+[A-Z][A-Za-z\-]*){0,2}[ \t]+"
+            r"(?:Street|St\.|Road|Rd\.|Avenue|Ave\.|Lane|Ln\.|Drive|Dr\.|Boulevard|Blvd\.)\b",
+        ),
+        # Karo-Fund 2026-07-14 (Golden-Brief): BG/CZ-Adresszeilen ("Адрес: ..."
+        # / "Adresa: ...") wurden nicht erfasst. Label-basiert + Wert bis
+        # Zeilenende deckt kyrillische Strassennamen und abweichende PLZ-
+        # Formate (BG "1000 София", CZ "110 00 Praha 1") in einem Zug ab,
+        # ohne strukturelle Sprach-Parser. Bewusst NUR die BG/CZ-Labels
+        # (Адрес/Adresa), NICHT das deutsche "Adresse" — sonst wuerde das
+        # bestehende, feiner aufgeloeste deutsche Verhalten ([Adresse],[Ort])
+        # zu einem einzigen [Adresse] verschmelzen (Regression vermeiden).
+        "address_field_intl": re.compile(
+            r"(?i:Адрес|Adresa)[ \t]*:[ \t]*[^\n]{1,200}",
         ),
         "postal_city": re.compile(
             r"\b\d{5}[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+){0,3}",
@@ -115,13 +266,35 @@ class RedactionEngineV2:
 
     # Art. 9-Kategorien (VIOLETT)
     VIOLET_KEYWORDS = {
-        "health": ["diagnose", "migräne", "kopfschmerz", "krankheit", "gesundheit", "krankschreibung"],
-        "religion": ["religion", "muslimisch", "christlich", "buddhistische", "jüdisch", "atheist"],
+        "health": [
+            "diagnose", "migräne", "kopfschmerz", "krankheit", "gesundheit",
+            "krankschreibung", "hiv", "aids", "infektion", "erkrankung",
+            "behinderung", "depression", "krebs", "diabetes",
+            # Karo-Fund 2026-07-11, erweiterter Amun-Testbrief:
+            "depressiv", "angststörung", "burnout", "burn-out", "allergie",
+            "schwanger", "fehlgeburt", "therapeutisch", "psychotherap",
+            "medikament", "blutdruck", "body-mass-index", "bmi",
+            "krankenversicherungsnummer",
+            # Karo-Fund 2026-07-14 (Golden-Brief, BG/CZ): Diagnose-Labels
+            # und konkrete Erkrankungen in Bulgarisch/Tschechisch. Das
+            # Label ("диагноза"/"diagnóza") ist wichtig, weil es ueber den
+            # ": <Wert>"-Zusatz die GANZE Diagnosezeile schwaerzt — die
+            # blosse Erkrankung ("диабет") ohne folgenden Doppelpunkt wuerde
+            # sonst nur das eine Wort treffen und den Rest der Zeile
+            # stehenlassen. \w matcht im Unicode-Modus auch Kyrillisch/
+            # Diakritika, IGNORECASE deckt die Gross-/Kleinschreibung ab.
+            "диагноза", "диабет", "diagnóza", "deprese",
+        ],
+        "religion": ["religion", "muslimisch", "christlich", "buddhistische", "jüdisch", "atheist", "katholisch", "evangelisch"],
         "politics": ["politische", "wahlbezirk", "spd", "cdu", "grüne", "linke", "afd", "fdp"],
         "sexual": ["homosexuell", "lesbisch", "schwul", "bisexuell", "queer", "sexuelle"],
         "ethnic": ["herkunft", "ethni", "rasse", "abstammung", "nationalität"],
         "biometric": ["fingerabdruck", "gesichtserkennung", "biometrisch", "gesichtsanalyse"],
-        "union": ["gewerkschafts", "tarifvertrag", "betriebsrat"],
+        # "gewerkschaft" statt "gewerkschafts": das Grundwort ("Mitglied der
+        # Gewerkschaft ver.di") ist haeufiger als die zusammengesetzte Form
+        # und wurde vorher NICHT erkannt (\bgewerkschafts matcht "Gewerkschaft"
+        # nicht, da das "s" fehlt).
+        "union": ["gewerkschaft", "tarifvertrag", "betriebsrat"],
         "genetic": ["genetisch", "dna", "chromosom", "genom"],
         "criminal": ["strafrechtlich", "verurteilung", "strafregister"],
     }
@@ -266,35 +439,35 @@ class RedactionEngineV2:
 
     def _redact_violet_sections(self, text: str, violet_categories: dict[str, list]) -> str:
         """
-        Schwärzt Zeilen mit Art. 9-Daten - AGGRESSIV, aber zeilenscharf.
+        Schwärzt NUR die konkreten Art.-9-Begriffe/Wörter selbst — nicht die
+        ganze Zeile oder den ganzen Brief.
 
-        Fruehere Version nutzte eine mehrzeilige Regex mit `\\s+` als
-        "Folgezeilen"-Muster — `\\s` matcht auch `\\n`, wodurch das Muster
-        durch Absatzgrenzen hindurch bis zum Ende des Dokuments "fressen"
-        konnte und dabei bereits geschwaerzte SCHWARZ-Abschnitte mit
-        wegloeschte (Incident 2026-07, Amun-Brief-Vorfall). Fix: Ersetzt
-        ausschliesslich die EINZELNE Zeile, die eines der tatsaechlich
-        erkannten Schluesselwoerter enthaelt — nie mehr, nie weniger.
-        Ausserdem unabhaengig vom exakten Feldbezeichner im Dokument (z.B.
-        "Religion:" vs. Code-Label "Religion/Weltanschauung:" — vorher ein
-        stiller Mismatch, der die Zeile komplett unredaktiert liess).
+        Betreiber-Freigabe 2026-07-11: Eine fruehere Version ersetzte die
+        komplette Zeile, die ein Schluesselwort enthielt (Incident: bei
+        einem einzigen durchgehenden Absatz ohne Zeilenumbrueche war "die
+        Zeile" der GESAMTE Brief — der Rest der Anfrage, z.B. das eigentliche
+        Anliegen, ging mit verloren und konnte nicht mehr zusammengefasst
+        werden). Jetzt: nur die tatsaechlich erkannten Woerter werden durch
+        einen kompakten Inline-Platzhalter ersetzt, der Rest des Textes
+        bleibt unveraendert erhalten und ist weiter verarbeitbar.
         """
-        lines = text.split("\n")
         for category, matched_keywords in violet_categories.items():
             category_label = self._VIOLET_CATEGORY_LABELS.get(category, category)
             article = self._VIOLET_CATEGORY_ARTICLE.get(category, self._DEFAULT_VIOLET_ARTICLE)
+            # Karo-Fund 2026-07-11 (erweiterter Amun-Testbrief): "Diagnose:
+            # depressive Episode" schwaerzte bisher nur das Wort "Diagnose"
+            # — die eigentliche Diagnose dahinter blieb im Klartext. Wenn dem
+            # Schluesselwort direkt ": <Wert>" folgt (Label-Zeile), wird der
+            # Wert bis Zeilenende MIT geschwaerzt, nicht nur das Label-Wort.
             kw_pattern = re.compile(
-                "|".join(re.escape(kw) for kw in set(matched_keywords)), re.IGNORECASE,
+                r"\b(?:" + "|".join(re.escape(kw) for kw in set(matched_keywords)) + r")"
+                r"[\wäöüÄÖÜß-]*(?:[ \t]*:[ \t]*[^\n]{1,80})?",
+                re.IGNORECASE,
             )
-            placeholder_line = (
-                f"[GESCHWAERZT: {category_label} - {article} - "
-                f"Datenkategorie nicht extern verarbeitbar]"
-            )
-            for i, line in enumerate(lines):
-                if kw_pattern.search(line):
-                    lines[i] = placeholder_line
+            placeholder = f"[GESCHWAERZT: {category_label} - {article}]"
+            text = kw_pattern.sub(placeholder, text)
 
-        return "\n".join(lines)
+        return text
 
     def _remove_secrets(self, text: str) -> str:
         """Entfernt Secrets komplett (keine Redaction)"""
@@ -345,14 +518,30 @@ class RedactionEngineV2:
             "name": "Name",
             "name_field": "Name",
             "name_standalone_line": "Name",
+            "name_self_intro": "Name",
+            "name_signature": "Name",
+            "name_context": "Name",
+            "name_field_intl": "Name",
+            "address_field_intl": "Adresse",
             "email": "E-Mail",
             "birthdate": "Geburtsdatum",
             "phone": "Telefon",
             "iban": "IBAN",
+            "bic": "BIC",
             "card": "Kartennummer",
             "address": "Adresse",
             "postal_city": "Ort",
             "reference": "Referenznummer",
+            "official_id": "Ausweisnummer",
+            "credential": "Zugangsdaten",
+            "ip_address": "IP-Adresse",
+            "gps_coords": "Standort",
+            "device_id": "Gerätekennung",
+            "financial_detail": "Finanzangabe",
+            "financial_keyword": "Finanzangabe",
+            "card_cvv": "Kartenprüfnummer",
+            "card_expiry": "Kartengültigkeit",
+            "child_field": "Kinderdaten (Art. 8 DSGVO)",
         }
         return labels.get(pii_type, pii_type.title())
 

@@ -7,10 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="AILIZA">
-<link rel="manifest" href="/manifest.json">
-<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
 <title>AILIZA — Ihr autonomer KI-Assistent</title>
-<script src="/config.js"></script>
 <style>
 :root {
   --bg: #FAFAF7;
@@ -180,8 +179,9 @@ body{
 .dsgvo-bubble.secret .dsgvo-bubble-label{color:#888}
 .dsgvo-bubble.secret .dsgvo-bubble-value{color:#F0C040}
 @keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
-.input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:border-color .15s,box-shadow .15s}
-.input-box:focus-within{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(45,95,63,.06)}
+.input-label{max-width:720px;margin:0 auto 6px;padding:0 2px;font-size:11px;font-weight:600;color:var(--text-soft);letter-spacing:.01em}
+.input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1.5px solid var(--border-strong);border-radius:12px;padding:10px 12px;box-shadow:0 1px 2px rgba(26,24,21,.04);transition:border-color .15s,box-shadow .15s}
+.input-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(45,95,63,.1)}
 .input-row{display:flex;align-items:flex-end;gap:8px}
 .input-field{flex:1;border:none;outline:none;font-family:inherit;font-size:13px;background:transparent;resize:vertical;max-height:200px;line-height:1.5;color:var(--text);user-select:text}
 .input-field::placeholder{color:var(--text-muted)}
@@ -189,7 +189,7 @@ body{
 .input-send:disabled{background:var(--border-strong);cursor:not-allowed}
 .kI-preview-container{margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2)}
 .kI-preview-label{font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:500}
-.kI-preview-field{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px;font-family:inherit;font-size:12px;background:var(--surface-2);color:var(--text-muted);resize:vertical;max-height:200px;line-height:1.5;user-select:text}
+.kI-preview-field{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px;font-family:inherit;font-size:12px;background:var(--surface);color:var(--text-muted);resize:vertical;max-height:200px;line-height:1.5;user-select:text}
 .kI-preview-field::placeholder{color:var(--text-muted);opacity:.7}
 .input-toolbar{display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2);font-size:11px}
 .tool-btn{display:flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid transparent;background:transparent;border-radius:5px;cursor:pointer;font-size:11px;color:var(--text-soft)}
@@ -308,7 +308,7 @@ body{
   .welcome-h{font-size:18px}
   .welcome-chips{gap:5px}
   .chip{font-size:11px;padding:6px 10px}
-  .input-wrap{padding:10px 12px 14px}
+  .input-wrap{padding:10px 12px 14px;position:sticky;bottom:0;z-index:10}
   .privacy-panel{display:none}
   .dsgvo-sidebar{display:none}
   .privacy-panel.expanded{display:block}
@@ -331,6 +331,7 @@ body{
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
+    <button class="btn-ghost" id="topbar-auth-btn" onclick="openLoginModal()" style="font-size:12px;padding:5px 10px">Anmelden</button>
   </div>
 </div>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -361,13 +362,13 @@ body{
       <div class="side-add" onclick="addFolder()">＋ Ordner</div>
     </div>
     <div style="flex:1"></div>
-    <div class="side-footer">AILIZA · EU AI Act Art. 52<br><span style="color:var(--accent)">Limited Risk · DSGVO</span></div>
+    <div class="side-footer">AILIZA · EU AI Act Art. 50<br><span style="color:var(--accent)">Limited Risk · DSGVO</span></div>
   </div>
   <div class="main">
     <div class="view active" id="view-chat">
       <div class="chat-header">
         <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen">☰</button>
-        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 52</div><div class="chat-project" id="active-project-name"></div></div>
+        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 50</div><div class="chat-project" id="active-project-name"></div></div>
         <div class="chat-actions">
           <button class="btn-mini" onclick="clearChat()">🗑 Löschen</button>
           <button class="btn-mini" onclick="exportChat()">⬇ Export</button>
@@ -391,6 +392,7 @@ body{
           <button class="pii-consent-btn" id="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
           <button class="pii-consent-deny" onclick="denyPiiConsent()">Abbrechen</button>
         </div>
+        <div class="input-label">Nachricht an AILIZA</div>
         <div class="input-box">
           <div class="input-row">
             <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);onChatInputChanged()" onpaste="handlePaste(event)"></textarea>
@@ -452,9 +454,9 @@ body{
         <div class="card" style="margin-bottom:12px">
           <div class="card-h">Compliance-Status</div>
           <div style="font-size:12px;color:var(--text-soft);margin-top:8px">
-            <div style="padding:5px 0">✓ DSGVO Art. 5–35 erfüllt</div>
-            <div style="padding:5px 0">✓ EU AI Act Art. 9, 13, 14 erfüllt</div>
-            <div style="padding:5px 0">✓ Art. 52 Transparenz aktiv</div>
+            <div style="padding:5px 0">✓ DSGVO-Schutzmechanismen aktiv</div>
+            <div style="padding:5px 0">✓ Prüfung nach DSGVO Art. 5, 6, 9, 10, 12–22, 25, 30, 32</div>
+            <div style="padding:5px 0">✓ Transparenzhinweis nach EU AI Act Art. 50 aktiv</div>
             <div style="padding:5px 0;color:var(--warn)">⚠ Vollständige Pflichten ab 02.08.2026</div>
           </div>
         </div>
@@ -493,7 +495,7 @@ body{
             <p style="margin-bottom:8px"><strong>Zweck der Verarbeitung:</strong> Ihre Eingaben werden ausschließlich zur Beantwortung Ihrer Anfragen durch das KI-System AILIZA verarbeitet. Personenbezogene Daten werden vor der Übertragung automatisch erkannt und lokal durch Platzhalter ersetzt (Privacy by Design, DSGVO Art. 25). Es werden keine Klartextprompts dauerhaft gespeichert.</p>
             <p style="margin-bottom:8px"><strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. a DSGVO (Einwilligung), erteilt beim ersten Aufruf. Mindestalter: 16 Jahre (Art. 8 DSGVO).</p>
             <p style="margin-bottom:8px"><strong>Lokale Datenspeicherung:</strong> Chat-Verläufe, Projekte und Einstellungen werden ausschließlich lokal in Ihrem Browser (localStorage) gespeichert. Diese Daten verlassen Ihr Gerät nicht, sofern Sie sie nicht aktiv im Chat eingeben. Es werden keine Cookies gesetzt.</p>
-            <p style="margin-bottom:8px"><strong>Empfänger / Drittlandübermittlung:</strong> Zur KI-Verarbeitung können Anfragen an externe Anbieter (z.B. Groq Inc., USA) weitergeleitet werden. Die Übermittlung erfolgt auf Basis von EU-Standardvertragsklauseln gemäß Art. 46 Abs. 2 lit. c DSGVO. Vor jeder Übertragung werden personenbezogene Daten lokal pseudonymisiert.</p>
+            <p style="margin-bottom:8px"><strong>Empfänger / Drittlandübermittlung:</strong> Zur KI-Verarbeitung können Anfragen je nach Verfügbarkeit an externe Anbieter (z.B. Groq Inc., Anthropic PBC — jeweils USA) weitergeleitet werden. Die Übermittlung erfolgt auf Basis von EU-Standardvertragsklauseln gemäß Art. 46 Abs. 2 lit. c DSGVO. Vor jeder Übertragung werden personenbezogene Daten lokal pseudonymisiert.</p>
             <p style="margin-bottom:8px"><strong>Speicherdauer:</strong> Audit-Logs (ohne Inhalte) werden nach 90 Tagen automatisch gelöscht. Chat-Verläufe verbleiben ausschließlich lokal in Ihrem Browser und können jederzeit gelöscht werden.</p>
             <p style="margin-bottom:8px"><strong>Ihre Rechte (Art. 15–22 DSGVO):</strong></p>
             <ul style="margin:0 0 8px 16px;line-height:2">
@@ -506,7 +508,7 @@ body{
               <li>Widerruf der Einwilligung (Art. 7 Abs. 3) — jederzeit über den Button unten</li>
             </ul>
             <p style="margin-bottom:8px"><strong>Beschwerderecht (Art. 77 DSGVO):</strong> Sie haben das Recht, sich bei einer Datenschutz-Aufsichtsbehörde zu beschweren. Zuständig ist der Landesbeauftragte für Datenschutz und Informationsfreiheit Ihres Bundeslandes.</p>
-            <p><strong>KI-Kennzeichnung (EU AI Act Art. 52):</strong> AILIZA ist ein KI-System der Risikoklasse "Limited Risk". Antworten werden automatisch generiert und können Fehler enthalten. Bei wichtigen Entscheidungen ist eine menschliche Prüfung erforderlich.</p>
+            <p><strong>KI-Kennzeichnung (EU AI Act Art. 50):</strong> AILIZA ist ein KI-System der Risikoklasse "Limited Risk". Antworten werden automatisch generiert und können Fehler enthalten. Bei wichtigen Entscheidungen ist eine menschliche Prüfung erforderlich. Beta-Version: keine Rechtsberatung, menschliche Prüfung erforderlich.</p>
           </div>
         </div>
 
@@ -528,7 +530,7 @@ body{
                   <td style="padding:6px 8px;border:1px solid var(--border)">KI-gestützte Beantwortung von Nutzerfragen</td>
                   <td style="padding:6px 8px;border:1px solid var(--border)">Art. 6 Abs. 1a DSGVO (Einwilligung)</td>
                   <td style="padding:6px 8px;border:1px solid var(--border)">Keine personenbezogenen Daten nach Pseudonymisierung</td>
-                  <td style="padding:6px 8px;border:1px solid var(--border)">Groq Inc. (USA, SCC)</td>
+                  <td style="padding:6px 8px;border:1px solid var(--border)">Je nach Verfügbarkeit: Groq Inc. oder Anthropic PBC (jeweils USA, SCC)</td>
                   <td style="padding:6px 8px;border:1px solid var(--border)">Sofort (kein serverseitiges Speichern)</td>
                 </tr>
                 <tr style="background:var(--surface-2)">
@@ -628,8 +630,8 @@ body{
               <li>Die Nutzung durch Personen unter 16 Jahren</li>
             </ul>
 
-            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 4 KI-Transparenz (EU AI Act Art. 52)</p>
-            <p style="margin-bottom:12px">AILIZA ist ein KI-System der Risikoklasse „Limited Risk" gemäß EU AI Act. Alle Antworten werden automatisch durch ein KI-Sprachmodell generiert. Antworten können Fehler, Auslassungen oder Ungenauigkeiten enthalten. Sie sind <strong>nicht</strong> als Rechts-, Steuer- oder Medizinberatung zu verstehen. Bei wichtigen Entscheidungen ist stets eine menschliche Prüfung durch qualifizierte Fachkräfte erforderlich. Der KI-Charakter des Systems wird immer offengelegt (Art. 52 EU AI Act).</p>
+            <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 4 KI-Transparenz (EU AI Act Art. 50)</p>
+            <p style="margin-bottom:12px">AILIZA ist ein KI-System der Risikoklasse „Limited Risk" gemäß EU AI Act. Alle Antworten werden automatisch durch ein KI-Sprachmodell generiert. Antworten können Fehler, Auslassungen oder Ungenauigkeiten enthalten. Sie sind <strong>nicht</strong> als Rechts-, Steuer- oder Medizinberatung zu verstehen. Bei wichtigen Entscheidungen ist stets eine menschliche Prüfung durch qualifizierte Fachkräfte erforderlich. Der KI-Charakter des Systems wird immer offengelegt (Art. 50 EU AI Act). Beta-Version: keine Rechtsberatung, menschliche Prüfung erforderlich.</p>
 
             <p style="font-weight:700;color:var(--text);margin-bottom:4px">§ 5 Haftungsausschluss</p>
             <p style="margin-bottom:12px">Der Anbieter übernimmt keine Haftung für die Richtigkeit, Vollständigkeit oder Aktualität der von AILIZA generierten Inhalte. Die Nutzung erfolgt auf eigenes Risiko. Der Anbieter haftet nicht für Schäden, die durch die Verwendung von AILIZA-Ausgaben entstehen, sofern diese nicht auf grober Fahrlässigkeit oder Vorsatz des Anbieters beruhen. In der Testphase wird keine Verfügbarkeit oder Datenpersistenz garantiert.</p>
@@ -668,9 +670,28 @@ body{
     <div class="modal-acts"><button class="btn-ghost" onclick="closeProjModal()">Abbrechen</button><button class="btn-primary" onclick="saveProject()">Erstellen</button></div>
   </div>
 </div>
+<div class="modal" id="login-modal">
+  <div class="modal-box">
+    <div class="modal-h">Anmelden</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" id="login-modal-hint">
+      Anfragen mit personenbezogenen Daten sind dokumentationspflichtig (DSGVO).
+      Bitte melden Sie sich an, um fortzufahren.
+    </div>
+    <div class="field"><label>Nutzername</label><input id="login-user" type="text" autocomplete="username"></div>
+    <div class="field"><label>Passwort</label><input id="login-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <div id="login-error" style="display:none;color:var(--warn);font-size:12px;margin-bottom:8px"></div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Noch kein Konto? "Registrieren" legt eines an (Passwort: mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl, Sonderzeichen).</div>
+    <div class="modal-acts"><button class="btn-ghost" onclick="closeLoginModal()">Abbrechen</button><button class="btn-ghost" onclick="doRegister()">Registrieren</button><button class="btn-primary" onclick="doLogin()">Anmelden</button></div>
+  </div>
+</div>
 <script>
-// API-URL: aus config.js geladen (window.AILIZA_API), Fallback auf gleichen Host
-const API = window.AILIZA_API || "https://ailiza.onrender.com";
+// API-URL: relativ, Same-Origin (siehe Kommentar bei const API weiter unten)
+// Same-Origin: Frontend und Backend laufen im selben FastAPI-Prozess (main.py
+// liefert index.html selbst aus, siehe app.get("/")). Relative Pfade gehen
+// daher immer an den eigenen Service — keine konfigurierbare Basis-URL mehr
+// noetig (vorher: window.AILIZA_API-Fallback auf eine feste Production-Basis-URL,
+// wodurch z.B. Staging heimlich Production ansprach).
+const API = "";
 
 const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
 const SKILLS=[
@@ -691,11 +712,7 @@ let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
 let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
 let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
 let context=[];
-// ⚠️ DEAKTIVIERT ab Phase 1.3
-// Die alte Frontend-Redaction PRIVACY_RULES ist nicht sicher.
-// Siehe PHASE_1_3_IMPLEMENTATION_PLAN.md
-// Backend /api/policy-redact ist jetzt die einzige Quelle der Wahrheit.
-console.warn("⚠️ Frontend PRIVACY_RULES deaktiviert (Phase 1.3). Nutze Backend /api/policy-redact");
+// Backend /api/policy-redact ist die einzige Quelle der Wahrheit fuer Redaction.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Phase 1.3: Backend-Integration mit PolicyEngine
@@ -906,10 +923,32 @@ function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
   document.getElementById("m-days").textContent=days;
-  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderPrivacyMemory();checkStatus();
+  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderPrivacyMemory();checkStatus();refreshAuthButton();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
+}
+// ── Immer sichtbarer Anmelde-Status oben rechts (Karo-Wunsch 2026-07-12):
+// nicht nur reaktiv im Chat, sondern jederzeit erreichbar. Nutzt den
+// bestehenden Cookie-Flow (/auth/me liest ailiza_session).
+async function refreshAuthButton(){
+  const btn=document.getElementById("topbar-auth-btn");
+  if(!btn)return;
+  try{
+    const r=await fetch(`${API}/auth/me`,{signal:AbortSignal.timeout(4000)});
+    if(r.ok){
+      const me=await r.json();
+      btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
+      btn.onclick=doLogout;
+      return;
+    }
+  }catch(e){/* Netzwerkfehler: Button bleibt auf "Anmelden" */}
+  btn.textContent="Anmelden";
+  btn.onclick=openLoginModal;
+}
+async function doLogout(){
+  try{await fetch(`${API}/auth/logout`,{method:"POST"});}catch(e){}
+  refreshAuthButton();
 }
 function showView(name,el){
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
@@ -932,12 +971,8 @@ function saveKey(){const p=document.getElementById("provider-sel").value;const k
 function toggleTool(n){tools[n]=!tools[n];localStorage.setItem("ailiza_tools",JSON.stringify(tools));renderTools()}
 function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
 function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
-// Hotfix 2026-07: Das alte, browser-eigene PRIVACY_RULES-Erkennungssystem
-// wurde in Phase 1.3 abgeschafft (unsicher, eigene abweichende Regeln) —
-// aber der Code, der es benutzte, wurde nicht mit entfernt und stuerzte bei
-// jedem Tastendruck ab (PRIVACY_RULES war nicht mehr definiert), was auch
-// das eigentliche Senden blockierte. Ersetzt durch: EIN System (Server),
-// per Vorschau-Button abgerufen — siehe previewRedaction() unten.
+// Redaction-Erkennung: EIN System (Server), per Vorschau-Button abgerufen —
+// siehe previewRedaction() unten.
 let _lastPreview=null;   // {inputText, policyResult} — Cache fuer Senden ohne Doppel-Call
 let _previewStale=true;  // true = Text hat sich seit letzter Vorschau geaendert
 
@@ -1113,7 +1148,8 @@ function renderMsg(m,idx){
   if(m.role==="user")return`<div class="msg user"><div class="bubble user"><span class="bubble-text">${text}</span></div><div class="msg-actions user-actions"><button class="msg-act" onclick="editUserMsg(${i})" title="Bearbeiten">✏️</button><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div></div>`;
   const time=m.time?new Date(m.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):"";
   const draftBanner=m.draft?`<div class="draft-banner">📋 Entwurf erstellt · Menschliche Prüfung erforderlich · Dokumentiert</div>`:"";
-  return`<div class="msg ai">${draftBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 52</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
+  const testModeBanner=m.testMode?`<div class="draft-banner">⚠️ Testmodus / nicht produktiv. Beantwortet von: ${escapeHtml(m.testMode.provider||"unbekannt")} / ${escapeHtml(m.testMode.model||"unbekannt")}</div>`:"";
+  return`<div class="msg ai">${draftBanner}${testModeBanner}<div class="bubble ai">${text}</div><div class="msg-actions ai-actions"><button class="msg-act" data-copy="${i}" onclick="copyText(${i})" title="Kopieren">📋</button></div><div class="msg-tags"><span class="msg-tag tag-ai">KI · EU AI Act Art. 50</span>${m.warn?`<span class="msg-tag tag-warn">⚠ ${m.warn}</span>`:""}</div><div class="msg-meta">AILIZA · ${time}</div></div>`;
 }
 function flyOutPiiBubbles(){
   // PII-Blasen aus dem Panel nach rechts rausflöiegen lassen → bleiben als 🔒 Mini-Blase
@@ -1178,37 +1214,20 @@ let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // Vorschau wiederverwenden wenn vorhanden, aktuell und derselbe Text
-  // (Server entlasten — kein doppelter Aufruf). Sonst frisch pruefen:
-  // Senden funktioniert auch OHNE vorherigen Klick auf 🔍 (Fail-closed
-  // bleibt immer aktiv, Vorschau ist reiner Komfort/Transparenz-Schritt).
-  let policyResult;
-  if(_lastPreview&&!_previewStale&&_lastPreview.inputText===text){
-    policyResult=_lastPreview.policyResult;
-  }else{
-    policyResult=await redactWithBackend(text);
-  }
+  // B2 (Betreiber-Freigabe 2026-07-11): Der frühere client-seitige
+  // Vorab-Check (redactWithBackend + native Browser-Dialoge) wurde
+  // entfernt — er lief VOR und unabhängig von der eigentlichen Governance-
+  // Pipeline in /agent/run und erzeugte damit ein zweites, inkonsistentes
+  // Gate mit haesslichen Popups (kein Frust-Ziel der Betreiberin).
+  // /agent/run (aufgerufen ueber runAgent() in _doSend) ist jetzt die
+  // EINZIGE Quelle der Wahrheit fuer Schwärzung, Login-Gate (Fall 2) und
+  // Einwilligungs-Gate (Fall 3). Die 🔍-Vorschau (previewRedaction) bleibt
+  // als rein optionaler, nicht-blockierender Info-Schritt bestehen.
   _lastPreview=null;_previewStale=true;
-  // Sicherheitsprüfung vom Backend
-  if(policyResult.decision==="security_block"||policyResult.decision==="technical_block"){
-    alert(policyResult.user_message_de);
-    inp.value="";autoResize(inp);
-    return;
-  }
-  // Wenn menschliche Prüfung erforderlich (requires_human_review)
-  if(policyResult.decision==="requires_human_review"){
-    const ok=confirm(policyResult.user_message_de+"\n\nTrotzdem fortfahren?");
-    if(!ok){inp.value="";autoResize(inp);return;}
-  }
-  // safe_output oder safe_output_with_redactions — weitermachen mit Backend-Schwärzung
-  const safeText=policyResult.safe_text;
   document.getElementById("kI-input-preview").value="";
   const label=document.getElementById("kI-preview-label");
   if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
-  await _doSend(safeText,{});
-  if(policyResult.admin_only){
-    showAdminPanel(policyResult.admin_only);
-  }
+  await _doSend(text,{});
 }
 async function approvePiiConsent(){
   localStorage.setItem("ailiza_pii_consent","1");
@@ -1241,13 +1260,40 @@ async function _doSend(sendText,map){
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
 }
-async function runAgent(text,redactionMap){
+// Merkt sich die letzte Anfrage, die an einem Login-/Einwilligungs-Gate
+// gestoppt wurde, damit sie nach Login bzw. Bestätigung erneut gesendet
+// werden kann. Nur im RAM — wird nie gespeichert.
+let gatedTask=null;
+let gatedConsentApprovalId=null;
+
+async function runAgent(text,redactionMap,consentApprovalId){
   // Phase 1.3: History wird bereits durch Backend geschwärzt
   const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
-  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify({task:text,history})});
+  const body={task:text,history};
+  if(consentApprovalId)body.consent_approval_id=consentApprovalId;
+  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify(body)});
   hideTyping();
   if(!r.ok){activeRedactionMap={};renderPrivacyMemory();addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
   const data=await r.json();
+  // B2: Drei-Stufen-Modell — Login-Gate (Dokumentationspflicht) und
+  // Einwilligungs-Gate (auch nach Schwärzung nicht konform). Kein Hartblock.
+  if(data.status==="login_required"){
+    activeRedactionMap={};renderPrivacyMemory();
+    gatedTask=text;gatedConsentApprovalId=null;
+    addAiMessage(data.message||"Bitte einloggen.",undefined);
+    appendActionRow([{label:"Jetzt anmelden",primary:true,handler:openLoginModal}]);
+    return;
+  }
+  if(data.status==="consent_required"){
+    activeRedactionMap={};renderPrivacyMemory();
+    gatedTask=text;gatedConsentApprovalId=data.approval_id||null;
+    addAiMessage(data.message||"Bestätigung erforderlich.",undefined);
+    appendActionRow([
+      {label:"Trotzdem senden (wird dokumentiert)",primary:true,handler:consentResend},
+      {label:"Abbrechen",primary:false,handler:()=>{gatedTask=null;gatedConsentApprovalId=null;}}
+    ]);
+    return;
+  }
   let answer=data.ai_response||"";
   if(data.message&&data.message!=="Agent run completed")answer=data.message;
   if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
@@ -1263,11 +1309,12 @@ async function runAgent(text,redactionMap){
   }
   const isDraft=data.status==="draft"||data.draft===true;
   const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
-  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined);
+  const testModeInfo=data.test_mode?{provider:data.provider,model:data.model}:undefined;
+  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined,testModeInfo);
 }
-function addAiMessage(text,warn,draftHint){
+function addAiMessage(text,warn,draftHint,testModeInfo){
   const msg={role:"ai",content:text,time:new Date().toISOString()};
-  if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;
+  if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;if(testModeInfo)msg.testMode=testModeInfo;
   chatHistory.push(msg);
   persistActiveChat();
   saveCurrentChat();
@@ -1279,6 +1326,82 @@ function addAiMessage(text,warn,draftHint){
   if(last){streamAiBubble(last,text);}
   renderPrivacyMemory();scrollToBottom();
 }
+// ── B2: Aktions-Buttons unter einer AI-Nachricht (nicht persistiert — nach
+// einem Neu-Rendern der History verschwinden sie bewusst) ────────────────────
+function appendActionRow(buttons){
+  const inner=document.getElementById("chat-inner");
+  const row=document.createElement("div");
+  row.className="msg ai";
+  row.style.cssText="display:flex;gap:8px;margin:4px 0 12px 0";
+  for(const b of buttons){
+    const btn=document.createElement("button");
+    btn.className=b.primary?"btn-primary":"btn-ghost";
+    btn.textContent=b.label;
+    btn.addEventListener("click",()=>{row.remove();b.handler();});
+    row.appendChild(btn);
+  }
+  inner.appendChild(row);
+  scrollToBottom();
+}
+
+// ── B2 Fall 3: Einwilligung bestätigen und erneut senden ─────────────────────
+async function consentResend(){
+  if(!gatedTask||!gatedConsentApprovalId)return;
+  const r=await fetch(`${API}/approvals/${gatedConsentApprovalId}/approve`,{
+    method:"POST",headers:authHeaders(),
+    body:JSON.stringify({note:"Nutzer-Einwilligung im Chat bestätigt"})
+  });
+  if(r.status===401){openLoginModal();return;}
+  if(!r.ok&&r.status!==409){addAiMessage("Bestätigung fehlgeschlagen.","HTTP "+r.status);return;}
+  const task=gatedTask,aid=gatedConsentApprovalId;
+  gatedTask=null;gatedConsentApprovalId=null;
+  showTyping();
+  try{await runAgent(task,null,aid);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+}
+
+// ── B2: Minimales Login (Cookie-Flow, /auth/login setzt HttpOnly-Cookie) ─────
+function openLoginModal(){document.getElementById("login-error").style.display="none";document.getElementById("login-modal").classList.add("open");document.getElementById("login-user").focus();}
+function closeLoginModal(){document.getElementById("login-modal").classList.remove("open");}
+async function doLogin(){
+  const u=document.getElementById("login-user").value.trim();
+  const p=document.getElementById("login-pass").value;
+  const err=document.getElementById("login-error");
+  if(!u||!p){err.textContent="Bitte Nutzername und Passwort eingeben.";err.style.display="block";return;}
+  let r;
+  try{
+    r=await fetch(`${API}/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:u,password:p})});
+  }catch(e){err.textContent="Backend nicht erreichbar.";err.style.display="block";return;}
+  if(!r.ok){err.textContent="Anmeldung fehlgeschlagen. Bitte Zugangsdaten prüfen.";err.style.display="block";return;}
+  const d=await r.json();
+  if(d.totp_required){err.textContent="Dieses Konto erfordert TOTP — bitte über die Admin-Oberfläche anmelden.";err.style.display="block";return;}
+  document.getElementById("login-pass").value="";
+  closeLoginModal();
+  refreshAuthButton();
+  addAiMessage(`Angemeldet als ${u}. `+(gatedTask?"Ihre Anfrage wird erneut gesendet.":""),undefined);
+  if(gatedTask){
+    const task=gatedTask;gatedTask=null;gatedConsentApprovalId=null;
+    showTyping();
+    try{await runAgent(task,null);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+  }
+}
+
+// ── B2: Selbst-Registrierung (Rolle immer 'user', /auth/self-register) ───────
+async function doRegister(){
+  const u=document.getElementById("login-user").value.trim();
+  const p=document.getElementById("login-pass").value;
+  const err=document.getElementById("login-error");
+  if(!u||!p){err.textContent="Bitte Nutzername und Passwort eingeben.";err.style.display="block";return;}
+  let r;
+  try{
+    r=await fetch(`${API}/auth/self-register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:u,password:p})});
+  }catch(e){err.textContent="Backend nicht erreichbar.";err.style.display="block";return;}
+  if(r.status===409){err.textContent="Nutzername bereits vergeben.";err.style.display="block";return;}
+  if(r.status===422){err.textContent="Passwort erfüllt die Richtlinie nicht: mind. 12 Zeichen, Groß- und Kleinbuchstabe, Zahl, Sonderzeichen.";err.style.display="block";return;}
+  if(!r.ok){err.textContent="Registrierung fehlgeschlagen.";err.style.display="block";return;}
+  // Konto angelegt → direkt anmelden (setzt HttpOnly-Cookie)
+  await doLogin();
+}
+
 function handleKey(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}
 function handlePaste(e){
   e.preventDefault();
@@ -1298,7 +1421,7 @@ function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();i
 function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}</div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
-async function checkStatus(){const b=document.getElementById("conn-status");try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(3000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
+async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 

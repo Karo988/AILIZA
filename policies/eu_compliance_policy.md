@@ -12,9 +12,9 @@
 AILIZA ist als **Limited Risk AI System** klassifiziert:
 - Interagiert mit natürlichen Personen
 - Keine autonomen Entscheidungen mit rechtlichen Folgen
-- Transparenzpflicht nach Art. 52
+- Transparenzpflicht nach Art. 50
 
-### Transparenzpflichten (Art. 52)
+### Transparenzpflichten (Art. 50)
 - ✅ User wird beim Start informiert, dass er mit KI interagiert
 - ✅ System identifiziert sich als KI-System
 - ✅ Version und Betreiber werden offengelegt
