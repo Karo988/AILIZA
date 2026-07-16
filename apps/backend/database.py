@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
+from sqlalchemy import Column, DateTime, Float, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
@@ -285,6 +285,51 @@ skills = Table(
     Column("approved_at", DateTime(timezone=True), nullable=True),
     Column("approved_by", String(64), nullable=True),
     Column("rejection_reason", String(512), nullable=True),
+)
+
+
+# ── Serverseitige Speicherung: Projekte + Chats (Teilschritt 1) ──────────────
+# Karo-Wunsch 2026-07-16: Projekte/Chats sollen an das Nutzerkonto gebunden
+# und geraeteuebergreifend (Handy <-> Laptop) verfuegbar sein, statt nur im
+# Browser-localStorage. Strikte Mandanten- UND Nutzertrennung: jede Query
+# filtert IMMER nach tenant_id UND user_id. Keine Secrets/Rohdaten hier -
+# Chatnachrichten werden bereits geschwaerzt/pseudonymisiert gespeichert.
+# retention_until ist vorbereitet, aber es gibt (bewusst) noch KEINE
+# automatische Loeschung (Betreiber-Entscheidung 2026-07-16).
+user_projects = Table(
+    "user_projects",
+    metadata_obj,
+    # Zusammengesetzter Primary Key: jeder (tenant_id, user_id) hat seinen
+    # eigenen id-Namensraum -> vollstaendige Isolation, kein Hijack ueber
+    # eine kollidierende id (Karo-Fund im Teilschritt-1-Test).
+    Column("id", String(64), primary_key=True),
+    Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
+    Column("user_id", String(64), primary_key=True, nullable=False),
+    Column("name", String(256), nullable=False),
+    Column("description", Text, nullable=True),
+    Column("priority", String(32), nullable=True),
+    Column("chat_id", String(64), nullable=True),
+    Column("files", JSON, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("retention_until", DateTime(timezone=True), nullable=True),
+    Index("ix_user_projects_tenant_user", "tenant_id", "user_id"),
+)
+
+user_chats = Table(
+    "user_chats",
+    metadata_obj,
+    Column("id", String(64), primary_key=True),
+    Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
+    Column("user_id", String(64), primary_key=True, nullable=False),
+    Column("project_id", String(64), nullable=True),  # None = projektloser Chat
+    Column("title", String(256), nullable=True),
+    Column("messages", JSON, nullable=False, default=list),
+    Column("message_count", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("retention_until", DateTime(timezone=True), nullable=True),
+    Index("ix_user_chats_tenant_user", "tenant_id", "user_id"),
 )
 
 
@@ -926,3 +971,135 @@ try:
 except Exception:
     logger.exception("Database initialization failed")
     raise
+
+
+# ── Helper: Serverseitige Projekt-/Chat-Speicherung (Teilschritt 1) ──────────
+# GRUNDREGEL: Jede Funktion filtert IMMER nach tenant_id UND user_id. Es gibt
+# keinen Weg, ueber diese Helper an fremde Datensaetze zu gelangen.
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
+                      name: str, description: str | None = None,
+                      priority: str | None = None, chat_id: str | None = None,
+                      files: list | None = None) -> dict[str, Any]:
+    """Upsert eines Projekts. Ueberschreibt NUR den eigenen Datensatz
+    (gleiche id + tenant_id + user_id)."""
+    now = _now_utc()
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(user_projects.c.id, user_projects.c.created_at)
+            .where(user_projects.c.id == project_id)
+            .where(user_projects.c.tenant_id == tenant_id)
+            .where(user_projects.c.user_id == user_id)
+        ).first()
+        values = dict(name=name, description=description, priority=priority,
+                      chat_id=chat_id, files=files, updated_at=now,
+                      tenant_id=tenant_id, user_id=user_id)
+        if existing:
+            conn.execute(
+                update(user_projects)
+                .where(user_projects.c.id == project_id)
+                .where(user_projects.c.tenant_id == tenant_id)
+                .where(user_projects.c.user_id == user_id)
+                .values(**values)
+            )
+            created_at = existing[1]
+        else:
+            created_at = now
+            conn.execute(insert(user_projects).values(
+                id=project_id, created_at=created_at, retention_until=None, **values))
+    return {"id": project_id, "created_at": created_at, "updated_at": now}
+
+
+def list_user_projects(tenant_id: str, user_id: str) -> list[dict[str, Any]]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(user_projects)
+            .where(user_projects.c.tenant_id == tenant_id)
+            .where(user_projects.c.user_id == user_id)
+            .order_by(user_projects.c.updated_at.desc())
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def delete_user_project(project_id: str, tenant_id: str, user_id: str) -> int:
+    with engine.begin() as conn:
+        result = conn.execute(
+            delete(user_projects)
+            .where(user_projects.c.id == project_id)
+            .where(user_projects.c.tenant_id == tenant_id)
+            .where(user_projects.c.user_id == user_id)
+        )
+    return result.rowcount
+
+
+def save_user_chat(chat_id: str, tenant_id: str, user_id: str, *,
+                   messages: list, project_id: str | None = None,
+                   title: str | None = None) -> dict[str, Any]:
+    """Upsert eines Chats. Ueberschreibt NUR den eigenen Datensatz."""
+    now = _now_utc()
+    msgs = messages if isinstance(messages, list) else []
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(user_chats.c.id, user_chats.c.created_at)
+            .where(user_chats.c.id == chat_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        ).first()
+        values = dict(project_id=project_id, title=title, messages=msgs,
+                      message_count=len(msgs), updated_at=now,
+                      tenant_id=tenant_id, user_id=user_id)
+        if existing:
+            conn.execute(
+                update(user_chats)
+                .where(user_chats.c.id == chat_id)
+                .where(user_chats.c.tenant_id == tenant_id)
+                .where(user_chats.c.user_id == user_id)
+                .values(**values)
+            )
+            created_at = existing[1]
+        else:
+            created_at = now
+            conn.execute(insert(user_chats).values(
+                id=chat_id, created_at=created_at, retention_until=None, **values))
+    return {"id": chat_id, "created_at": created_at, "updated_at": now,
+            "message_count": len(msgs)}
+
+
+def list_user_chats(tenant_id: str, user_id: str,
+                    project_id: str | None = None) -> list[dict[str, Any]]:
+    with engine.begin() as conn:
+        query = (
+            select(user_chats)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        )
+        if project_id is not None:
+            query = query.where(user_chats.c.project_id == project_id)
+        rows = conn.execute(query.order_by(user_chats.c.updated_at.desc())).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def get_user_chat(chat_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(user_chats)
+            .where(user_chats.c.id == chat_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def delete_user_chat(chat_id: str, tenant_id: str, user_id: str) -> int:
+    with engine.begin() as conn:
+        result = conn.execute(
+            delete(user_chats)
+            .where(user_chats.c.id == chat_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        )
+    return result.rowcount
