@@ -988,3 +988,67 @@ class TestCredentialPathAndBalanceRedaction:
         assert "health_records" not in result
         assert "admin_root" not in result
         assert "geheim123" not in result
+
+
+# ── Karo-Fund 2026-07-16: BaFin-/Riga-Kontrollbriefe (mehrsprachig) ──────────
+class TestBaFinRigaControlBriefRedaction:
+    """
+    Zwei neue Kontrollbriefe deckten weitere Luecken auf: englische
+    Zugangs-Labels (Password/Login), Chemotherapie, freistehende Konto-
+    staende/Beitraege, Zoll-ID, Steuer-Straftatverdacht (Art. 10), und
+    fehlender BLACK-Trigger bei englischem "automated"/"risk". Alle als
+    gezielte Inline-Schwaerzung (keine Pauschal-Blockade).
+    """
+
+    def _redact(self, text: str):
+        from apps.backend.governance.redaction_v2 import RedactionEngineV2
+        return RedactionEngineV2().redact(text)
+
+    def test_english_password_label_redacted(self):
+        r = self._redact("Password: Qwerty_2026_Secure!")
+        assert "Qwerty_2026_Secure" not in r.redacted_text
+        assert "[Zugangsdaten]" in r.redacted_text
+
+    def test_english_login_label_redacted(self):
+        r = self._redact("Login: root_admin_latvia")
+        assert "root_admin_latvia" not in r.redacted_text
+        assert "[Zugangsdaten]" in r.redacted_text
+
+    def test_chemotherapie_is_health_art9(self):
+        r = self._redact("Versicherungsstatus: Chemotherapie-Plan Q3/Q4 hinterlegt.")
+        assert "Chemotherapie" not in r.redacted_text
+        assert "Gesundheit - Art. 9" in r.redacted_text
+
+    def test_standalone_yearly_fee_redacted(self):
+        r = self._redact("Jahresbeitrag: 14.500,00 EUR")
+        assert "14.500,00" not in r.redacted_text
+        assert "[Finanzangabe]" in r.redacted_text
+
+    def test_latvian_balance_label_redacted(self):
+        r = self._redact("Atlikums (Kontostand): 55.400,00 EUR")
+        assert "55.400,00" not in r.redacted_text
+        assert "[Finanzangabe]" in r.redacted_text
+
+    def test_zoll_id_redacted(self):
+        r = self._redact("Zoll-ID: LV-10029384756")
+        assert "LV-10029384756" not in r.redacted_text
+
+    def test_tax_fraud_suspicion_is_art10(self):
+        r = self._redact("Betriebsprüfung: Verdacht auf unberechtigten Vorsteuerabzug.")
+        assert "Art. 10" in r.redacted_text
+
+    def test_neutral_tax_topic_not_flagged_as_art10(self):
+        # Regression: harmlose Steuerfrage darf NICHT als Art.-10-Straftat gelten.
+        r = self._redact("Wie funktioniert der Vorsteuerabzug allgemein?")
+        assert "Art. 10" not in r.redacted_text
+
+    def test_english_automated_risk_triggers_black(self):
+        r = self._redact(
+            "Please prepare automated reporting for these High-Risk profiles."
+        )
+        assert r.level.value == "black"
+
+    def test_versicherungsnehmer_name_redacted(self):
+        r = self._redact("Versicherungsnehmer: Thomas Müller-Lüdenscheid")
+        assert "Müller-Lüdenscheid" not in r.redacted_text
+        assert "[Name]" in r.redacted_text
