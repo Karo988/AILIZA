@@ -46,17 +46,45 @@ def test_all_normal_pii_labels_are_explained_to_the_llm():
     assert not missing, f"System-Prompt kennt diese echten Redaction-Labels nicht: {missing}"
 
 
-def test_all_violet_categories_are_explained_to_the_llm():
-    engine = RedactionEngineV2()
+def test_violet_categories_covered_by_generalized_pattern_rule():
+    # Robuster als eine feste Aufzaehlung aller 9 Kategorien: der Prompt muss
+    # eine VERALLGEMEINERTE Regel enthalten, die JEDEN
+    # "[GESCHWAERZT: <Kategorie> - Art. 9/10 DSGVO]"-Platzhalter abdeckt --
+    # auch neue Kategorien, die spaeter in redaction_v2.py hinzukommen, ohne
+    # dass jemand den Prompt manuell nachziehen muss. Zusaetzlich pruefen wir
+    # exemplarisch, dass mindestens je ein Art.-9- und ein Art.-10-Beispiel
+    # konkret genannt ist (Lesbarkeit/Klarheit fuers Modell).
     prompt = _extract_system_prompt()
-    missing = [cat for cat in engine._VIOLET_CATEGORY_LABELS.values() if cat not in prompt]
-    assert not missing, f"System-Prompt kennt diese Art.-9/10-Kategorien nicht: {missing}"
+    assert "beliebige Kategorie" in prompt, (
+        "Verallgemeinerte Muster-Regel fuer GESCHWAERZT-Platzhalter fehlt -- "
+        "ohne sie kann eine kuenftig neu hinzugefuegte Art.-9/10-Kategorie in "
+        "redaction_v2.py erneut zu einer LLM-Verweigerung fuehren."
+    )
+    assert "Art. 9 DSGVO" in prompt and "Art. 10 DSGVO" in prompt
+    assert "GESCHWAERZT: Gesundheit - Art. 9 DSGVO" in prompt  # konkretes Art.-9-Beispiel
+    assert "GESCHWAERZT: Strafrechtliche Informationen - Art. 10 DSGVO" in prompt  # Art.-10-Beispiel
+    # Alle tatsaechlichen VIOLET-Kategorien muessen zumindest in der
+    # erlaeuternden Aufzaehlung ("z.B. Religion, Politik, ...") vorkommen,
+    # damit das Modell weiss, WELCHE Art von Kategorien gemeint sind.
+    engine = RedactionEngineV2()
+    prose_hints = {
+        "Religion/Weltanschauung": "Religion",
+        "Politische Meinung": "Politik",
+        "Herkunft": "Herkunft",
+        "Biometrische Daten": "Biometrie",
+        "Genetische Daten": "Genetik",
+        "Gewerkschaftsbezug": "Gewerkschaftsbezug",
+        "Sexualdaten/Familienstand": "Sexualdaten",
+    }
+    missing = [full for full, hint in prose_hints.items()
+               if full in engine._VIOLET_CATEGORY_LABELS.values() and hint not in prompt]
+    assert not missing, f"Kategorien fehlen auch als Beispiel-Hinweis im Prompt: {missing}"
 
 
 def test_prompt_explicitly_forbids_refusal_due_to_placeholder_category_names():
     prompt = _extract_system_prompt()
-    assert "KEINE echten Daten" in prompt or "keine echten Daten" in prompt.lower()
-    assert "NICHT ab" in prompt  # "Lehne die Aufgabe deswegen NICHT ab"
+    assert "keine echten" in prompt.lower() and "daten" in prompt.lower()
+    assert "VERWEIGERE DIE AUFGABE NIEMALS" in prompt
 
 
 def test_stale_fantasy_placeholders_are_gone():
