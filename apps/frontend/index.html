@@ -180,6 +180,10 @@ body{
 .dsgvo-bubble.secret .dsgvo-bubble-value{color:#F0C040}
 @keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
 .input-label{max-width:720px;margin:0 auto 6px;padding:0 2px;font-size:11px;font-weight:600;color:var(--text-soft);letter-spacing:.01em}
+.long-chat-hint{max-width:720px;margin:0 auto 8px;padding:8px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--text-soft)}
+.long-chat-hint span{flex:1;min-width:140px}
+.long-chat-hint button{font-size:12px;font-weight:600;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:8px;padding:4px 10px;cursor:pointer}
+.long-chat-hint .long-chat-hint-x{border:none;color:var(--text-muted);padding:4px 6px}
 .input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1.5px solid var(--border-strong);border-radius:12px;padding:10px 12px;box-shadow:0 1px 2px rgba(26,24,21,.04);transition:border-color .15s,box-shadow .15s}
 .input-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(45,95,63,.1)}
 .input-row{display:flex;align-items:flex-end;gap:8px}
@@ -392,6 +396,11 @@ body{
           <div class="pii-consent-text">🔒 <strong>Sensible Daten erkannt.</strong> Vor dem Senden werden Name, Adresse, Telefon usw. automatisch durch Platzhalter ersetzt. Die KI sieht keine echten Daten. <span id="pii-consent-ts" style="color:var(--text-muted);font-size:10px"></span></div>
           <button class="pii-consent-btn" id="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
           <button class="pii-consent-deny" onclick="denyPiiConsent()">Abbrechen</button>
+        </div>
+        <div class="long-chat-hint" id="long-chat-hint" style="display:none">
+          <span>💬 Dieser Chat wird lang — ein Folge-Chat bleibt übersichtlicher.</span>
+          <button type="button" onclick="startFollowUpChat()">📌 Folge-Chat starten</button>
+          <button type="button" class="long-chat-hint-x" onclick="dismissLongChatHint()" title="Ausblenden">✕</button>
         </div>
         <div class="input-label">Nachricht an AILIZA</div>
         <div class="input-box">
@@ -1432,6 +1441,64 @@ function renderChat(){
   // Alle AI-Blasen sofort öffnen (History, kein Streaming)
   inner.querySelectorAll(".bubble.ai").forEach(b=>b.classList.add("open"));
   scrollToBottom();
+  updateLongChatHint();
+}
+// ── TS3c: Folge-Chat-Vorschlag bei langen Chats + governance-gepruefte
+//    Kurz-Zusammenfassung. Nicht-blockierend, nur auf Klick. Alter Chat bleibt
+//    vollstaendig. Die Zusammenfassung laeuft ueber /agent/run -> volle
+//    Governance-Pipeline (Schwaerzung); echte Werte setzt der Server im RAM
+//    wieder ein (main.py reinsert), nie geloggt.
+const LONG_CHAT_THRESHOLD=100;
+let _followUpInFlight=false;
+function updateLongChatHint(){
+  const el=document.getElementById("long-chat-hint");if(!el)return;
+  const dismissed=currentChatId&&localStorage.getItem("ailiza_longhint_dismissed_"+currentChatId)==="1";
+  el.style.display=(chatHistory.length>=LONG_CHAT_THRESHOLD&&!dismissed&&!_followUpInFlight)?"flex":"none";
+}
+function dismissLongChatHint(){
+  if(currentChatId)localStorage.setItem("ailiza_longhint_dismissed_"+currentChatId,"1");
+  updateLongChatHint();
+}
+async function startFollowUpChat(){
+  if(_followUpInFlight)return;
+  _followUpInFlight=true;
+  updateLongChatHint();
+  const sourceProject=getActiveProject();               // ggf. Projekt-Kontext merken
+  const projectNote=sourceProject?` (Fortsetzung aus Projekt: ${sourceProject.name})`:"";
+  // Verlauf als Text fuer die Zusammenfassung (letzte 100 Nachrichten)
+  const verlauf=chatHistory.slice(-100).map(m=>`${m.role==="user"?"Nutzer":"AILIZA"}: ${m.content||""}`).join("\n");
+  const task=`Fasse den folgenden Chatverlauf in 3-5 Saetzen als kurze Erinnerung fuer die Fortsetzung zusammen. Nenne Ziel, offene Punkte und wichtige Fakten. Verlauf:\n\n${verlauf}`;
+  showTyping();
+  let summary="";
+  try{
+    const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),
+      body:JSON.stringify({task,history:[]})});
+    if(r.ok){const d=await r.json();
+      if(d.status!=="login_required"&&d.status!=="consent_required")summary=(d.ai_response||"").trim();}
+  }catch(e){/* Fallback unten */}
+  hideTyping();
+  // Fallback (kein Frust): Mini-Notiz, falls Zusammenfassung nicht klappt/geblockt
+  if(!summary){
+    const heute=new Date().toLocaleDateString("de-DE");
+    summary=`Fortsetzung eines vorherigen Chats vom ${heute}.`+projectNote;
+  }else{
+    summary=`📌 Erinnerung an den bisherigen Chat${projectNote}:\n\n${summary}`;
+  }
+  // Alten Chat sichern (bleibt vollstaendig erhalten), dann neuen Chat anlegen
+  saveCurrentChat();
+  currentChatId=createChatId();
+  setActiveProject(null);                                // neuer Folge-Chat ist ein freier Chat
+  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  chatHistory=[{role:"ai",content:summary,time:new Date().toISOString()}];
+  context=[{role:"assistant",content:summary}];
+  persistActiveChat();
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  renderChat();renderPrivacyMemory();
+  saveCurrentChat();                                     // Folge-Chat in Liste + Server
+  _followUpInFlight=false;
+  updateLongChatHint();
+  document.getElementById("chat-input").focus();
 }
 function renderMsg(m,idx){
   const text=(m.content||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
@@ -1772,7 +1839,7 @@ function addAiMessage(text,warn,draftHint,testModeInfo){
   const bubbles=inner.querySelectorAll(".bubble.ai");
   const last=bubbles[bubbles.length-1];
   if(last){streamAiBubble(last,text);}
-  renderPrivacyMemory();scrollToBottom();
+  renderPrivacyMemory();scrollToBottom();updateLongChatHint();
 }
 // ── B2: Aktions-Buttons unter einer AI-Nachricht (nicht persistiert — nach
 // einem Neu-Rendern der History verschwinden sie bewusst) ────────────────────
