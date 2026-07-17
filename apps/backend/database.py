@@ -313,6 +313,7 @@ user_projects = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("retention_until", DateTime(timezone=True), nullable=True),
+    Column("version", Integer, nullable=False, default=1),
     Index("ix_user_projects_tenant_user", "tenant_id", "user_id"),
 )
 
@@ -329,6 +330,7 @@ user_chats = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("retention_until", DateTime(timezone=True), nullable=True),
+    Column("version", Integer, nullable=False, default=1),
     Index("ix_user_chats_tenant_user", "tenant_id", "user_id"),
 )
 
@@ -361,6 +363,9 @@ def ensure_sqlite_schema() -> None:
         # Account-Lockout-Felder fuer bestehende users-Tabellen
         _add_column_if_missing(connection, "users", "failed_login_attempts", "INTEGER DEFAULT 0")
         _add_column_if_missing(connection, "users", "locked_until", "DATETIME")
+        # Version-Spalte fuer serverseitige Speicherung (Optimistic Locking)
+        _add_column_if_missing(connection, "user_projects", "version", "INTEGER DEFAULT 1")
+        _add_column_if_missing(connection, "user_chats", "version", "INTEGER DEFAULT 1")
         # TOTP-Felder (Tabellen werden durch metadata_obj.create_all angelegt)
 
 
@@ -984,7 +989,8 @@ def _now_utc() -> datetime:
 def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
                       name: str, description: str | None = None,
                       priority: str | None = None, chat_id: str | None = None,
-                      files: list | None = None) -> dict[str, Any]:
+                      files: list | None = None,
+                      expected_version: int | None = None) -> dict[str, Any]:
     """Upsert eines Projekts. Ueberschreibt NUR den eigenen Datensatz
     (gleiche id + tenant_id + user_id)."""
     now = _now_utc()
@@ -999,19 +1005,31 @@ def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
                       chat_id=chat_id, files=files, updated_at=now,
                       tenant_id=tenant_id, user_id=user_id)
         if existing:
+            current_version = conn.execute(
+                select(user_projects.c.version)
+                .where(user_projects.c.id == project_id)
+                .where(user_projects.c.tenant_id == tenant_id)
+                .where(user_projects.c.user_id == user_id)
+            ).scalar() or 1
+            if expected_version is not None and expected_version != current_version:
+                return {"conflict": True, "current_version": current_version}
+            new_version = current_version + 1
             conn.execute(
                 update(user_projects)
                 .where(user_projects.c.id == project_id)
                 .where(user_projects.c.tenant_id == tenant_id)
                 .where(user_projects.c.user_id == user_id)
-                .values(**values)
+                .values(version=new_version, **values)
             )
             created_at = existing[1]
         else:
             created_at = now
+            new_version = 1
             conn.execute(insert(user_projects).values(
-                id=project_id, created_at=created_at, retention_until=None, **values))
-    return {"id": project_id, "created_at": created_at, "updated_at": now}
+                id=project_id, created_at=created_at, retention_until=None,
+                version=new_version, **values))
+    return {"id": project_id, "created_at": created_at, "updated_at": now,
+            "version": new_version}
 
 
 def list_user_projects(tenant_id: str, user_id: str) -> list[dict[str, Any]]:
@@ -1038,7 +1056,8 @@ def delete_user_project(project_id: str, tenant_id: str, user_id: str) -> int:
 
 def save_user_chat(chat_id: str, tenant_id: str, user_id: str, *,
                    messages: list, project_id: str | None = None,
-                   title: str | None = None) -> dict[str, Any]:
+                   title: str | None = None,
+                   expected_version: int | None = None) -> dict[str, Any]:
     """Upsert eines Chats. Ueberschreibt NUR den eigenen Datensatz."""
     now = _now_utc()
     msgs = messages if isinstance(messages, list) else []
@@ -1053,20 +1072,34 @@ def save_user_chat(chat_id: str, tenant_id: str, user_id: str, *,
                       message_count=len(msgs), updated_at=now,
                       tenant_id=tenant_id, user_id=user_id)
         if existing:
+            current_version = conn.execute(
+                select(user_chats.c.version)
+                .where(user_chats.c.id == chat_id)
+                .where(user_chats.c.tenant_id == tenant_id)
+                .where(user_chats.c.user_id == user_id)
+            ).scalar() or 1
+            if expected_version is not None and expected_version != current_version:
+                return {"conflict": True, "current_version": current_version}
+            new_version = current_version + 1
             conn.execute(
                 update(user_chats)
                 .where(user_chats.c.id == chat_id)
                 .where(user_chats.c.tenant_id == tenant_id)
                 .where(user_chats.c.user_id == user_id)
-                .values(**values)
+                .values(version=new_version, **values)
             )
             created_at = existing[1]
+            was_created = False
         else:
             created_at = now
+            new_version = 1
             conn.execute(insert(user_chats).values(
-                id=chat_id, created_at=created_at, retention_until=None, **values))
+                id=chat_id, created_at=created_at, retention_until=None,
+                version=new_version, **values))
+            was_created = True
     return {"id": chat_id, "created_at": created_at, "updated_at": now,
-            "message_count": len(msgs)}
+            "message_count": len(msgs), "version": new_version,
+            "created": was_created}
 
 
 def list_user_chats(tenant_id: str, user_id: str,
