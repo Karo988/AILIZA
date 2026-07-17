@@ -68,6 +68,17 @@ def test_json_roundtrip():
     assert fc.decrypt_json(token) == msgs
 
 
+def test_json_double_encrypt_is_noop():
+    # Wichtig fuer idempotente Migration: encrypt_json auf bereits
+    # verschluesselten Strings darf NICHT nochmal verschluesseln, sonst
+    # gibt decrypt_json nur die aeussere Schicht frei (noch verschluesselt).
+    msgs = [{"role": "user", "content": "x"}]
+    once = fc.encrypt_json(msgs)
+    twice = fc.encrypt_json(once)
+    assert once == twice
+    assert fc.decrypt_json(twice) == msgs
+
+
 def test_json_legacy_list_passthrough():
     # Alt-Datensatz aus JSON-Spalte kommt schon als Liste -> unveraendert
     msgs = [{"role": "user", "content": "x"}]
