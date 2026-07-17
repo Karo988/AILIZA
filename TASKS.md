@@ -25,6 +25,15 @@
 
 ## Backlog
 
+- [ ] **Feature „Projekt-Freigabe / Kollaboration"** (nach TS3b): Projekte für
+      Kollegen freigeben — NICHT per geteiltem Projekt-Passwort (keine
+      Nachvollziehbarkeit, nicht einzeln entziehbar → DSGVO-Lücke), sondern per
+      Einladung: Kollege mit eigenem (kostenlosem) Login, Zugriff per
+      E-Mail/Einladungslink-mit-Passwort. Rolle „nur lesen" / „lesen &
+      schreiben", jederzeit einzeln entziehbar, jede Änderung im Audit-Log mit
+      Namen. Neue Tabelle `project_shares` (owner/grantee/role/
+      invite_password_hash, bcrypt) — TS2-Isolation bleibt, Zugriff wird
+      kontrolliert erweitert. Passwörter nur gehasht, nie im Klartext/Log.
 - [ ] Block D: Merge-Konfliktcheck + PR Feature-Branch → main
 - [ ] AVV Anthropic formal abschließen (Betreiberin, Self-Service)
 - [ ] Bezahlter Render-Plan + persistente Disk entscheiden
