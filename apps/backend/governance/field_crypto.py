@@ -103,9 +103,14 @@ def decrypt_field(value: str | None) -> str | None:
 
 def encrypt_json(value: Any) -> str | None:
     """Serialisiert ein JSON-fähiges Objekt (z. B. Nachrichten-Liste) und
-    verschlüsselt es als einen String."""
+    verschlüsselt es als einen String. Bereits verschlüsselte Strings (z. B.
+    beim erneuten Lauf einer idempotenten Migration) werden erkannt und NICHT
+    doppelt verschlüsselt — sonst würde decrypt_json nur die äußere Schicht
+    entfernen und einen weiterhin verschlüsselten String zurückgeben."""
     if value is None:
         return None
+    if is_encrypted(value):
+        return value
     return encrypt_field(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
 
 

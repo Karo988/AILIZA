@@ -11,6 +11,11 @@ from sqlalchemy import Column, DateTime, Float, Index, Integer, JSON, MetaData, 
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
+try:
+    from .governance.field_crypto import encrypt_field, decrypt_field, encrypt_json, decrypt_json
+except ImportError:
+    from governance.field_crypto import encrypt_field, decrypt_field, encrypt_json, decrypt_json  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 _RAW_DB_URL = os.getenv("AILIZA_DATABASE_URL", "")
@@ -305,7 +310,9 @@ user_projects = Table(
     Column("id", String(64), primary_key=True),
     Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
     Column("user_id", String(64), primary_key=True, nullable=False),
-    Column("name", String(256), nullable=False),
+    # Text statt String(256): verschlüsselte Werte (Base64 + AES-GCM-Overhead)
+    # sind laenger als der Klartext -> muss auch unter Postgres nicht abschneiden.
+    Column("name", Text, nullable=False),
     Column("description", Text, nullable=True),
     Column("priority", String(32), nullable=True),
     Column("chat_id", String(64), nullable=True),
@@ -324,7 +331,8 @@ user_chats = Table(
     Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
     Column("user_id", String(64), primary_key=True, nullable=False),
     Column("project_id", String(64), nullable=True),  # None = projektloser Chat
-    Column("title", String(256), nullable=True),
+    # Text statt String(256): verschluesselter Titel ist laenger als Klartext.
+    Column("title", Text, nullable=True),
     Column("messages", JSON, nullable=False, default=list),
     Column("message_count", Integer, nullable=False, default=0),
     Column("created_at", DateTime(timezone=True), nullable=False),
@@ -1001,8 +1009,8 @@ def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
             .where(user_projects.c.tenant_id == tenant_id)
             .where(user_projects.c.user_id == user_id)
         ).first()
-        values = dict(name=name, description=description, priority=priority,
-                      chat_id=chat_id, files=files, updated_at=now,
+        values = dict(name=encrypt_field(name), description=encrypt_field(description),
+                      priority=priority, chat_id=chat_id, files=files, updated_at=now,
                       tenant_id=tenant_id, user_id=user_id)
         if existing:
             current_version = conn.execute(
@@ -1032,6 +1040,47 @@ def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
             "version": new_version}
 
 
+def migrate_encrypt_existing_records() -> dict[str, int]:
+    """Verschluesselt bestehende Klartext-Datensaetze nachtraeglich (Teilschritt
+    2, Migration). Idempotent: encrypt_field/-json erkennen bereits
+    verschluesselte Werte (enc:v1:-Praefix) und lassen sie unveraendert, daher
+    kann diese Funktion gefahrlos mehrfach laufen (z. B. bei jedem Start).
+    Kein Datensatz wird geloescht oder inhaltlich veraendert."""
+    migrated = {"projects": 0, "chats": 0}
+    with engine.begin() as conn:
+        for row in conn.execute(select(user_projects)).mappings().all():
+            new_name = encrypt_field(row["name"])
+            new_desc = encrypt_field(row["description"])
+            if new_name != row["name"] or new_desc != row["description"]:
+                conn.execute(
+                    update(user_projects)
+                    .where(user_projects.c.id == row["id"])
+                    .where(user_projects.c.tenant_id == row["tenant_id"])
+                    .where(user_projects.c.user_id == row["user_id"])
+                    .values(name=new_name, description=new_desc)
+                )
+                migrated["projects"] += 1
+        for row in conn.execute(select(user_chats)).mappings().all():
+            new_title = encrypt_field(row["title"])
+            new_messages = encrypt_json(row["messages"])
+            if new_title != row["title"] or new_messages != row["messages"]:
+                conn.execute(
+                    update(user_chats)
+                    .where(user_chats.c.id == row["id"])
+                    .where(user_chats.c.tenant_id == row["tenant_id"])
+                    .where(user_chats.c.user_id == row["user_id"])
+                    .values(title=new_title, messages=new_messages)
+                )
+                migrated["chats"] += 1
+    return migrated
+
+
+def _decrypt_project_row(row: dict[str, Any]) -> dict[str, Any]:
+    row["name"] = decrypt_field(row.get("name"))
+    row["description"] = decrypt_field(row.get("description"))
+    return row
+
+
 def list_user_projects(tenant_id: str, user_id: str) -> list[dict[str, Any]]:
     with engine.begin() as conn:
         rows = conn.execute(
@@ -1040,7 +1089,7 @@ def list_user_projects(tenant_id: str, user_id: str) -> list[dict[str, Any]]:
             .where(user_projects.c.user_id == user_id)
             .order_by(user_projects.c.updated_at.desc())
         ).mappings().all()
-    return [dict(r) for r in rows]
+    return [_decrypt_project_row(dict(r)) for r in rows]
 
 
 def delete_user_project(project_id: str, tenant_id: str, user_id: str) -> int:
@@ -1068,7 +1117,8 @@ def save_user_chat(chat_id: str, tenant_id: str, user_id: str, *,
             .where(user_chats.c.tenant_id == tenant_id)
             .where(user_chats.c.user_id == user_id)
         ).first()
-        values = dict(project_id=project_id, title=title, messages=msgs,
+        values = dict(project_id=project_id, title=encrypt_field(title),
+                      messages=encrypt_json(msgs),
                       message_count=len(msgs), updated_at=now,
                       tenant_id=tenant_id, user_id=user_id)
         if existing:
@@ -1102,6 +1152,12 @@ def save_user_chat(chat_id: str, tenant_id: str, user_id: str, *,
             "created": was_created}
 
 
+def _decrypt_chat_row(row: dict[str, Any]) -> dict[str, Any]:
+    row["title"] = decrypt_field(row.get("title"))
+    row["messages"] = decrypt_json(row.get("messages"))
+    return row
+
+
 def list_user_chats(tenant_id: str, user_id: str,
                     project_id: str | None = None) -> list[dict[str, Any]]:
     with engine.begin() as conn:
@@ -1113,7 +1169,7 @@ def list_user_chats(tenant_id: str, user_id: str,
         if project_id is not None:
             query = query.where(user_chats.c.project_id == project_id)
         rows = conn.execute(query.order_by(user_chats.c.updated_at.desc())).mappings().all()
-    return [dict(r) for r in rows]
+    return [_decrypt_chat_row(dict(r)) for r in rows]
 
 
 def get_user_chat(chat_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
@@ -1124,7 +1180,7 @@ def get_user_chat(chat_id: str, tenant_id: str, user_id: str) -> dict[str, Any] 
             .where(user_chats.c.tenant_id == tenant_id)
             .where(user_chats.c.user_id == user_id)
         ).mappings().first()
-    return dict(row) if row else None
+    return _decrypt_chat_row(dict(row)) if row else None
 
 
 def delete_user_chat(chat_id: str, tenant_id: str, user_id: str) -> int:
