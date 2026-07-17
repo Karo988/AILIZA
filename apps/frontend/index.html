@@ -810,6 +810,82 @@ function closeSidebar(){
   document.getElementById("sidebar-overlay").classList.remove("open");
 }
 function saveProjects(){localStorage.setItem("ailiza_projects",JSON.stringify(projects))}
+// ── TS3a: Serverseitige Projekt-Synchronisation (Cross-Device Handy<->Laptop) ─
+// Grundsatz: ADDITIV. Nicht eingeloggt => reiner localStorage-Betrieb wie bisher.
+// BEST EFFORT: Server-Fehler werden still geschluckt, localStorage bleibt Quelle,
+// kein Fehler-Popup (Anwenderfreundlichkeit). KEIN Datenverlust: lokale und
+// Server-Daten werden gemergt statt ueberschrieben; die serverId am lokalen
+// Objekt verhindert Doppel-Uploads.
+let _projectsSynced=false;   // pro Seitenaufruf nur einmal Erst-Sync
+let _projectSyncInFlight=false;
+function mapProjectToServer(p){
+  return {name:p.name||"Projekt",description:p.desc||"",priority:p.prio||"",
+          chat_id:p.chat_id||null,files:Array.isArray(p.files)?p.files:null};
+}
+function mapProjectFromServer(s){
+  return {id:s.id,serverId:s.id,name:s.name,desc:s.description||"",prio:s.priority||"",
+          chat_id:s.chat_id||null,files:Array.isArray(s.files)?s.files:[],
+          created:s.created_at,updated:s.updated_at,version:s.version};
+}
+async function serverCreateProject(p){
+  const r=await fetch(`${API}/api/user-projects`,{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(mapProjectToServer(p))});
+  if(!r.ok)throw new Error("create failed");
+  return await r.json();
+}
+async function serverUpdateProject(p){
+  const body={...mapProjectToServer(p)};
+  if(typeof p.version==="number")body.expected_version=p.version;
+  const r=await fetch(`${API}/api/user-projects/${encodeURIComponent(p.serverId)}`,{method:"PATCH",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error("update failed");
+  return await r.json();
+}
+function serverDeleteProject(serverId){
+  // fire-and-forget: lokale Loeschung ist die Quelle, Server best effort
+  fetch(`${API}/api/user-projects/${encodeURIComponent(serverId)}`,{method:"DELETE"}).catch(()=>{});
+}
+async function syncProjectsOnLogin(){
+  if(_projectSyncInFlight)return;
+  _projectSyncInFlight=true;
+  try{
+    let serverList=[];
+    try{
+      const r=await fetch(`${API}/api/user-projects`,{signal:AbortSignal.timeout(6000)});
+      if(!r.ok)return;               // nicht eingeloggt/Fehler -> nichts tun
+      serverList=(await r.json()).projects||[];
+    }catch(e){return;}              // offline -> nichts tun, localStorage bleibt
+    const serverById=new Map(serverList.map(s=>[String(s.id),s]));
+    // a) Lokale Projekte ohne serverId einmalig hochladen (Erst-Upload)
+    for(const p of projects){
+      if(!p.serverId){
+        try{const created=await serverCreateProject(p);p.serverId=created.id;p.version=created.version;}
+        catch(e){/* best effort: bleibt lokal, naechster Login versucht erneut */}
+      }
+    }
+    // b) Server-Projekte, die lokal fehlen, herunterladen
+    const localServerIds=new Set(projects.filter(p=>p.serverId).map(p=>String(p.serverId)));
+    for(const s of serverList){
+      if(!localServerIds.has(String(s.id)))projects.push(mapProjectFromServer(s));
+    }
+    // c) Kollision (gleiche serverId beidseitig): juengeres updated_at gewinnt,
+    //    im echten Konfliktfall werden BEIDE behalten (kein stilles Loeschen).
+    for(const p of projects){
+      if(!p.serverId)continue;
+      const s=serverById.get(String(p.serverId));
+      if(!s)continue;
+      const localT=p.updated?Date.parse(p.updated):0;
+      const serverT=s.updated_at?Date.parse(s.updated_at):0;
+      if(serverT>localT){
+        Object.assign(p,mapProjectFromServer(s));           // Server neuer -> lokal uebernehmen
+      }else if(localT>serverT){
+        try{const res=await serverUpdateProject(p);if(res&&res.version)p.version=res.version;}
+        catch(e){/* Konflikt/Fehler: beide behalten, kein Verlust */}
+      }
+    }
+    saveProjects();renderProjects();renderProjectList();
+  }finally{_projectSyncInFlight=false;}
+}
 function createChatId(prefix="chat"){return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`}
 function getProjectChatStorageKey(chatId){return `ailiza_chat_${chatId}`}
 function getActiveChatStorageKey(){return activeProjectId&&currentChatId?getProjectChatStorageKey(currentChatId):"ailiza_chat"}
@@ -1028,6 +1104,7 @@ async function refreshAuthButton(){
       const me=await r.json();
       btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
       btn.onclick=doLogout;
+      if(!_projectsSynced){_projectsSynced=true;syncProjectsOnLogin();}  // Erst-Sync (einmal/Session)
       return;
     }
   }catch(e){/* Netzwerkfehler: Button bleibt auf "Anmelden" */}
@@ -1036,6 +1113,7 @@ async function refreshAuthButton(){
 }
 async function doLogout(){
   try{await fetch(`${API}/auth/logout`,{method:"POST"});}catch(e){}
+  _projectsSynced=false;   // naechster Login startet Erst-Sync erneut
   refreshAuthButton();
 }
 function showView(name,el){
@@ -1621,6 +1699,7 @@ async function doLogin(){
   if(d.totp_required){err.textContent="Dieses Konto erfordert TOTP — bitte über die Admin-Oberfläche anmelden.";err.style.display="block";return;}
   document.getElementById("login-pass").value="";
   closeLoginModal();
+  _projectsSynced=false;   // frischer Login -> Erst-Sync erneut zulassen
   refreshAuthButton();
   addAiMessage(`Angemeldet als ${u}. `+(gatedTask?"Ihre Anfrage wird erneut gesendet.":""),undefined);
   if(gatedTask){
@@ -1662,9 +1741,11 @@ function handlePaste(e){
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
 function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
-function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
+function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;const now=new Date().toISOString();const p={id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:now,updated:now};projects.push(p);saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value="";
+  // Best effort: bei eingeloggtem Nutzer sofort serverseitig anlegen (Cross-Device)
+  serverCreateProject(p).then(created=>{p.serverId=created.id;p.version=created.version;saveProjects();}).catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es spaeter nach */});}
 function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
-function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
+function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}</div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
