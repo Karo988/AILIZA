@@ -207,6 +207,8 @@ body{
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
 .card-h{font-size:13px;font-weight:600;margin-bottom:4px}
 .card-desc{font-size:12px;color:var(--text-soft);margin-bottom:10px;line-height:1.5}
+.card-openchat{margin-top:10px;font-size:12px;font-weight:600;color:var(--accent);display:flex;align-items:center;gap:4px}
+#proj-grid .card{cursor:pointer}
 .card-meta{display:flex;gap:6px;font-size:10px;flex-wrap:wrap}
 .meta-pill{background:var(--surface-2);color:var(--text-soft);padding:2px 8px;border-radius:10px;font-weight:500}
 .meta-pill.hi{background:var(--warn-soft);color:var(--warn)}
@@ -327,6 +329,7 @@ body{
 </head>
 <body>
 <div class="topbar">
+  <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen" aria-label="Menü öffnen">☰</button>
   <div class="brand">AI<span class="brand-mark">LIZA</span><span class="brand-sub">v0.5 · KMU · EU-konform</span></div>
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
@@ -1166,8 +1169,10 @@ function deleteProjectFile(projectIndex,fileIndex){
 function updateChatProjectLabel(){
   const el=document.getElementById("active-project-name");if(!el)return;
   const project=getActiveProject();
-  if(project){el.textContent=`Projekt: ${project.name}`;el.classList.add("visible")}
-  else{el.textContent="";el.classList.remove("visible")}
+  if(project){el.textContent=`‹ Projekt: ${project.name}`;el.classList.add("visible");
+    el.style.cursor="pointer";el.title="Zurück zu den Projekten";
+    el.onclick=()=>showView("projects");}
+  else{el.textContent="";el.classList.remove("visible");el.onclick=null}
 }
 function setActiveProject(project){
   activeProjectId=project?String(project.id):null;
@@ -1871,7 +1876,7 @@ function saveProject(){const name=document.getElementById("proj-name").value.tri
   serverCreateProject(p).then(created=>{p.serverId=created.id;p.version=created.version;saveProjects();}).catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es spaeter nach */});}
 function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
 function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);if(p&&p.chat_id)serverDeleteChat(p.chat_id);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
-function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}</div>`).join("")}
+function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}<div class="card-openchat">💬 Chat öffnen ›</div></div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
