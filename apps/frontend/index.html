@@ -954,8 +954,41 @@ async function syncChatsOnLogin(){
     }
     localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
     renderRecent();
+    // c) Projekt-Chat-Nachrichten (project_id gesetzt) — Ordner cross-device komplett.
+    //    Laeuft NACH dem Projekt-Sync, daher haben Projekte hier serverId + chat_id.
+    const meta=JSON.parse(localStorage.getItem("ailiza_chat_meta")||"{}");
+    for(const p of projects){
+      if(!p.chat_id)continue;
+      const key=getProjectChatStorageKey(p.chat_id);
+      const localMsgs=JSON.parse(localStorage.getItem(key)||"[]");
+      const s=serverChats.find(x=>String(x.id)===String(p.chat_id));
+      const pid=p.serverId||p.id;
+      const localT=meta[p.chat_id]&&meta[p.chat_id].updated?Date.parse(meta[p.chat_id].updated):0;
+      const serverT=s&&s.updated_at?Date.parse(s.updated_at):0;
+      if((!s||localT>serverT)&&localMsgs.length){                 // lokal neuer/fehlt -> hochladen
+        try{const res=await serverPutChat({id:p.chat_id,messages:localMsgs,project_id:pid,title:p.name,
+              version:meta[p.chat_id]?meta[p.chat_id].version:undefined});
+            meta[p.chat_id]={updated:res.updated_at,version:res.version};}
+        catch(e){ok=false;}
+      }else if(s&&serverT>localT){                                // Server neuer -> herunterladen
+        localStorage.setItem(key,JSON.stringify((s.messages||[]).slice(-100)));
+        meta[p.chat_id]={updated:s.updated_at,version:s.version};
+        if(String(currentChatId)===String(p.chat_id)){           // offener Projekt-Chat sofort aktualisieren
+          chatHistory=s.messages||[];
+          context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+          renderChat();
+        }
+      }
+    }
+    localStorage.setItem("ailiza_chat_meta",JSON.stringify(meta));
     setSyncStatus(ok?"ok":"fail");
   }finally{_chatSyncInFlight=false;}
+}
+async function syncAllOnLogin(){
+  // Reihenfolge wichtig: erst Projekte (liefert serverId + chat_id), dann Chats
+  // (freie + Projekt-Chat-Nachrichten). Beide best effort, kein Datenverlust.
+  await syncProjectsOnLogin();
+  await syncChatsOnLogin();
 }
 function createChatId(prefix="chat"){return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`}
 function getProjectChatStorageKey(chatId){return `ailiza_chat_${chatId}`}
@@ -1144,7 +1177,17 @@ function setActiveProject(project){
 }
 function persistActiveChat(){
   localStorage.setItem(getActiveChatStorageKey(),JSON.stringify(chatHistory.slice(-100)));
-  if(!activeProjectId)localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));
+  if(!activeProjectId){localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));return;}
+  // Projekt-Chat: best effort auch serverseitig ablegen (Cross-Device-Ordner)
+  const p=getActiveProject();
+  if(p&&currentChatId&&chatHistory.length){
+    const meta=JSON.parse(localStorage.getItem("ailiza_chat_meta")||"{}");
+    serverPutChat({id:currentChatId,messages:chatHistory,project_id:p.serverId||p.id,title:p.name,
+      version:meta[currentChatId]?meta[currentChatId].version:undefined})
+      .then(res=>{meta[currentChatId]={updated:res.updated_at,version:res.version};
+        localStorage.setItem("ailiza_chat_meta",JSON.stringify(meta));setSyncStatus("ok");})
+      .catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es nach */});
+  }
 }
 function loadActiveProjectFromStorage(){
   if(!activeProjectId)return;
@@ -1175,8 +1218,7 @@ async function refreshAuthButton(){
       const me=await r.json();
       btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
       btn.onclick=doLogout;
-      if(!_projectsSynced){_projectsSynced=true;syncProjectsOnLogin();}  // Erst-Sync (einmal/Session)
-      if(!_chatsSynced){_chatsSynced=true;syncChatsOnLogin();}           // dito fuer Chats
+      if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
     }
   }catch(e){/* Netzwerkfehler: Button bleibt auf "Anmelden" */}
@@ -1828,7 +1870,7 @@ function saveProject(){const name=document.getElementById("proj-name").value.tri
   // Best effort: bei eingeloggtem Nutzer sofort serverseitig anlegen (Cross-Device)
   serverCreateProject(p).then(created=>{p.serverId=created.id;p.version=created.version;saveProjects();}).catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es spaeter nach */});}
 function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
-function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
+function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);if(p&&p.chat_id)serverDeleteChat(p.chat_id);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}</div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
