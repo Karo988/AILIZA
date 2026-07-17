@@ -91,6 +91,11 @@ sind tenant-gefiltert.
 
 ## Model-Strategie fuer Claude Code Sessions
 
+⚠️ **PFLICHT:** Claude muss in JEDER Antwort explizit mitteilen, welches Modell
+fuer die anstehende Aufgabe empfohlen wird (auch wenn unveraendert zum
+aktuellen) — nicht nur bei Modellwechseln. Kurzer Satz reicht, z.B.
+"Empfehlung: Sonnet 5 (Bugfixing)." Karo stellt das Modell manuell um.
+
 **Standard: Sonnet 5**
 - Iterative Entwicklung (Pattern-Fixes, Tests, Debugging)
 - Governance-Code (Policy, Redaction)
