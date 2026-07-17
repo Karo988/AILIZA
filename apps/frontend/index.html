@@ -1590,7 +1590,7 @@ async function sendMessage(){
   document.getElementById("kI-input-preview").value="";
   const label=document.getElementById("kI-preview-label");
   if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
-  await _doSend(text,{},file);
+  await _doSend(text,{},pendingChatFile);
 }
 async function approvePiiConsent(){
   localStorage.setItem("ailiza_pii_consent","1");
