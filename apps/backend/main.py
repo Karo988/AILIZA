@@ -42,6 +42,8 @@ try:
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
+        save_user_project, list_user_projects, delete_user_project,
+        save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
     )
     from .auth.models import UserCreate, UserInDB
     from .auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
@@ -61,6 +63,8 @@ except ImportError:
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
         create_approval_request, get_approval_request,
+        save_user_project, list_user_projects, delete_user_project,
+        save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
     )
     from gateway import guarded_tool_call
     from routers.approvals import router as approvals_router
@@ -2558,6 +2562,159 @@ def register(
                       metadata={"user_id": payload.user_id, "role": payload.role},
                       tenant_id=payload.tenant_id)
     return {"status": "created", "user_id": entry["user_id"], "role": entry["role"]}
+
+
+# ── Serverseitige Speicherung: Projekte & Chats (TS2) ────────────────────────
+# Cross-Device-Sync (Handy <-> Laptop). Jeder Zugriff ist ausschliesslich auf
+# den eigenen Datensatz beschraenkt: gefiltert nach tenant_id UND user_id.
+# Fremde/nicht existierende Datensaetze -> 404 (kein 403, keine Existenz-Leaks).
+
+class UserProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    priority: str | None = Field(default=None, max_length=50)
+    chat_id: str | None = Field(default=None, max_length=100)
+    files: list[Any] | None = None
+
+
+class UserProjectUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    priority: str | None = Field(default=None, max_length=50)
+    chat_id: str | None = Field(default=None, max_length=100)
+    files: list[Any] | None = None
+    expected_version: int | None = None
+
+
+class UserChatUpsert(BaseModel):
+    messages: list[Any] = Field(default_factory=list)
+    project_id: str | None = Field(default=None, max_length=100)
+    title: str | None = Field(default=None, max_length=300)
+    expected_version: int | None = None
+
+
+def _require_user(token: TokenData | None) -> TokenData:
+    """Fail-closed: ohne gueltiges Session-Token kein Zugriff auf gespeicherte Daten."""
+    if token is None:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert.")
+    return token
+
+
+@app.get("/api/user-projects")
+def api_list_user_projects(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    projects = list_user_projects(user.tenant_id, user.user_id)
+    return {"projects": projects, "count": len(projects)}
+
+
+@app.post("/api/user-projects", status_code=201)
+def api_create_user_project(
+    payload: UserProjectCreate,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    project_id = uuid.uuid4().hex
+    result = save_user_project(
+        project_id, user.tenant_id, user.user_id,
+        name=payload.name, description=payload.description,
+        priority=payload.priority, chat_id=payload.chat_id,
+        files=payload.files,
+    )
+    return result
+
+
+@app.patch("/api/user-projects/{project_id}")
+def api_update_user_project(
+    project_id: str,
+    payload: UserProjectUpdate,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    existing = {p["id"] for p in list_user_projects(user.tenant_id, user.user_id)}
+    if project_id not in existing:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden.")
+    result = save_user_project(
+        project_id, user.tenant_id, user.user_id,
+        name=payload.name, description=payload.description,
+        priority=payload.priority, chat_id=payload.chat_id,
+        files=payload.files, expected_version=payload.expected_version,
+    )
+    if result.get("conflict"):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Versionskonflikt – bitte neu laden.",
+                    "current_version": result["current_version"]},
+        )
+    return result
+
+
+@app.delete("/api/user-projects/{project_id}")
+def api_delete_user_project(
+    project_id: str,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    removed = delete_user_project(project_id, user.tenant_id, user.user_id)
+    if removed == 0:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden.")
+    return {"status": "deleted", "id": project_id}
+
+
+@app.get("/api/user-chats")
+def api_list_user_chats(
+    project_id: str | None = Query(default=None),
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    chats = list_user_chats(user.tenant_id, user.user_id, project_id=project_id)
+    return {"chats": chats, "count": len(chats)}
+
+
+@app.get("/api/user-chats/{chat_id}")
+def api_get_user_chat(
+    chat_id: str,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    chat = get_user_chat(chat_id, user.tenant_id, user.user_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat nicht gefunden.")
+    return chat
+
+
+@app.put("/api/user-chats/{chat_id}")
+def api_put_user_chat(
+    chat_id: str,
+    payload: UserChatUpsert,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    result = save_user_chat(
+        chat_id, user.tenant_id, user.user_id,
+        messages=payload.messages, project_id=payload.project_id,
+        title=payload.title, expected_version=payload.expected_version,
+    )
+    if result.get("conflict"):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Versionskonflikt – bitte neu laden.",
+                    "current_version": result["current_version"]},
+        )
+    return result
+
+
+@app.delete("/api/user-chats/{chat_id}")
+def api_delete_user_chat(
+    chat_id: str,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    removed = delete_user_chat(chat_id, user.tenant_id, user.user_id)
+    if removed == 0:
+        raise HTTPException(status_code=404, detail="Chat nicht gefunden.")
+    return {"status": "deleted", "id": chat_id}
 
 
 # ── Admin-Endpunkte (mindestens ADMIN-Rolle erforderlich) ────────────────────
