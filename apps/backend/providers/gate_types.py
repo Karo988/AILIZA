@@ -53,6 +53,10 @@ class GateDiagnostic:
     repair_used: bool = False
     degraded: bool = False
     raw_refusal_suppressed: bool = False
+    # PR-4: Ergebnis-Code des optionalen Stufe-3-Pruefers (nur bei RED/BLACK-
+    # Signal-Uneinigkeit aufgerufen). Rein informativ/Code -- fliesst NIE in
+    # die finale (deterministische) Block-Entscheidung ein.
+    pruefer_flag: str | None = None
 
 
 @dataclass

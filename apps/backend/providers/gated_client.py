@@ -49,16 +49,20 @@ _PLACEHOLDER_PATTERN = re.compile(r"\[[^\[\]]+\]")
 try:
     from .gate_types import EgressOutcome, GateDiagnostic, Zweck
     from ..errors import AILIZAError
-    from ..governance.mirror_lint import run_mirror_lint
+    from ..governance.mirror_lint import einzelsignal_genuegt, run_mirror_lint
 except ImportError:  # pragma: no cover
     from providers.gate_types import EgressOutcome, GateDiagnostic, Zweck
     from errors import AILIZAError
-    from governance.mirror_lint import run_mirror_lint
+    from governance.mirror_lint import einzelsignal_genuegt, run_mirror_lint
 
 
 # 1 Generate-Versuch + 1 Repair/Retry -- PR-2 kann dies um Modell-Eskalation
 # erweitern, der Budget-Wert selbst bleibt hier fix fuer PR-1.
 MAX_LLM_CALLS_PRO_ANFRAGE = 2
+
+# PR-4: dritter Slot, ausschliesslich fuer den optionalen Stufe-3-Pruefer
+# reserviert -- KEIN beliebiger dritter Generate-/Repair-Versuch.
+MAX_TOTAL_CALLS_WITH_PRUEFER = 3
 
 _REFUSAL_STOP_REASONS = {"refusal"}
 
@@ -122,6 +126,20 @@ def check_placeholder_integrity(source_text: str, candidate_text: str) -> bool:
     return candidate_count >= source_count
 
 
+def _has_critical_signal_disagreement(findings) -> bool:
+    """RED/BLACK-Uneinigkeit: eine zertifizierungskritische Kategorie (siehe
+    mirror_lint.einzelsignal_genuegt) taucht in genau einem der beiden Texte
+    auf, nicht in beiden UND nicht in keinem. Komfort-/Wording-Kategorien
+    loesen NIE einen Pruefer-Call aus."""
+    return any(
+        einzelsignal_genuegt(f.category) and f.in_ingress != f.in_egress
+        for f in findings
+    )
+
+
+_PRUEFER_CONFIRM_MARKERS = ("BESTAETIGT", "CONFIRMED")
+
+
 class GatedLLMClient:
     """Einziger Ort, an dem provider.generate_with_meta() aufgerufen wird
     (siehe T7-Import-Scan-Allowlist). Zweck.INTERN/PRUEFER ueberspringen nur
@@ -139,8 +157,17 @@ class GatedLLMClient:
         zweck: Zweck | None = None,
         require_schema: bool = False,
         ingress_source: str | None = None,
+        on_phase: Any = None,
     ) -> str:
+        """on_phase (optional): Callable[[str], None], bekommt ausschliesslich
+        Phasen-Codes ("GENERATE"/"REPAIR"/"PRUEFER"/"DELIVER"/"BLOCK") -- nie
+        Prompt-/Antwort-Inhalte. Ohne on_phase aendert sich das Verhalten
+        nicht (reines Beobachtungs-Hook, kein Pflichtparameter)."""
         zweck = zweck or Zweck.NUTZER_AUSGABE  # fail-closed default
+
+        def _emit(phase: str) -> None:
+            if on_phase is not None:
+                on_phase(phase)
 
         attempts = 0
         repair_used = False
@@ -150,6 +177,7 @@ class GatedLLMClient:
 
         while attempts < MAX_LLM_CALLS_PRO_ANFRAGE:
             attempts += 1
+            _emit("GENERATE" if attempts == 1 else "REPAIR")
             try:
                 result = provider.generate_with_meta(current_messages, context)
             except AILIZAError:
@@ -197,10 +225,25 @@ class GatedLLMClient:
             # wenn eine Ingress-Quelle zum Vergleich vorliegt. INTERN/PRUEFER
             # ueberspringen dies bewusst (kein Client-Bypass -- Refusal-/
             # Invalid-Netz oben bleibt fuer sie unveraendert aktiv).
+            pruefer_flag = None
             if zweck == Zweck.NUTZER_AUSGABE and ingress_source is not None:
                 findings = run_mirror_lint(ingress_source, result.text)
                 blocking = [f for f in findings if f.is_blocking]
+
+                # PR-4: Stufe-3-Pruefer -- NUR bei RED/BLACK-Signal-Uneinigkeit,
+                # NUR fuer NUTZER_AUSGABE (also nie rekursiv aus einem
+                # Pruefer-Call selbst heraus, der laueft mit Zweck.PRUEFER und
+                # ueberspringt diesen ganzen Block), NUR wenn noch ein Slot
+                # im 3er-Budget frei ist. Flag-only: das Ergebnis fliesst NIE
+                # in "blocking" ein, die Policy-Entscheidung bleibt
+                # deterministisch.
+                if _has_critical_signal_disagreement(findings) and attempts < MAX_TOTAL_CALLS_WITH_PRUEFER:
+                    _emit("PRUEFER")
+                    attempts += 1
+                    pruefer_flag = self._run_pruefer_call(provider, current_messages, context)
+
                 if blocking:
+                    _emit("BLOCK")
                     self.last_diagnostic = GateDiagnostic(
                         outcome=EgressOutcome.BLOCK_WITH_ALTERNATIVE.value,
                         zweck=zweck.value,
@@ -208,18 +251,22 @@ class GatedLLMClient:
                         candidate_status="VALID",
                         grund="MIRROR_LINT_BLOCK",
                         repair_used=repair_used,
+                        pruefer_flag=pruefer_flag,
                     )
                     raise AILIZAError.from_code("policy_blocked")
 
+            _emit("DELIVER")
             self.last_diagnostic = GateDiagnostic(
                 outcome=EgressOutcome.DELIVER.value,
                 zweck=zweck.value,
                 attempts=attempts,
                 candidate_status="VALID",
                 repair_used=repair_used,
+                pruefer_flag=pruefer_flag,
             )
             return result.text
 
+        _emit("BLOCK")
         grund = "REFUSAL_STOP" if saw_refusal else "INVALID_CANDIDATE"
         self.last_diagnostic = GateDiagnostic(
             outcome=EgressOutcome.BLOCK_WITH_ALTERNATIVE.value,
@@ -231,3 +278,19 @@ class GatedLLMClient:
             raw_refusal_suppressed=saw_refusal,
         )
         raise AILIZAError.from_code("all_providers_failed")
+
+    def _run_pruefer_call(self, provider: Any, messages: list[dict[str, Any]], context: Any) -> str:
+        """Stufe-3-Pruefer: EIN best-effort Zusatz-Call, liefert nur einen
+        Code zurueck (nie den vollen Text als Diagnose). Wird ausschliesslich
+        bei kritischer Signal-Uneinigkeit aufgerufen (siehe Aufrufstelle) und
+        ist selbst nie rekursiv -- er nutzt provider.generate_with_meta()
+        direkt, NICHT self.generate(..., zweck=Zweck.PRUEFER), also kann er
+        keinen weiteren Pruefer-Call ausloesen."""
+        try:
+            result = provider.generate_with_meta(messages, context)
+        except AILIZAError:
+            return "PRUEFER_ERROR"
+        text = (result.text or "").strip().upper()
+        if any(marker in text for marker in _PRUEFER_CONFIRM_MARKERS):
+            return "CONFIRMED"
+        return "UNCLEAR"
