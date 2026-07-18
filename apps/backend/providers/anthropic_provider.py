@@ -12,9 +12,11 @@ from typing import Any
 
 try:
     from .base import LLMProvider
+    from .gate_types import ProviderResult
     from ..errors import AILIZAError
 except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
+    from providers.gate_types import ProviderResult
     from errors import AILIZAError
 
 
@@ -64,6 +66,23 @@ class AnthropicProvider(LLMProvider):
                 messages=convo,
             )
             return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        except AILIZAError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise AILIZAError.from_code("provider_not_configured") from exc
+
+    def generate_with_meta(self, messages: list[dict[str, Any]], context: Any = None) -> ProviderResult:
+        client = self._client()
+        system, convo = self._split_system(messages)
+        try:
+            resp = client.messages.create(
+                model=self.model,
+                max_tokens=1000,
+                system=system or None,
+                messages=convo,
+            )
+            text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+            return ProviderResult(text=text, stop_reason=getattr(resp, "stop_reason", None))
         except AILIZAError:
             raise
         except Exception as exc:  # noqa: BLE001
