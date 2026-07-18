@@ -104,7 +104,14 @@ def test_shadow_rule_does_not_block_in_real_flow():
 # ---------------------------------------------------------------------------
 
 def test_enforce_critical_rule_blocks_in_real_flow():
-    provider = _FakeProvider([ProviderResult(text="Ihre Kartennummer 4111 1111 1111 1111 wurde erfasst.", stop_reason="end_turn")])
+    # Ab PR-4: eine kritische Kategorie nur im Kandidaten (nicht im Ingress)
+    # ist eine RED/BLACK-Signal-Uneinigkeit und loest zusaetzlich den
+    # Stufe-3-Pruefer aus (2. FakeProvider-Ergebnis) -- das Endergebnis
+    # (Block) bleibt aber deterministisch, der Pruefer ist nur ein Flag.
+    provider = _FakeProvider([
+        ProviderResult(text="Ihre Kartennummer 4111 1111 1111 1111 wurde erfasst.", stop_reason="end_turn"),
+        ProviderResult(text="UNCLEAR", stop_reason="end_turn"),
+    ])
     client = GatedLLMClient()
     with pytest.raises(AILIZAError):
         client.generate(
