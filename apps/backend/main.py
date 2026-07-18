@@ -1393,7 +1393,13 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
     ]
     try:
         answer = _orchestrator.generate(
-            messages, context=context, zweck=Zweck.NUTZER_AUSGABE, ingress_source=task,
+            messages, context=context, zweck=Zweck.NUTZER_AUSGABE,
+            # Spiegel-Linting muss die vollstaendige Ingress-Seite sehen --
+            # nicht nur die Nutzerfrage, sondern auch den Suchtext, der dem
+            # LLM tatsaechlich als Kontext mitgegeben wird (siehe user_msg
+            # oben). Sonst wuerden Komfort-/Zwei-Signal-Regeln zu schwach
+            # greifen, wenn PII nur im Suchtext, nicht in der Frage steht.
+            ingress_source=f"{task}\n\n{search_text}",
         )
         # Tatsaechlich genutzter Provider (nicht der angenommene default_provider) —
         # Freigabe Stufe 1, E3-Zusatzpatch: kein stiller Wechsel.

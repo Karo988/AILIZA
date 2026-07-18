@@ -133,6 +133,26 @@ def test_generator_risk_flags_not_decisive_in_real_flow():
 # T7: Rueckwaertskompatible Textausgabe bleibt erhalten
 # ---------------------------------------------------------------------------
 
+def test_summarize_with_llm_includes_search_text_in_ingress_source(monkeypatch):
+    """Review-Fund: ingress_source darf nicht nur die Nutzerfrage sein,
+    sondern muss auch search_text abdecken, sonst sieht Spiegel-Linting die
+    PII nicht, die nur im Suchergebnis (nicht in der Frage) steht."""
+    from apps.backend import main as main_module
+
+    captured = {}
+
+    def fake_generate(messages, context=None, zweck=None, ingress_source=None):
+        captured["ingress_source"] = ingress_source
+        return "Kurze Antwort."
+
+    monkeypatch.setattr(main_module._orchestrator, "generate", fake_generate)
+    main_module._summarize_with_llm(
+        "Was ist meine IBAN?", "Suchergebnis enthaelt DE89370400440532013000",
+    )
+    assert "DE89370400440532013000" in captured["ingress_source"]
+    assert "Was ist meine IBAN?" in captured["ingress_source"]
+
+
 def test_backwards_compatible_plain_text_return_preserved():
     provider = _FakeProvider([ProviderResult(text="Normale Antwort ohne PII.", stop_reason="end_turn")])
     client = GatedLLMClient()

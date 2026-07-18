@@ -11,6 +11,15 @@ rueckwaertskompatible Text-Rueckgabe, Gate-Diagnosekapsel (nur Codes).
 Spiegel-Linting, Ingress-Tags, Stufe-3-Pruefer, Freigabe-Cockpit und
 Pfad-B-JSON-Haertung fuer Groq/OpenAI-kompatible Provider sind NICHT
 Teil von PR-1.
+
+T7-Import-Scan-Ausnahme (dokumentiert, PR-3b-Review): main.py enthaelt
+einen einzigen weiteren direkten provider.generate()-Aufruf (Debug-
+Provider-Test, /api/debug/provider-test). Das ist bewusst KEIN
+Gate-Bypass in Produktion: die Route wird nur registriert, wenn
+AILIZA_ENV != "production" -- in Produktion existiert der Endpoint
+nicht (kein Fallback, kein Laufzeit-Check, sondern fehlende Route).
+Beweis: tests/test_debug_provider_endpoint.py::
+test_provider_debug_endpoint_not_registered_in_production.
 """
 from __future__ import annotations
 
