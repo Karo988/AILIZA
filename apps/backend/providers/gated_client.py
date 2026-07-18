@@ -11,6 +11,15 @@ rueckwaertskompatible Text-Rueckgabe, Gate-Diagnosekapsel (nur Codes).
 Spiegel-Linting, Ingress-Tags, Stufe-3-Pruefer, Freigabe-Cockpit und
 Pfad-B-JSON-Haertung fuer Groq/OpenAI-kompatible Provider sind NICHT
 Teil von PR-1.
+
+T7-Import-Scan-Ausnahme (dokumentiert, PR-3b-Review): main.py enthaelt
+einen einzigen weiteren direkten provider.generate()-Aufruf (Debug-
+Provider-Test, /api/debug/provider-test). Das ist bewusst KEIN
+Gate-Bypass in Produktion: die Route wird nur registriert, wenn
+AILIZA_ENV != "production" -- in Produktion existiert der Endpoint
+nicht (kein Fallback, kein Laufzeit-Check, sondern fehlende Route).
+Beweis: tests/test_debug_provider_endpoint.py::
+test_provider_debug_endpoint_not_registered_in_production.
 """
 from __future__ import annotations
 
@@ -40,9 +49,11 @@ _PLACEHOLDER_PATTERN = re.compile(r"\[[^\[\]]+\]")
 try:
     from .gate_types import EgressOutcome, GateDiagnostic, Zweck
     from ..errors import AILIZAError
+    from ..governance.mirror_lint import run_mirror_lint
 except ImportError:  # pragma: no cover
     from providers.gate_types import EgressOutcome, GateDiagnostic, Zweck
     from errors import AILIZAError
+    from governance.mirror_lint import run_mirror_lint
 
 
 # 1 Generate-Versuch + 1 Repair/Retry -- PR-2 kann dies um Modell-Eskalation
@@ -127,6 +138,7 @@ class GatedLLMClient:
         context: Any = None,
         zweck: Zweck | None = None,
         require_schema: bool = False,
+        ingress_source: str | None = None,
     ) -> str:
         zweck = zweck or Zweck.NUTZER_AUSGABE  # fail-closed default
 
@@ -180,6 +192,24 @@ class GatedLLMClient:
                 repair_used = True
                 current_messages = inject_schema_few_shot(messages, provider)
                 continue
+
+            # Egress-Enforcement (PR-3b): nur fuer NUTZER_AUSGABE und nur,
+            # wenn eine Ingress-Quelle zum Vergleich vorliegt. INTERN/PRUEFER
+            # ueberspringen dies bewusst (kein Client-Bypass -- Refusal-/
+            # Invalid-Netz oben bleibt fuer sie unveraendert aktiv).
+            if zweck == Zweck.NUTZER_AUSGABE and ingress_source is not None:
+                findings = run_mirror_lint(ingress_source, result.text)
+                blocking = [f for f in findings if f.is_blocking]
+                if blocking:
+                    self.last_diagnostic = GateDiagnostic(
+                        outcome=EgressOutcome.BLOCK_WITH_ALTERNATIVE.value,
+                        zweck=zweck.value,
+                        attempts=attempts,
+                        candidate_status="VALID",
+                        grund="MIRROR_LINT_BLOCK",
+                        repair_used=repair_used,
+                    )
+                    raise AILIZAError.from_code("policy_blocked")
 
             self.last_diagnostic = GateDiagnostic(
                 outcome=EgressOutcome.DELIVER.value,
