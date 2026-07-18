@@ -3040,6 +3040,7 @@ def skill_propose(
     Schlaegt einen neuen Skill vor. Capability-Check + Sanitierung laufen automatisch.
     Skill wird als 'pending' gespeichert — Admin muss genehmigen.
     """
+    token = _require_user(token)
     try:
         from .skills.skill_store import propose_skill
         from .governance.data_governance import DataClass
