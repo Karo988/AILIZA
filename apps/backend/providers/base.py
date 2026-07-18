@@ -24,10 +24,16 @@ class LLMProvider(ABC):
     def generate(self, messages: list[dict[str, Any]], context: Any) -> str:
         ...
 
-    def generate_with_meta(self, messages: list[dict[str, Any]], context: Any = None) -> ProviderResult:
+    def generate_with_meta(
+        self,
+        messages: list[dict[str, Any]],
+        context: Any = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> ProviderResult:
         """Wie generate(), aber mit Metadaten (z.B. stop_reason) fuer das
-        Dual-Gate-Refusal-Netz. Default-Implementierung fuer Adapter, die noch
-        keine Metadaten liefern -- stop_reason bleibt dann None (kein Bruch)."""
+        Dual-Gate-Refusal-Netz. response_format (optional, PR-5): nur
+        wirksam bei Adaptern mit supports_json_mode=True, sonst ignoriert
+        (Default-Implementierung fuer Adapter ohne Metadaten -- kein Bruch)."""
         return ProviderResult(text=self.generate(messages, context), stop_reason=None)
 
     @abstractmethod

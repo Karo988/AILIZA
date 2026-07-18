@@ -24,9 +24,11 @@ from typing import Any
 
 try:
     from .base import LLMProvider
+    from .gate_types import ProviderResult
     from ..errors import AILIZAError
 except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
+    from providers.gate_types import ProviderResult
     from errors import AILIZAError
 
 
@@ -75,18 +77,26 @@ def _map_groq_http_error(status: int, model: str) -> tuple[str, str]:
     return "provider_error", f"Groq: Unbekannter HTTP-Fehler (HTTP {status})"
 
 
-def _call_groq_once(api_key: str, model: str, messages: list[dict[str, Any]]) -> str:
+def _call_groq_once(
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    response_format: dict[str, Any] | None = None,
+) -> str:
     """
     Einzelner HTTP-Call gegen die Groq-API.
     Wirft AILIZAError mit sanitisiertem admin_detail in safe_alternatives.
     """
-    print(f"AILIZA GROQ CALL | model={model}", flush=True)
-    payload = json.dumps({
+    print(f"AILIZA GROQ CALL | model={model} json_mode={bool(response_format)}", flush=True)
+    body: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "max_tokens": 1000,
         "temperature": 0.3,
-    }).encode()
+    }
+    if response_format:
+        body["response_format"] = response_format
+    payload = json.dumps(body).encode()
     req = urllib.request.Request(
         GROQ_URL,
         data=payload,
@@ -169,6 +179,20 @@ class GroqProvider(LLMProvider):
                         safe_alternatives=combined,
                     ) from fallback_exc
             raise
+
+    def generate_with_meta(
+        self,
+        messages: list[dict[str, Any]],
+        context: Any = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> ProviderResult:
+        if response_format is None:
+            # Kein JSON-Modus angefordert -- bestehendes Verhalten
+            # (inkl. Free-Tier-Modell-Fallback bei 403) bleibt unveraendert.
+            return ProviderResult(text=self.generate(messages, context), stop_reason=None)
+        api_key = self._api_key()
+        text = _call_groq_once(api_key, self.model, messages, response_format=response_format)
+        return ProviderResult(text=text, stop_reason=None)
 
     def stream(self, messages: list[dict[str, Any]], context: Any = None) -> Iterator[str]:
         yield self.generate(messages, context)
