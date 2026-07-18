@@ -316,6 +316,7 @@ class ProviderOrchestrator:
         context: Any = None,
         provider_id: str | None = None,
         zweck: Zweck | None = None,
+        ingress_source: str | None = None,
     ) -> str:
         enforce_kill_switch()
 
@@ -349,7 +350,9 @@ class ProviderOrchestrator:
             start = time.time()
             error_type = None
             try:
-                result = self._gate.generate(provider, messages, context, zweck=zweck)
+                result = self._gate.generate(
+                    provider, messages, context, zweck=zweck, ingress_source=ingress_source,
+                )
                 tokens_out = provider.count_tokens(result)
                 model_name = getattr(provider, "model", "unknown")
                 print(

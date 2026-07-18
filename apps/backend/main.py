@@ -34,6 +34,7 @@ try:
     from .routers.approvals import router as approvals_router
     from .errors import AILIZAError, MESSAGES
     from .providers.orchestrator import ProviderOrchestrator
+    from .providers.gate_types import Zweck
     from .documents.document_handler import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, _extract_text, scan_document
     from .auth import create_token, Role, require_role, get_current_user, TokenData
     from .auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
@@ -70,6 +71,7 @@ except ImportError:
     from routers.approvals import router as approvals_router
     from errors import AILIZAError, MESSAGES
     from providers.orchestrator import ProviderOrchestrator
+    from providers.gate_types import Zweck
     from documents.document_handler import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, _extract_text, scan_document
     from auth import create_token, Role, require_role, get_current_user, TokenData
     from auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
@@ -1390,7 +1392,9 @@ def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tup
         {"role": "user", "content": user_msg},
     ]
     try:
-        answer = _orchestrator.generate(messages, context=context)
+        answer = _orchestrator.generate(
+            messages, context=context, zweck=Zweck.NUTZER_AUSGABE, ingress_source=task,
+        )
         # Tatsaechlich genutzter Provider (nicht der angenommene default_provider) —
         # Freigabe Stufe 1, E3-Zusatzpatch: kein stiller Wechsel.
         _prov = getattr(_orchestrator, "last_provider_id", None) or getattr(_orchestrator, "default_provider", "unknown")
@@ -1493,7 +1497,9 @@ def _ask_llm_directly(
         {"role": "user", "content": task},
     ]
     try:
-        answer = _orchestrator.generate(messages)
+        answer = _orchestrator.generate(
+            messages, zweck=Zweck.NUTZER_AUSGABE, ingress_source=task,
+        )
         print(
             f"AILIZA LLM OK | request_id={rid} result=ok chars={len(answer)}",
             flush=True,
