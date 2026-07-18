@@ -136,9 +136,13 @@ body{
 .pii-consent-text{flex:1;line-height:1.5}
 .pii-consent-btn{background:var(--accent);color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .pii-consent-deny{background:none;color:var(--text-muted);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px}
-/* ── AILIZA-Blase: links, öffnet sich wie ein Mund ── */
+/* ── AILIZA-Blase: links, öffnet sich wie ein Mund ──
+   Deutlich sichtbarer linker Akzentstreifen + leichte Tönung, damit die
+   Antwort nie in langen/farbigen Nutzer-Nachrichten untergeht (Karo-Fund
+   2026-07-17: Fall-3-Sperrhinweis war technisch da, aber optisch verloren). */
 .bubble.ai{
-  background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px;
+  background:var(--accent-soft,#EEF5F0);border:1px solid var(--border);
+  border-left:4px solid var(--accent);border-bottom-left-radius:4px;
   max-width:88%;overflow:hidden;
   max-height:0;opacity:0;padding:0 14px;
   transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .3s ease,padding .3s ease;
@@ -152,7 +156,8 @@ body{
 .tag-warn{background:var(--warn-soft);color:var(--warn)}
 .draft-banner{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;color:#1D4ED8;font-size:12px;font-weight:500;padding:6px 12px;margin-bottom:6px}
 .msg-meta{font-size:10px;color:var(--text-muted);padding:0 4px}
-.typing{background:var(--surface);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-self:flex-start}
+.typing{background:var(--surface);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-items:center;align-self:flex-start}
+.typing-note{font-size:11px;color:var(--text-muted);margin-left:4px;white-space:nowrap}
 .typing span{width:5px;height:5px;background:var(--text-muted);border-radius:50%;animation:bounce .8s infinite}
 .typing span:nth-child(2){animation-delay:.15s}
 .typing span:nth-child(3){animation-delay:.3s}
@@ -180,6 +185,7 @@ body{
 .dsgvo-bubble.secret .dsgvo-bubble-value{color:#F0C040}
 @keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
 .input-label{max-width:720px;margin:0 auto 6px;padding:0 2px;font-size:11px;font-weight:600;color:var(--text-soft);letter-spacing:.01em}
+.agent-clarity-note{font-weight:400;color:var(--text-muted);margin-left:6px}
 .long-chat-hint{max-width:720px;margin:0 auto 8px;padding:8px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--text-soft)}
 .long-chat-hint span{flex:1;min-width:140px}
 .long-chat-hint button{font-size:12px;font-weight:600;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:8px;padding:4px 10px;cursor:pointer}
@@ -405,7 +411,9 @@ body{
           <button type="button" onclick="startFollowUpChat()">📌 Folge-Chat starten</button>
           <button type="button" class="long-chat-hint-x" onclick="dismissLongChatHint()" title="Ausblenden">✕</button>
         </div>
-        <div class="input-label">Nachricht an AILIZA</div>
+        <div class="input-label">Nachricht an AILIZA
+          <span class="agent-clarity-note" title="AILIZA versendet nichts eigenstaendig -- jede Ausgabe ist ein Entwurf zur menschlichen Pruefung (EU AI Act Art. 50).">· 🤖 Entwurfs-Agent — verschickt nichts automatisch, Sie prüfen &amp; senden selbst</span>
+        </div>
         <div class="input-box">
           <div class="input-row">
             <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);onChatInputChanged()" onpaste="handlePaste(event)"></textarea>
@@ -1571,8 +1579,33 @@ function loadHistory(){
   renderChat();
 }
 function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
-function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
-function hideTyping(){document.getElementById("typing")?.remove()}
+function scrollMessageIntoView(el){
+  // Zuverlässiges Hinscrollen zur konkreten Antwort-Blase (nicht nur ans Ende
+  // des Containers) -- wichtig bei sehr langen Nutzer-Nachrichten, damit die
+  // KI-Antwort direkt sichtbar ist, statt im Verlauf zu verschwinden.
+  if(el&&el.scrollIntoView)el.scrollIntoView({block:"end",behavior:"smooth"});
+}
+let _typingLongWaitTimer=null;
+function showTyping(){
+  const i=document.getElementById("chat-inner");
+  if(document.getElementById("typing"))return;
+  const d=document.createElement("div");
+  d.id="typing";d.className="msg ai";
+  d.innerHTML='<div class="typing"><span></span><span></span><span></span><span class="typing-note" id="typing-note"></span></div>';
+  i.appendChild(d);scrollToBottom();
+  // Kaltstart-Hinweis: Render.com (Free-Tier) kann bis zu ~50 Sek. brauchen,
+  // um nach Inaktivitaet wieder aufzuwachen. Ohne Hinweis wirkt das wie
+  // "nichts passiert" (Karo-Fund 2026-07-17). Text erscheint erst nach einer
+  // kurzen Verzoegerung, damit normale, schnelle Antworten ihn nie sehen.
+  _typingLongWaitTimer=setTimeout(()=>{
+    const note=document.getElementById("typing-note");
+    if(note)note.textContent="AILIZA arbeitet noch — Serverstart kann bis zu 50 Sekunden dauern.";
+  },6000);
+}
+function hideTyping(){
+  clearTimeout(_typingLongWaitTimer);
+  document.getElementById("typing")?.remove();
+}
 let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
@@ -1845,6 +1878,10 @@ function addAiMessage(text,warn,draftHint,testModeInfo){
   const last=bubbles[bubbles.length-1];
   if(last){streamAiBubble(last,text);}
   renderPrivacyMemory();scrollToBottom();updateLongChatHint();
+  // Nochmal NACH dem Animations-Tick gezielt zur Blase scrollen (nicht nur
+  // ans Container-Ende) -- verhindert, dass die Antwort bei sehr langen
+  // vorherigen Nachrichten optisch "verloren" wirkt.
+  if(last)setTimeout(()=>scrollMessageIntoView(last),450);
 }
 // ── B2: Aktions-Buttons unter einer AI-Nachricht (nicht persistiert — nach
 // einem Neu-Rendern der History verschwinden sie bewusst) ────────────────────
@@ -1862,6 +1899,7 @@ function appendActionRow(buttons){
   }
   inner.appendChild(row);
   scrollToBottom();
+  scrollMessageIntoView(row);
 }
 
 // ── B2 Fall 3: Einwilligung bestätigen und erneut senden ─────────────────────
