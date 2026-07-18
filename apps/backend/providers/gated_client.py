@@ -18,6 +18,25 @@ import json
 import re
 from typing import Any
 
+# ── PR-2: Provider-Pfad-Klassifikation ───────────────────────────────────────
+# Pfad A = natives Schema + strukturiertes Refusal-Signal (aktuell nur
+# Anthropic ueber generate_with_meta()). ALLES andere -- auch unbekannte
+# oder kuenftige Provider -- faellt automatisch auf Pfad B (prompt-
+# eingebettetes Schema + lokale Validierung). Das ist die fail-safe
+# Generalisierung: ein neuer Provider ist nie versehentlich "zu sicher"
+# eingestuft, nur hoechstens zu vorsichtig.
+_PATH_A_PROVIDER_IDS = {"anthropic"}
+
+_SCHEMA_FEW_SHOT_HINT = (
+    "\n\nWICHTIG: Antworte ausschliesslich mit einem JSON-Objekt, kein Text "
+    "davor oder danach:\n"
+    '{"draft": "<Text>", "risk_flags": [], "compliance_note": ""}\n'
+    "Beispiel:\n"
+    '{"draft": "Beispieltext", "risk_flags": [], "compliance_note": ""}'
+)
+
+_PLACEHOLDER_PATTERN = re.compile(r"\[[^\[\]]+\]")
+
 try:
     from .gate_types import EgressOutcome, GateDiagnostic, Zweck
     from ..errors import AILIZAError
@@ -61,6 +80,37 @@ def recover_json(raw: str) -> dict | None:
         return None
 
 
+def resolve_provider_path(provider: Any) -> str:
+    """'A' fuer natives Schema (aktuell nur Anthropic), sonst immer 'B' --
+    auch fuer unbekannte/kuenftige Provider (fail-safe Default)."""
+    pid = getattr(provider, "provider_id", "")
+    return "A" if pid in _PATH_A_PROVIDER_IDS else "B"
+
+
+def inject_schema_few_shot(messages: list[dict[str, Any]], provider: Any) -> list[dict[str, Any]]:
+    """Haengt fuer Pfad-B-Provider ein Few-Shot-Schema-Beispiel an die
+    System-Nachricht an (Pfad-B-Haertung Stufe 3). Pfad-A-Provider (natives
+    Schema) bleiben unveraendert."""
+    if resolve_provider_path(provider) != "B":
+        return messages
+    out = [dict(m) for m in messages]
+    for m in out:
+        if m.get("role") == "system":
+            m["content"] = m.get("content", "") + _SCHEMA_FEW_SHOT_HINT
+            return out
+    out.insert(0, {"role": "system", "content": _SCHEMA_FEW_SHOT_HINT.strip()})
+    return out
+
+
+def check_placeholder_integrity(source_text: str, candidate_text: str) -> bool:
+    """Stufe-1-PII-Integritaet: die Anzahl der [Platzhalter] im Kandidaten darf
+    gegenueber dem Ursprungstext nicht sinken -- der Generator darf keine
+    bereits geschwaerzten Platzhalter stillschweigend verschlucken."""
+    source_count = len(_PLACEHOLDER_PATTERN.findall(source_text or ""))
+    candidate_count = len(_PLACEHOLDER_PATTERN.findall(candidate_text or ""))
+    return candidate_count >= source_count
+
+
 class GatedLLMClient:
     """Einziger Ort, an dem provider.generate_with_meta() aufgerufen wird
     (siehe T7-Import-Scan-Allowlist). Zweck.INTERN/PRUEFER ueberspringen nur
@@ -76,17 +126,20 @@ class GatedLLMClient:
         messages: list[dict[str, Any]],
         context: Any = None,
         zweck: Zweck | None = None,
+        require_schema: bool = False,
     ) -> str:
         zweck = zweck or Zweck.NUTZER_AUSGABE  # fail-closed default
 
         attempts = 0
         repair_used = False
         saw_refusal = False
+        current_messages = messages
+        path_b_schema = require_schema and resolve_provider_path(provider) == "B"
 
         while attempts < MAX_LLM_CALLS_PRO_ANFRAGE:
             attempts += 1
             try:
-                result = provider.generate_with_meta(messages, context)
+                result = provider.generate_with_meta(current_messages, context)
             except AILIZAError:
                 self.last_diagnostic = GateDiagnostic(
                     outcome=EgressOutcome.BLOCK_WITH_ALTERNATIVE.value,
@@ -107,6 +160,25 @@ class GatedLLMClient:
                 if attempts >= MAX_LLM_CALLS_PRO_ANFRAGE:
                     break
                 repair_used = True
+                continue
+
+            if path_b_schema and recover_json(result.text) is None:
+                if attempts >= MAX_LLM_CALLS_PRO_ANFRAGE:
+                    # Degradations-Leiter: ein Formatproblem blockiert NIE,
+                    # sondern liefert den Klartext-Vertrag aus. Kein Nutzer
+                    # wird fuer Formatprobleme eines Modells bestraft.
+                    self.last_diagnostic = GateDiagnostic(
+                        outcome=EgressOutcome.DELIVER.value,
+                        zweck=zweck.value,
+                        attempts=attempts,
+                        candidate_status="VALID",
+                        grund="SCHEMA_DEGRADED",
+                        repair_used=repair_used,
+                        degraded=True,
+                    )
+                    return result.text
+                repair_used = True
+                current_messages = inject_schema_few_shot(messages, provider)
                 continue
 
             self.last_diagnostic = GateDiagnostic(

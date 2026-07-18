@@ -137,6 +137,13 @@ class GroqProvider(LLMProvider):
     def max_context_tokens(self) -> int:
         return 32768
 
+    @property
+    def supports_json_mode(self) -> bool:
+        # OpenAI-kompatibler response_format={"type":"json_object"} -- nicht
+        # bei allen Groq-Modellen garantiert, daher weiterhin Pfad B mit
+        # lokaler Validierung (PR-2), nicht Pfad A.
+        return True
+
     def estimate_cost(self, tokens_in: int, tokens_out: int) -> float:
         return round((tokens_in * 0.00000059) + (tokens_out * 0.00000079), 8)
 
