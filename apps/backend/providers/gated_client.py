@@ -174,13 +174,33 @@ class GatedLLMClient:
         saw_refusal = False
         current_messages = messages
         path_b_schema = require_schema and resolve_provider_path(provider) == "B"
+        # PR-5: JSON-Modus wird -- falls die Provider-Capability es erlaubt --
+        # NUR beim allerersten Versuch angefordert. Schlaegt er fehl (Provider
+        # unterstuetzt response_format nicht), wird er fuer den Rest des
+        # Requests dauerhaft abgeschaltet, NIE erneut versucht (kein
+        # Fehler-Loop) -- der Retry laeuft dann durch die normale
+        # Degradations-Leiter (recover_json/Few-Shot) weiter.
+        request_json_mode = path_b_schema and bool(getattr(provider, "supports_json_mode", False))
 
         while attempts < MAX_LLM_CALLS_PRO_ANFRAGE:
             attempts += 1
             _emit("GENERATE" if attempts == 1 else "REPAIR")
+            response_format = {"type": "json_object"} if request_json_mode else None
             try:
-                result = provider.generate_with_meta(current_messages, context)
+                if response_format is not None:
+                    result = provider.generate_with_meta(current_messages, context, response_format=response_format)
+                else:
+                    result = provider.generate_with_meta(current_messages, context)
             except AILIZAError:
+                if response_format is not None:
+                    # JSON-Modus vom Provider abgelehnt (z.B. 400/422) --
+                    # kein Block, sondern Degradation: Modus dauerhaft aus,
+                    # falls noch Budget vorhanden regulaerer Repair-Versuch.
+                    request_json_mode = False
+                    if attempts < MAX_LLM_CALLS_PRO_ANFRAGE:
+                        repair_used = True
+                        continue
+                    break
                 self.last_diagnostic = GateDiagnostic(
                     outcome=EgressOutcome.BLOCK_WITH_ALTERNATIVE.value,
                     zweck=zweck.value,
