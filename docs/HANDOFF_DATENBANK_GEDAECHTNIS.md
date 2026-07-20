@@ -5,13 +5,15 @@ Stand: 20.07.2026 · Für den nächsten Agenten, falls Karo die Tokens ausgehen.
 
 ---
 
-## 1. Was bereits fertig ist (3 offene Branches, keiner gemergt)
+## 1. Aktueller Stand (Update 20.07.2026, nachmittags)
 
-| Branch | Inhalt | Status |
+| Branch/Doc | Inhalt | Status |
 |---|---|---|
-| `claude/postgres-pool-pre-ping` | Fix für HTTP-500-Absturz bei toter Neon-Verbindung (`pool_pre_ping`) | ✅ Fertig, 846/846 Tests grün, **wartet auf Merge-OK** |
-| `claude/autarker-betrieb` (PR #42 auf GitHub) | SQLite in `/data`-Docker-Volume für Betrieb ohne Render/Neon | ✅ Fertig, wartet auf Merge-OK |
-| `claude/memory-architecture-v1` | Konzept-Dokument `docs/MEMORY_ARCHITECTURE_V1.md` (17-Tabellen-Bestandsaufnahme, Datenklassen, Lösch-/Backup-Regeln, 3 Mini-PR-Vorschläge) | ✅ Reines Konzept, kein Code, wartet auf Entscheidung |
+| `claude/postgres-pool-pre-ping` | Fix HTTP-500 bei toter Neon-Verbindung (`pool_pre_ping`) | ✅ **GEMERGT nach main**, Render deployed |
+| `claude/autarker-betrieb` | SQLite in `/data`-Docker-Volume | ✅ **GEMERGT nach main** (853 Tests grün) |
+| `docs/MEMORY_ARCHITECTURE_V1.md` | 17-Tabellen-Bestandsaufnahme (Ausgangslage) | ✅ Konzept, gilt weiter als Bestandsaufnahme |
+| `docs/DATABASE_MEMORY_GOVERNANCE_V1.md` | **Neu: Governance-Kernschema v1** (13 Tabellen, 3-Ebenen-Modell, Rollenmatrix, Entscheidungslogik, 5 Mini-PRs) | ✅ Konzept, kein Code, **wartet auf Entscheidung welcher Mini-PR zuerst** |
+| `claude/memory-architecture-v1` | älterer Branch, durch Governance-v1-Doc überholt | kann geschlossen werden |
 
 **Wichtig: Reihenfolge beim Mergen.** `postgres-pool-pre-ping` und `autarker-betrieb` sind unabhängig voneinander, beide gehen von `main` aus — einzeln mergebar, kein Konflikt zu erwarten.
 
