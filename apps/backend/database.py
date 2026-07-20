@@ -265,6 +265,35 @@ users = Table(
     Column("locked_until", DateTime(timezone=True), nullable=True),
 )
 
+# ── Mini-PR 1 (Gedaechtnis-Governance v1): Profil bleibt technisch/klein,
+# aenderbare Arbeits-/Bedienpraeferenzen kommen in eine eigene Tabelle.
+# Kein Gedaechtnis (memory_items) -- das ist bewusst NICHT Teil dieser PR,
+# siehe docs/DATABASE_MEMORY_GOVERNANCE_V1.md.
+user_settings = Table(
+    "user_settings",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(64), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("antwortlaenge", String(32), nullable=False, default="normal"),
+    Column("ton", String(32), nullable=False, default="freundlich"),
+    Column("sprache", String(8), nullable=True),
+    Column("ausgabeformat", String(32), nullable=True),
+    Column("ui_prefs", JSON, nullable=False, default=dict),
+    Column("benachrichtigungen", JSON, nullable=False, default=dict),
+    # Datensparsamer Default: kein automatisches Merken, keine sichtbaren
+    # Zusammenfassungen, ohne dass der Nutzer aktiv zustimmt (Karo-Leitbild
+    # "kein heimliches Profiling"). Vorschlaege sind erlaubt (an/aus je
+    # Vorschlag pruefbar), Speichermodus fragt standardmaessig nach.
+    Column("aktives_merken", Integer, nullable=False, default=0),
+    Column("sichtbare_zusammenfassungen_erlaubt", Integer, nullable=False, default=0),
+    Column("erinnerungs_vorschlaege_erlaubt", Integer, nullable=False, default=1),
+    Column("speichermodus", String(32), nullable=False, default="immer_fragen"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_user_settings_user_tenant", "user_id", "tenant_id", unique=True),
+)
+
 
 messenger_bindings = Table(
     "messenger_bindings",
@@ -843,6 +872,68 @@ def get_user(user_id: str, tenant_id: str | None = None) -> dict[str, Any] | Non
     with engine.begin() as connection:
         row = connection.execute(query).mappings().first()
     return dict(row) if row else None
+
+
+_USER_SETTINGS_BOOL_FIELDS = (
+    "aktives_merken", "sichtbare_zusammenfassungen_erlaubt", "erinnerungs_vorschlaege_erlaubt",
+)
+
+
+def _decode_user_settings_row(row: dict[str, Any]) -> dict[str, Any]:
+    row = dict(row)
+    for field in _USER_SETTINGS_BOOL_FIELDS:
+        row[field] = bool(row[field])
+    return row
+
+
+def get_user_settings(user_id: str, tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any] | None:
+    """Kein Auto-Anlegen: ohne expliziten upsert_user_settings()-Aufruf existiert
+    kein Datensatz -- kein heimliches Anlegen von Einstellungen."""
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(user_settings)
+            .where(user_settings.c.user_id == user_id)
+            .where(user_settings.c.tenant_id == tenant_id)
+        ).mappings().first()
+    return _decode_user_settings_row(dict(row)) if row else None
+
+
+def upsert_user_settings(user_id: str, tenant_id: str = DEFAULT_TENANT_ID, **fields: Any) -> dict[str, Any]:
+    """Legt Settings mit Defaults an oder aktualisiert nur die uebergebenen Felder.
+    Maximal ein Datensatz pro (user_id, tenant_id) -- durchgesetzt per Unique-Index."""
+    now = datetime.now(timezone.utc)
+    defaults = {
+        "antwortlaenge": "normal", "ton": "freundlich", "sprache": None,
+        "ausgabeformat": None, "ui_prefs": {}, "benachrichtigungen": {},
+        "aktives_merken": 0, "sichtbare_zusammenfassungen_erlaubt": 0,
+        "erinnerungs_vorschlaege_erlaubt": 1, "speichermodus": "immer_fragen",
+    }
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(user_settings.c.id, user_settings.c.created_at)
+            .where(user_settings.c.user_id == user_id)
+            .where(user_settings.c.tenant_id == tenant_id)
+        ).first()
+        if existing:
+            update_values = {k: v for k, v in fields.items() if k in defaults}
+            for b in _USER_SETTINGS_BOOL_FIELDS:
+                if b in update_values:
+                    update_values[b] = int(bool(update_values[b]))
+            update_values["updated_at"] = now
+            if update_values:
+                conn.execute(
+                    update(user_settings)
+                    .where(user_settings.c.id == existing[0])
+                    .values(**update_values)
+                )
+        else:
+            values = {**defaults, **{k: v for k, v in fields.items() if k in defaults}}
+            for b in _USER_SETTINGS_BOOL_FIELDS:
+                values[b] = int(bool(values[b]))
+            conn.execute(insert(user_settings).values(
+                user_id=user_id, tenant_id=tenant_id, created_at=now, updated_at=now, **values,
+            ))
+    return get_user_settings(user_id, tenant_id)
 
 
 def _max_attempts() -> int:
