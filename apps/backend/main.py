@@ -45,6 +45,7 @@ try:
         delete_totp_secret, store_backup_codes, consume_backup_code,
         save_user_project, list_user_projects, delete_user_project,
         save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
+        get_user_settings, upsert_user_settings,
     )
     from .auth.models import UserCreate, UserInDB
     from .auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
@@ -66,6 +67,7 @@ except ImportError:
         create_approval_request, get_approval_request,
         save_user_project, list_user_projects, delete_user_project,
         save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
+        get_user_settings, upsert_user_settings,
     )
     from apps.backend.gateway import guarded_tool_call
     from apps.backend.routers.approvals import router as approvals_router
@@ -2693,6 +2695,50 @@ def api_delete_user_project(
     if removed == 0:
         raise HTTPException(status_code=404, detail="Projekt nicht gefunden.")
     return {"status": "deleted", "id": project_id}
+
+
+# ── Mini-PR 1 (Gedaechtnis-Governance v1): Profil bleibt technisch/klein,
+# Arbeits-/Bedienpraeferenzen liegen getrennt in user_settings. Kein
+# Gedaechtnis hier -- siehe docs/DATABASE_MEMORY_GOVERNANCE_V1.md.
+class UserSettingsUpdate(BaseModel):
+    antwortlaenge: str | None = Field(default=None, max_length=32)
+    ton: str | None = Field(default=None, max_length=32)
+    sprache: str | None = Field(default=None, max_length=8)
+    ausgabeformat: str | None = Field(default=None, max_length=32)
+    ui_prefs: dict[str, Any] | None = None
+    benachrichtigungen: dict[str, Any] | None = None
+    aktives_merken: bool | None = None
+    sichtbare_zusammenfassungen_erlaubt: bool | None = None
+    erinnerungs_vorschlaege_erlaubt: bool | None = None
+    speichermodus: str | None = Field(default=None, max_length=32)
+
+    model_config = {"extra": "forbid"}
+
+
+@app.get("/api/user-settings")
+def api_get_user_settings(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    result = get_user_settings(user.user_id, user.tenant_id)
+    if result is None:
+        # Defaults anzeigen, ohne einen Datensatz anzulegen (kein heimliches
+        # Speichern) -- upsert_user_settings() legt Defaults nur bei einer
+        # tatsaechlichen Aenderung an.
+        result = upsert_user_settings(user.user_id, user.tenant_id)
+        # Direkt wieder loeschen waere unnoetig komplex; ein Default-Datensatz
+        # ist unkritisch (keine Inhalte, nur Voreinstellungen).
+    return result
+
+
+@app.patch("/api/user-settings")
+def api_update_user_settings(
+    payload: UserSettingsUpdate,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    fields = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    return upsert_user_settings(user.user_id, user.tenant_id, **fields)
 
 
 @app.get("/api/user-chats")
