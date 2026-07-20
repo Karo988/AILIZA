@@ -23,7 +23,9 @@ def _resolve_database_url(raw: str) -> str:
     - Kein AILIZA_DATABASE_URL gesetzt → relativer Fallback mit Warnung (Dev-Modus)
     - Relativer sqlite-Pfad → zu absolutem Pfad aufgelöst, Warnung ausgegeben
     - Absoluter Pfad → unverändert übernommen
-    - Anderer DB-Typ (postgres etc.) → unverändert
+    - postgres:// oder postgresql:// → postgresql+psycopg:// (psycopg3-Kompatibilität)
+    - postgresql+psycopg:// → unverändert
+    - Andere DB-Typen → unverändert
     - Verzeichnis wird ggf. angelegt (nur bei sqlite)
     """
     if not raw:
@@ -37,8 +39,14 @@ def _resolve_database_url(raw: str) -> str:
         )
         raw = f"sqlite:///{fallback}"
 
+    # Postgres-Dialekt-Normalisierung: postgres:// oder postgresql:// → postgresql+psycopg://
+    if raw.startswith("postgres://"):
+        raw = raw.replace("postgres://", "postgresql+psycopg://", 1)
+    elif raw.startswith("postgresql://"):
+        raw = raw.replace("postgresql://", "postgresql+psycopg://", 1)
+
     if not raw.startswith("sqlite"):
-        return raw  # Postgres/MySQL etc. unverändert
+        return raw  # Normalisiert oder andere DB-Typen
 
     # sqlite:///./pfad  oder  sqlite:///relativer/pfad
     prefix = "sqlite:///"

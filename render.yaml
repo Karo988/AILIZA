@@ -27,4 +27,9 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      # Neon/PostgreSQL Connection String (https://neon.tech)
+      # Format: postgresql+psycopg://user:pass@host/dbname?sslmode=require
+      # Wird automatisch in _resolve_database_url() normalisiert.
+      - key: AILIZA_DATABASE_URL
+        sync: false
     healthCheckPath: /health
