@@ -51,8 +51,8 @@ try:
     from .compliance_auditor import evaluate_compliance, Severity
     from .kill_switch import enforce_kill_switch
 except ImportError:
-    from agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
-    from database import (
+    from apps.backend.agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
+    from apps.backend.database import (
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
@@ -62,20 +62,20 @@ except ImportError:
         delete_totp_secret, store_backup_codes, consume_backup_code,
         create_approval_request, get_approval_request,
     )
-    from gateway import guarded_tool_call
-    from routers.approvals import router as approvals_router
-    from errors import AILIZAError, MESSAGES
-    from providers.orchestrator import ProviderOrchestrator
-    from documents.document_handler import scan_document
-    from auth import create_token, Role, require_role, get_current_user, TokenData
-    from auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
-    from auth.models import UserCreate, UserInDB
-    from auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
-    from governance.data_governance import classify, DataClass, DataTarget
-    from governance.redaction import redact, reinsert
-    from governance.data_matrix import check_data_target, PolicyDecision
-    from compliance_auditor import evaluate_compliance, Severity
-    from kill_switch import enforce_kill_switch
+    from apps.backend.gateway import guarded_tool_call
+    from apps.backend.routers.approvals import router as approvals_router
+    from apps.backend.errors import AILIZAError, MESSAGES
+    from apps.backend.providers.orchestrator import ProviderOrchestrator
+    from apps.backend.documents.document_handler import scan_document
+    from apps.backend.auth import create_token, Role, require_role, get_current_user, TokenData
+    from apps.backend.auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
+    from apps.backend.auth.models import UserCreate, UserInDB
+    from apps.backend.auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
+    from apps.backend.governance.data_governance import classify, DataClass, DataTarget
+    from apps.backend.governance.redaction import redact, reinsert
+    from apps.backend.governance.data_matrix import check_data_target, PolicyDecision
+    from apps.backend.compliance_auditor import evaluate_compliance, Severity
+    from apps.backend.kill_switch import enforce_kill_switch
 
 
 # ── B7 (P-C minimal): Nicht-produktionsreife Module beim Start erkennen ────────
@@ -137,7 +137,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         from .config_integrity import verify_integrity, IntegrityStatus
     except ImportError:
-        from config_integrity import verify_integrity, IntegrityStatus
+        from apps.backend.config_integrity import verify_integrity, IntegrityStatus
 
     _integrity = verify_integrity(_base_dir, _manifest_path)
     _integrity_ok = _integrity.all_ok

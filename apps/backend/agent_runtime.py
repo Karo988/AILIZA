@@ -23,9 +23,9 @@ try:
     )
     from .gateway import execute_approved_tool, guarded_tool_call
 except ImportError:
-    from classifier import classify, InputRiskLevel
-    from redactor import redact
-    from database import (
+    from apps.backend.classifier import classify, InputRiskLevel
+    from apps.backend.redactor import redact
+    from apps.backend.database import (
         create_agent_run,
         create_approval_request,
         get_approval_request,
@@ -33,7 +33,7 @@ except ImportError:
         update_agent_run,
         write_audit_entry,
     )
-    from gateway import execute_approved_tool, guarded_tool_call
+    from apps.backend.gateway import execute_approved_tool, guarded_tool_call
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], dict[str, Any]]
