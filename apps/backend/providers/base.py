@@ -9,6 +9,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from typing import Any
 
+try:
+    from .gate_types import ProviderResult
+except ImportError:  # pragma: no cover
+    from providers.gate_types import ProviderResult
+
 
 class LLMProvider(ABC):
     provider_region: str = "unknown"
@@ -18,6 +23,18 @@ class LLMProvider(ABC):
     @abstractmethod
     def generate(self, messages: list[dict[str, Any]], context: Any) -> str:
         ...
+
+    def generate_with_meta(
+        self,
+        messages: list[dict[str, Any]],
+        context: Any = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> ProviderResult:
+        """Wie generate(), aber mit Metadaten (z.B. stop_reason) fuer das
+        Dual-Gate-Refusal-Netz. response_format (optional, PR-5): nur
+        wirksam bei Adaptern mit supports_json_mode=True, sonst ignoriert
+        (Default-Implementierung fuer Adapter ohne Metadaten -- kein Bruch)."""
+        return ProviderResult(text=self.generate(messages, context), stop_reason=None)
 
     @abstractmethod
     def stream(self, messages: list[dict[str, Any]], context: Any) -> Iterator[str]:

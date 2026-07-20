@@ -7,9 +7,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
+from sqlalchemy import Column, DateTime, Float, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
+
+try:
+    from .governance.field_crypto import encrypt_field, decrypt_field, encrypt_json, decrypt_json
+except ImportError:
+    from governance.field_crypto import encrypt_field, decrypt_field, encrypt_json, decrypt_json  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +301,56 @@ skills = Table(
 )
 
 
+# ── Serverseitige Speicherung: Projekte + Chats (Teilschritt 1) ──────────────
+# Karo-Wunsch 2026-07-16: Projekte/Chats sollen an das Nutzerkonto gebunden
+# und geraeteuebergreifend (Handy <-> Laptop) verfuegbar sein, statt nur im
+# Browser-localStorage. Strikte Mandanten- UND Nutzertrennung: jede Query
+# filtert IMMER nach tenant_id UND user_id. Keine Secrets/Rohdaten hier -
+# Chatnachrichten werden bereits geschwaerzt/pseudonymisiert gespeichert.
+# retention_until ist vorbereitet, aber es gibt (bewusst) noch KEINE
+# automatische Loeschung (Betreiber-Entscheidung 2026-07-16).
+user_projects = Table(
+    "user_projects",
+    metadata_obj,
+    # Zusammengesetzter Primary Key: jeder (tenant_id, user_id) hat seinen
+    # eigenen id-Namensraum -> vollstaendige Isolation, kein Hijack ueber
+    # eine kollidierende id (Karo-Fund im Teilschritt-1-Test).
+    Column("id", String(64), primary_key=True),
+    Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
+    Column("user_id", String(64), primary_key=True, nullable=False),
+    # Text statt String(256): verschlüsselte Werte (Base64 + AES-GCM-Overhead)
+    # sind laenger als der Klartext -> muss auch unter Postgres nicht abschneiden.
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=True),
+    Column("priority", String(32), nullable=True),
+    Column("chat_id", String(64), nullable=True),
+    Column("files", JSON, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("retention_until", DateTime(timezone=True), nullable=True),
+    Column("version", Integer, nullable=False, default=1),
+    Index("ix_user_projects_tenant_user", "tenant_id", "user_id"),
+)
+
+user_chats = Table(
+    "user_chats",
+    metadata_obj,
+    Column("id", String(64), primary_key=True),
+    Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
+    Column("user_id", String(64), primary_key=True, nullable=False),
+    Column("project_id", String(64), nullable=True),  # None = projektloser Chat
+    # Text statt String(256): verschluesselter Titel ist laenger als Klartext.
+    Column("title", Text, nullable=True),
+    Column("messages", JSON, nullable=False, default=list),
+    Column("message_count", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("retention_until", DateTime(timezone=True), nullable=True),
+    Column("version", Integer, nullable=False, default=1),
+    Index("ix_user_chats_tenant_user", "tenant_id", "user_id"),
+)
+
+
 def init_db() -> None:
     metadata_obj.create_all(engine)
     ensure_sqlite_schema()
@@ -324,6 +379,9 @@ def ensure_sqlite_schema() -> None:
         # Account-Lockout-Felder fuer bestehende users-Tabellen
         _add_column_if_missing(connection, "users", "failed_login_attempts", "INTEGER DEFAULT 0")
         _add_column_if_missing(connection, "users", "locked_until", "DATETIME")
+        # Version-Spalte fuer serverseitige Speicherung (Optimistic Locking)
+        _add_column_if_missing(connection, "user_projects", "version", "INTEGER DEFAULT 1")
+        _add_column_if_missing(connection, "user_chats", "version", "INTEGER DEFAULT 1")
         # TOTP-Felder (Tabellen werden durch metadata_obj.create_all angelegt)
 
 
@@ -925,8 +983,6 @@ def consume_backup_code(user_id: str, plain_code: str) -> bool:
                 )
                 return True
     return False
-def init_db() -> None:
-    metadata_obj.create_all(bind=engine)
 
 
 try:
@@ -934,3 +990,211 @@ try:
 except Exception:
     logger.exception("Database initialization failed")
     raise
+
+
+# ── Helper: Serverseitige Projekt-/Chat-Speicherung (Teilschritt 1) ──────────
+# GRUNDREGEL: Jede Funktion filtert IMMER nach tenant_id UND user_id. Es gibt
+# keinen Weg, ueber diese Helper an fremde Datensaetze zu gelangen.
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
+                      name: str, description: str | None = None,
+                      priority: str | None = None, chat_id: str | None = None,
+                      files: list | None = None,
+                      expected_version: int | None = None) -> dict[str, Any]:
+    """Upsert eines Projekts. Ueberschreibt NUR den eigenen Datensatz
+    (gleiche id + tenant_id + user_id)."""
+    now = _now_utc()
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(user_projects.c.id, user_projects.c.created_at)
+            .where(user_projects.c.id == project_id)
+            .where(user_projects.c.tenant_id == tenant_id)
+            .where(user_projects.c.user_id == user_id)
+        ).first()
+        values = dict(name=encrypt_field(name), description=encrypt_field(description),
+                      priority=priority, chat_id=chat_id, files=files, updated_at=now,
+                      tenant_id=tenant_id, user_id=user_id)
+        if existing:
+            current_version = conn.execute(
+                select(user_projects.c.version)
+                .where(user_projects.c.id == project_id)
+                .where(user_projects.c.tenant_id == tenant_id)
+                .where(user_projects.c.user_id == user_id)
+            ).scalar() or 1
+            if expected_version is not None and expected_version != current_version:
+                return {"conflict": True, "current_version": current_version}
+            new_version = current_version + 1
+            conn.execute(
+                update(user_projects)
+                .where(user_projects.c.id == project_id)
+                .where(user_projects.c.tenant_id == tenant_id)
+                .where(user_projects.c.user_id == user_id)
+                .values(version=new_version, **values)
+            )
+            created_at = existing[1]
+        else:
+            created_at = now
+            new_version = 1
+            conn.execute(insert(user_projects).values(
+                id=project_id, created_at=created_at, retention_until=None,
+                version=new_version, **values))
+    return {"id": project_id, "created_at": created_at, "updated_at": now,
+            "version": new_version}
+
+
+def migrate_encrypt_existing_records() -> dict[str, int]:
+    """Verschluesselt bestehende Klartext-Datensaetze nachtraeglich (Teilschritt
+    2, Migration). Idempotent: encrypt_field/-json erkennen bereits
+    verschluesselte Werte (enc:v1:-Praefix) und lassen sie unveraendert, daher
+    kann diese Funktion gefahrlos mehrfach laufen (z. B. bei jedem Start).
+    Kein Datensatz wird geloescht oder inhaltlich veraendert."""
+    migrated = {"projects": 0, "chats": 0}
+    with engine.begin() as conn:
+        for row in conn.execute(select(user_projects)).mappings().all():
+            new_name = encrypt_field(row["name"])
+            new_desc = encrypt_field(row["description"])
+            if new_name != row["name"] or new_desc != row["description"]:
+                conn.execute(
+                    update(user_projects)
+                    .where(user_projects.c.id == row["id"])
+                    .where(user_projects.c.tenant_id == row["tenant_id"])
+                    .where(user_projects.c.user_id == row["user_id"])
+                    .values(name=new_name, description=new_desc)
+                )
+                migrated["projects"] += 1
+        for row in conn.execute(select(user_chats)).mappings().all():
+            new_title = encrypt_field(row["title"])
+            new_messages = encrypt_json(row["messages"])
+            if new_title != row["title"] or new_messages != row["messages"]:
+                conn.execute(
+                    update(user_chats)
+                    .where(user_chats.c.id == row["id"])
+                    .where(user_chats.c.tenant_id == row["tenant_id"])
+                    .where(user_chats.c.user_id == row["user_id"])
+                    .values(title=new_title, messages=new_messages)
+                )
+                migrated["chats"] += 1
+    return migrated
+
+
+def _decrypt_project_row(row: dict[str, Any]) -> dict[str, Any]:
+    row["name"] = decrypt_field(row.get("name"))
+    row["description"] = decrypt_field(row.get("description"))
+    return row
+
+
+def list_user_projects(tenant_id: str, user_id: str) -> list[dict[str, Any]]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(user_projects)
+            .where(user_projects.c.tenant_id == tenant_id)
+            .where(user_projects.c.user_id == user_id)
+            .order_by(user_projects.c.updated_at.desc())
+        ).mappings().all()
+    return [_decrypt_project_row(dict(r)) for r in rows]
+
+
+def delete_user_project(project_id: str, tenant_id: str, user_id: str) -> int:
+    with engine.begin() as conn:
+        result = conn.execute(
+            delete(user_projects)
+            .where(user_projects.c.id == project_id)
+            .where(user_projects.c.tenant_id == tenant_id)
+            .where(user_projects.c.user_id == user_id)
+        )
+    return result.rowcount
+
+
+def save_user_chat(chat_id: str, tenant_id: str, user_id: str, *,
+                   messages: list, project_id: str | None = None,
+                   title: str | None = None,
+                   expected_version: int | None = None) -> dict[str, Any]:
+    """Upsert eines Chats. Ueberschreibt NUR den eigenen Datensatz."""
+    now = _now_utc()
+    msgs = messages if isinstance(messages, list) else []
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(user_chats.c.id, user_chats.c.created_at)
+            .where(user_chats.c.id == chat_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        ).first()
+        values = dict(project_id=project_id, title=encrypt_field(title),
+                      messages=encrypt_json(msgs),
+                      message_count=len(msgs), updated_at=now,
+                      tenant_id=tenant_id, user_id=user_id)
+        if existing:
+            current_version = conn.execute(
+                select(user_chats.c.version)
+                .where(user_chats.c.id == chat_id)
+                .where(user_chats.c.tenant_id == tenant_id)
+                .where(user_chats.c.user_id == user_id)
+            ).scalar() or 1
+            if expected_version is not None and expected_version != current_version:
+                return {"conflict": True, "current_version": current_version}
+            new_version = current_version + 1
+            conn.execute(
+                update(user_chats)
+                .where(user_chats.c.id == chat_id)
+                .where(user_chats.c.tenant_id == tenant_id)
+                .where(user_chats.c.user_id == user_id)
+                .values(version=new_version, **values)
+            )
+            created_at = existing[1]
+            was_created = False
+        else:
+            created_at = now
+            new_version = 1
+            conn.execute(insert(user_chats).values(
+                id=chat_id, created_at=created_at, retention_until=None,
+                version=new_version, **values))
+            was_created = True
+    return {"id": chat_id, "created_at": created_at, "updated_at": now,
+            "message_count": len(msgs), "version": new_version,
+            "created": was_created}
+
+
+def _decrypt_chat_row(row: dict[str, Any]) -> dict[str, Any]:
+    row["title"] = decrypt_field(row.get("title"))
+    row["messages"] = decrypt_json(row.get("messages"))
+    return row
+
+
+def list_user_chats(tenant_id: str, user_id: str,
+                    project_id: str | None = None) -> list[dict[str, Any]]:
+    with engine.begin() as conn:
+        query = (
+            select(user_chats)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        )
+        if project_id is not None:
+            query = query.where(user_chats.c.project_id == project_id)
+        rows = conn.execute(query.order_by(user_chats.c.updated_at.desc())).mappings().all()
+    return [_decrypt_chat_row(dict(r)) for r in rows]
+
+
+def get_user_chat(chat_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(user_chats)
+            .where(user_chats.c.id == chat_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        ).mappings().first()
+    return _decrypt_chat_row(dict(row)) if row else None
+
+
+def delete_user_chat(chat_id: str, tenant_id: str, user_id: str) -> int:
+    with engine.begin() as conn:
+        result = conn.execute(
+            delete(user_chats)
+            .where(user_chats.c.id == chat_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+        )
+    return result.rowcount

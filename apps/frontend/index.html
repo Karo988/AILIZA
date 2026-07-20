@@ -88,6 +88,8 @@ body{
 .chat-header{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:12px;flex-shrink:0}
 .chat-title{font-size:14px;font-weight:600}
 .chat-subtitle{font-size:11px;color:var(--text-muted)}
+.chat-project{display:none;margin-top:4px;font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:2px 8px;border-radius:999px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-project.visible{display:inline-block}
 .chat-actions{margin-left:auto;display:flex;gap:6px}
 .btn-mini{border:1px solid var(--border);background:var(--surface);padding:4px 10px;font-size:11px;border-radius:5px;cursor:pointer;color:var(--text-soft)}
 .btn-mini:hover{background:var(--surface-2)}
@@ -134,9 +136,13 @@ body{
 .pii-consent-text{flex:1;line-height:1.5}
 .pii-consent-btn{background:var(--accent);color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .pii-consent-deny{background:none;color:var(--text-muted);border:1px solid var(--border);padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px}
-/* ── AILIZA-Blase: links, öffnet sich wie ein Mund ── */
+/* ── AILIZA-Blase: links, öffnet sich wie ein Mund ──
+   Deutlich sichtbarer linker Akzentstreifen + leichte Tönung, damit die
+   Antwort nie in langen/farbigen Nutzer-Nachrichten untergeht (Karo-Fund
+   2026-07-17: Fall-3-Sperrhinweis war technisch da, aber optisch verloren). */
 .bubble.ai{
-  background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px;
+  background:var(--accent-soft,#EEF5F0);border:1px solid var(--border);
+  border-left:4px solid var(--accent);border-bottom-left-radius:4px;
   max-width:88%;overflow:hidden;
   max-height:0;opacity:0;padding:0 14px;
   transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .3s ease,padding .3s ease;
@@ -150,7 +156,8 @@ body{
 .tag-warn{background:var(--warn-soft);color:var(--warn)}
 .draft-banner{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;color:#1D4ED8;font-size:12px;font-weight:500;padding:6px 12px;margin-bottom:6px}
 .msg-meta{font-size:10px;color:var(--text-muted);padding:0 4px}
-.typing{background:var(--surface);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-self:flex-start}
+.typing{background:var(--surface);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;padding:10px 14px;display:flex;gap:4px;align-items:center;align-self:flex-start}
+.typing-note{font-size:11px;color:var(--text-muted);margin-left:4px;white-space:nowrap}
 .typing span{width:5px;height:5px;background:var(--text-muted);border-radius:50%;animation:bounce .8s infinite}
 .typing span:nth-child(2){animation-delay:.15s}
 .typing span:nth-child(3){animation-delay:.3s}
@@ -178,6 +185,11 @@ body{
 .dsgvo-bubble.secret .dsgvo-bubble-value{color:#F0C040}
 @keyframes bubbleIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
 .input-label{max-width:720px;margin:0 auto 6px;padding:0 2px;font-size:11px;font-weight:600;color:var(--text-soft);letter-spacing:.01em}
+.agent-clarity-note{font-weight:400;color:var(--text-muted);margin-left:6px}
+.long-chat-hint{max-width:720px;margin:0 auto 8px;padding:8px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--text-soft)}
+.long-chat-hint span{flex:1;min-width:140px}
+.long-chat-hint button{font-size:12px;font-weight:600;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:8px;padding:4px 10px;cursor:pointer}
+.long-chat-hint .long-chat-hint-x{border:none;color:var(--text-muted);padding:4px 6px}
 .input-box{max-width:720px;margin:0 auto;background:var(--surface);border:1.5px solid var(--border-strong);border-radius:12px;padding:10px 12px;box-shadow:0 1px 2px rgba(26,24,21,.04);transition:border-color .15s,box-shadow .15s}
 .input-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(45,95,63,.1)}
 .input-row{display:flex;align-items:flex-end;gap:8px}
@@ -205,11 +217,31 @@ body{
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
 .card-h{font-size:13px;font-weight:600;margin-bottom:4px}
 .card-desc{font-size:12px;color:var(--text-soft);margin-bottom:10px;line-height:1.5}
+.card-openchat{margin-top:10px;font-size:12px;font-weight:600;color:var(--accent);display:flex;align-items:center;gap:4px}
+#proj-grid .card{cursor:pointer}
 .card-meta{display:flex;gap:6px;font-size:10px;flex-wrap:wrap}
 .meta-pill{background:var(--surface-2);color:var(--text-soft);padding:2px 8px;border-radius:10px;font-weight:500}
 .meta-pill.hi{background:var(--warn-soft);color:var(--warn)}
 .meta-pill.del{background:transparent;color:var(--text-muted);cursor:pointer;border:none;margin-left:auto}
 .meta-pill.del:hover{color:var(--err)}
+.project-upload-status{display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:10px 12px;font-size:12px;color:var(--text-soft)}
+.project-upload-status.visible{display:block}
+.project-upload-status.ok{border-color:#B6D2BD;background:var(--accent-soft);color:var(--accent)}
+.project-upload-status.err{border-color:#E6B8B8;background:#FCE8E8;color:var(--err)}
+.project-files{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.project-files-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.project-files-title{font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.project-file-upload{border:1px solid var(--border);background:var(--surface);color:var(--accent);border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;cursor:pointer}
+.project-file-upload:hover{background:var(--accent-soft)}
+.project-file-input{display:none}
+.project-file-list{display:flex;flex-direction:column;gap:6px}
+.project-file-item{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;border:1px solid var(--border);background:var(--surface-2);border-radius:7px;padding:7px 8px}
+.project-file-main{min-width:0}
+.project-file-name{font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-file-meta{font-size:10px;color:var(--text-muted);margin-top:2px}
+.project-file-delete{border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:12px;line-height:1;padding:2px 4px;flex-shrink:0}
+.project-file-delete:hover{color:var(--err)}
+.project-file-empty{font-size:11px;color:var(--text-muted);padding:4px 0}
 .empty{text-align:center;padding:48px;color:var(--text-muted);font-size:13px}
 .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px}
 .metric{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
@@ -307,10 +339,12 @@ body{
 </head>
 <body>
 <div class="topbar">
+  <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen" aria-label="Menü öffnen">☰</button>
   <div class="brand">AI<span class="brand-mark">LIZA</span><span class="brand-sub">v0.5 · KMU · EU-konform</span></div>
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
+    <span id="sync-status" title="" style="font-size:12px;display:none;cursor:default"></span>
     <button class="btn-ghost" id="topbar-auth-btn" onclick="openLoginModal()" style="font-size:12px;padding:5px 10px">Anmelden</button>
   </div>
 </div>
@@ -348,7 +382,7 @@ body{
     <div class="view active" id="view-chat">
       <div class="chat-header">
         <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen">☰</button>
-        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 50</div></div>
+        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 50</div><div class="chat-project" id="active-project-name"></div></div>
         <div class="chat-actions">
           <button class="btn-mini" onclick="clearChat()">🗑 Löschen</button>
           <button class="btn-mini" onclick="exportChat()">⬇ Export</button>
@@ -372,7 +406,14 @@ body{
           <button class="pii-consent-btn" id="pii-consent-btn" onclick="approvePiiConsent()">Verstanden &amp; senden</button>
           <button class="pii-consent-deny" onclick="denyPiiConsent()">Abbrechen</button>
         </div>
-        <div class="input-label">Nachricht an AILIZA</div>
+        <div class="long-chat-hint" id="long-chat-hint" style="display:none">
+          <span>💬 Dieser Chat wird lang — ein Folge-Chat bleibt übersichtlicher.</span>
+          <button type="button" onclick="startFollowUpChat()">📌 Folge-Chat starten</button>
+          <button type="button" class="long-chat-hint-x" onclick="dismissLongChatHint()" title="Ausblenden">✕</button>
+        </div>
+        <div class="input-label">Nachricht an AILIZA
+          <span class="agent-clarity-note" title="AILIZA versendet nichts eigenstaendig -- jede Ausgabe ist ein Entwurf zur menschlichen Pruefung (EU AI Act Art. 50).">· 🤖 Entwurfs-Agent — verschickt nichts automatisch, Sie prüfen &amp; senden selbst</span>
+        </div>
         <div class="input-box">
           <div class="input-row">
             <textarea class="input-field" id="chat-input" rows="1" placeholder="Nachricht eingeben… Enter = Senden, Shift+Enter = neue Zeile" onkeydown="handleKey(event)" oninput="autoResize(this);onChatInputChanged()" onpaste="handlePaste(event)"></textarea>
@@ -386,6 +427,8 @@ body{
           <div class="input-toolbar">
             <button class="tool-btn" id="tool-search" onclick="toggleTool('search')">🔍 Web-Suche</button>
             <button class="tool-btn" id="tool-auto" onclick="toggleTool('auto')">⚡ Autonom</button>
+            <button class="tool-btn" id="tool-chat-upload" onclick="document.getElementById('chat-file-input').click()" title="Textdatei einlesen (wird geprüft, bevor der Inhalt ins Eingabefeld übernommen wird)">📎 Datei</button>
+            <input type="file" id="chat-file-input" accept=".pdf,.docx,.xlsx,.txt,.csv,.md,.html,.htm,.rtf,.json,.xml,.yaml,.yml,.sql,.js,.ts,.py,.css,.php" style="display:none" onchange="handleChatFileUpload(event)">
             <div class="dev-controls" style="display:none">
               <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
               <div class="tool-sep"></div>
@@ -412,6 +455,7 @@ body{
     <div class="view" id="view-projects">
       <div class="page-wrap">
         <div class="page-head"><div><div class="page-title">Projekte</div><div class="page-sub">Aufgaben verwalten und Chats zuordnen</div></div><button class="btn-primary" onclick="openProjModal()">＋ Neues Projekt</button></div>
+        <div class="project-upload-status" id="project-upload-status" role="status" aria-live="polite"></div>
         <div class="grid" id="proj-grid"></div>
       </div>
     </div>
@@ -685,6 +729,7 @@ const SKILLS=[
 ];
 let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
 let currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;
+let activeProjectId=localStorage.getItem("ailiza_active_project_id")||null;
 let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
 let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
 let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
@@ -785,11 +830,400 @@ function closeSidebar(){
   document.getElementById("sidebar").classList.remove("open");
   document.getElementById("sidebar-overlay").classList.remove("open");
 }
+function saveProjects(){localStorage.setItem("ailiza_projects",JSON.stringify(projects))}
+// ── TS3a: Serverseitige Projekt-Synchronisation (Cross-Device Handy<->Laptop) ─
+// Grundsatz: ADDITIV. Nicht eingeloggt => reiner localStorage-Betrieb wie bisher.
+// BEST EFFORT: Server-Fehler werden still geschluckt, localStorage bleibt Quelle,
+// kein Fehler-Popup (Anwenderfreundlichkeit). KEIN Datenverlust: lokale und
+// Server-Daten werden gemergt statt ueberschrieben; die serverId am lokalen
+// Objekt verhindert Doppel-Uploads.
+let _projectsSynced=false;   // pro Seitenaufruf nur einmal Erst-Sync
+let _projectSyncInFlight=false;
+function mapProjectToServer(p){
+  return {name:p.name||"Projekt",description:p.desc||"",priority:p.prio||"",
+          chat_id:p.chat_id||null,files:Array.isArray(p.files)?p.files:null};
+}
+function mapProjectFromServer(s){
+  return {id:s.id,serverId:s.id,name:s.name,desc:s.description||"",prio:s.priority||"",
+          chat_id:s.chat_id||null,files:Array.isArray(s.files)?s.files:[],
+          created:s.created_at,updated:s.updated_at,version:s.version};
+}
+async function serverCreateProject(p){
+  const r=await fetch(`${API}/api/user-projects`,{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(mapProjectToServer(p))});
+  if(!r.ok)throw new Error("create failed");
+  return await r.json();
+}
+async function serverUpdateProject(p){
+  const body={...mapProjectToServer(p)};
+  if(typeof p.version==="number")body.expected_version=p.version;
+  const r=await fetch(`${API}/api/user-projects/${encodeURIComponent(p.serverId)}`,{method:"PATCH",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error("update failed");
+  return await r.json();
+}
+function serverDeleteProject(serverId){
+  // fire-and-forget: lokale Loeschung ist die Quelle, Server best effort
+  fetch(`${API}/api/user-projects/${encodeURIComponent(serverId)}`,{method:"DELETE"}).catch(()=>{});
+}
+async function syncProjectsOnLogin(){
+  if(_projectSyncInFlight)return;
+  _projectSyncInFlight=true;
+  try{
+    let serverList=[];
+    try{
+      const r=await fetch(`${API}/api/user-projects`,{signal:AbortSignal.timeout(6000)});
+      if(!r.ok)return;               // nicht eingeloggt/Fehler -> nichts tun
+      serverList=(await r.json()).projects||[];
+    }catch(e){return;}              // offline -> nichts tun, localStorage bleibt
+    const serverById=new Map(serverList.map(s=>[String(s.id),s]));
+    // a) Lokale Projekte ohne serverId einmalig hochladen (Erst-Upload)
+    for(const p of projects){
+      if(!p.serverId){
+        try{const created=await serverCreateProject(p);p.serverId=created.id;p.version=created.version;}
+        catch(e){/* best effort: bleibt lokal, naechster Login versucht erneut */}
+      }
+    }
+    // b) Server-Projekte, die lokal fehlen, herunterladen
+    const localServerIds=new Set(projects.filter(p=>p.serverId).map(p=>String(p.serverId)));
+    for(const s of serverList){
+      if(!localServerIds.has(String(s.id)))projects.push(mapProjectFromServer(s));
+    }
+    // c) Kollision (gleiche serverId beidseitig): juengeres updated_at gewinnt,
+    //    im echten Konfliktfall werden BEIDE behalten (kein stilles Loeschen).
+    for(const p of projects){
+      if(!p.serverId)continue;
+      const s=serverById.get(String(p.serverId));
+      if(!s)continue;
+      const localT=p.updated?Date.parse(p.updated):0;
+      const serverT=s.updated_at?Date.parse(s.updated_at):0;
+      if(serverT>localT){
+        Object.assign(p,mapProjectFromServer(s));           // Server neuer -> lokal uebernehmen
+      }else if(localT>serverT){
+        try{const res=await serverUpdateProject(p);if(res&&res.version)p.version=res.version;}
+        catch(e){/* Konflikt/Fehler: beide behalten, kein Verlust */}
+      }
+    }
+    saveProjects();renderProjects();renderProjectList();
+  }finally{_projectSyncInFlight=false;}
+}
+// ── TS3b: Serverseitige Chat-Synchronisation (freie Chats / "Zuletzt") ────────
+// Gleiche Grundsaetze wie bei Projekten: additiv, best effort, kein Datenverlust
+// (Merge statt Ueberschreiben, juengeres updated gewinnt, im Konflikt beide
+// behalten). Umfang TS3b: die freie Chat-Liste (ailiza_chat_list). Projekt-Chat-
+// Nachrichten-Sync ist als eigener kleiner Folgeschritt notiert.
+let _chatsSynced=false;
+let _chatSyncInFlight=false;
+function setSyncStatus(state){
+  // state: "ok" | "fail" | "sync" | "" (ausblenden). Dezent, blockiert nie.
+  const el=document.getElementById("sync-status");
+  if(!el)return;
+  const map={ok:["☁︎✓","Synchronisiert"],fail:["☁︎!","Zuletzt lokal gespeichert – Sync folgt beim naechsten Login"],sync:["☁︎…","Synchronisiere…"]};
+  if(!state||!map[state]){el.style.display="none";return;}
+  el.textContent=map[state][0];el.title=map[state][1];el.style.display="inline";
+}
+function mapChatToServer(c){
+  return {messages:Array.isArray(c.messages)?c.messages:[],project_id:c.project_id||null,title:c.title||c.name||null};
+}
+async function serverPutChat(c){
+  const body={...mapChatToServer(c)};
+  if(typeof c.version==="number")body.expected_version=c.version;
+  const r=await fetch(`${API}/api/user-chats/${encodeURIComponent(c.id)}`,{method:"PUT",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error("put chat failed");
+  return await r.json();
+}
+function serverDeleteChat(chatId){
+  fetch(`${API}/api/user-chats/${encodeURIComponent(chatId)}`,{method:"DELETE"}).catch(()=>{});
+}
+async function syncChatsOnLogin(){
+  if(_chatSyncInFlight)return;
+  _chatSyncInFlight=true;
+  try{
+    let serverChats=[];
+    try{
+      const r=await fetch(`${API}/api/user-chats`,{signal:AbortSignal.timeout(6000)});
+      if(!r.ok)return;                 // nicht eingeloggt/Fehler -> nichts tun
+      serverChats=(await r.json()).chats||[];
+    }catch(e){return;}                // offline -> localStorage bleibt Quelle
+    setSyncStatus("sync");
+    let ok=true;
+    // Nur freie Chats (project_id leer) in dieser Stufe
+    const serverFree=serverChats.filter(s=>!s.project_id);
+    const serverById=new Map(serverFree.map(s=>[String(s.id),s]));
+    let list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+    const localById=new Map(list.map(c=>[String(c.id),c]));
+    // a) Lokale Chats hochladen, die auf dem Server fehlen ODER lokal neuer sind
+    for(const c of list){
+      const s=serverById.get(String(c.id));
+      const localT=c.updated?Date.parse(c.updated):0;
+      const serverT=s&&s.updated_at?Date.parse(s.updated_at):0;
+      if(!s||localT>serverT){
+        try{const res=await serverPutChat({id:c.id,messages:c.messages,title:c.name,version:c.version});
+            c.version=res.version;c.updated=res.updated_at;}
+        catch(e){ok=false;/* best effort: bleibt lokal */}
+      }else if(serverT>localT){
+        c.messages=s.messages||[];c.name=s.title||c.name;c.version=s.version;c.updated=s.updated_at; // Server neuer
+      }
+    }
+    // b) Server-Chats, die lokal fehlen, herunterladen
+    for(const s of serverFree){
+      if(!localById.has(String(s.id))){
+        list.push({id:s.id,name:s.title||"Chat",messages:s.messages||[],version:s.version,updated:s.updated_at});
+      }
+    }
+    localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
+    renderRecent();
+    // c) Projekt-Chat-Nachrichten (project_id gesetzt) — Ordner cross-device komplett.
+    //    Laeuft NACH dem Projekt-Sync, daher haben Projekte hier serverId + chat_id.
+    const meta=JSON.parse(localStorage.getItem("ailiza_chat_meta")||"{}");
+    for(const p of projects){
+      if(!p.chat_id)continue;
+      const key=getProjectChatStorageKey(p.chat_id);
+      const localMsgs=JSON.parse(localStorage.getItem(key)||"[]");
+      const s=serverChats.find(x=>String(x.id)===String(p.chat_id));
+      const pid=p.serverId||p.id;
+      const localT=meta[p.chat_id]&&meta[p.chat_id].updated?Date.parse(meta[p.chat_id].updated):0;
+      const serverT=s&&s.updated_at?Date.parse(s.updated_at):0;
+      if((!s||localT>serverT)&&localMsgs.length){                 // lokal neuer/fehlt -> hochladen
+        try{const res=await serverPutChat({id:p.chat_id,messages:localMsgs,project_id:pid,title:p.name,
+              version:meta[p.chat_id]?meta[p.chat_id].version:undefined});
+            meta[p.chat_id]={updated:res.updated_at,version:res.version};}
+        catch(e){ok=false;}
+      }else if(s&&serverT>localT){                                // Server neuer -> herunterladen
+        localStorage.setItem(key,JSON.stringify((s.messages||[]).slice(-100)));
+        meta[p.chat_id]={updated:s.updated_at,version:s.version};
+        if(String(currentChatId)===String(p.chat_id)){           // offener Projekt-Chat sofort aktualisieren
+          chatHistory=s.messages||[];
+          context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+          renderChat();
+        }
+      }
+    }
+    localStorage.setItem("ailiza_chat_meta",JSON.stringify(meta));
+    setSyncStatus(ok?"ok":"fail");
+  }finally{_chatSyncInFlight=false;}
+}
+async function syncAllOnLogin(){
+  // Reihenfolge wichtig: erst Projekte (liefert serverId + chat_id), dann Chats
+  // (freie + Projekt-Chat-Nachrichten). Beide best effort, kein Datenverlust.
+  await syncProjectsOnLogin();
+  await syncChatsOnLogin();
+}
+function createChatId(prefix="chat"){return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`}
+function getProjectChatStorageKey(chatId){return `ailiza_chat_${chatId}`}
+function getActiveChatStorageKey(){return activeProjectId&&currentChatId?getProjectChatStorageKey(currentChatId):"ailiza_chat"}
+function getActiveProject(){return projects.find(p=>String(p.id)===String(activeProjectId))||null}
+function getProjectFiles(project){return Array.isArray(project?.files)?project.files:[]}
+function documentUploadHeaders(){const headers={...authHeaders()};delete headers["Content-Type"];return headers}
+function isValidDocumentScanResponse(body){
+  return body&&typeof body.allowed==="boolean"&&typeof body.decision==="string"&&"highest_risk_class" in body;
+}
+function showProjectUploadStatus(message,type=""){
+  const el=document.getElementById("project-upload-status");
+  if(!el)return;
+  el.textContent=message;
+  el.className=`project-upload-status visible${type?` ${type}`:""}`;
+}
+function clearProjectUploadStatus(){
+  const el=document.getElementById("project-upload-status");
+  if(!el)return;
+  el.textContent="";
+  el.className="project-upload-status";
+}
+function documentScanFailureMessage(body,fallback="Datei wurde nicht aufgenommen."){
+  if(body&&typeof body.reason==="string"&&body.reason.trim())return body.reason.trim();
+  if(body&&typeof body.decision==="string"&&body.decision.trim())return `Scan-Entscheidung: ${body.decision}`;
+  return fallback;
+}
+async function scanFileForUpload(file){
+  const form=new FormData();
+  form.append("file",file);
+  try{
+    const response=await fetch(`${API}/documents/scan`,{method:"POST",headers:documentUploadHeaders(),body:form});
+    let body=null;
+    try{body=await response.json()}catch{}
+    if(!response.ok||!isValidDocumentScanResponse(body)||body.allowed!==true){
+      return{ok:false,reason:documentScanFailureMessage(body,"Sicherheitsprüfung fehlgeschlagen.")};
+    }
+    return{ok:true,decision:body.decision,highest_risk_class:body.highest_risk_class};
+  }catch{
+    return{ok:false,reason:"Sicherheitsprüfung nicht erreichbar."};
+  }
+}
+// Karo-Wunsch 2026-07-15: Dateien werden nicht mehr im Browser als Text
+// ausgelesen. PDF, DOCX, XLSX, TXT und CSV gehen nach dem Pflicht-Scan
+// direkt an den sicheren Backend-Endpunkt /documents/agent-run.
+const CHAT_FILE_MAX_BYTES=10*1024*1024;
+const CHAT_FILE_EXTENSIONS=[".pdf",".docx",".xlsx",".txt",".csv",".md",".html",".htm",".rtf",".json",".xml",".yaml",".yml",".sql",".js",".ts",".py",".css",".php"];
+let pendingChatFile=null;
+
+function chatFileExtension(name){
+  const lower=String(name||"").toLowerCase();
+  const dot=lower.lastIndexOf(".");
+  return dot>=0?lower.slice(dot):"";
+}
+
+function showPendingChatFile(file){
+  const label=document.getElementById("kI-preview-label");
+  if(!label)return;
+  if(file){
+    const size=Math.round(file.size/1024);
+    label.textContent=`📎 Datei bereit: ${file.name} (${size} KB)`;
+  }else{
+    label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
+  }
+}
+
+async function handleChatFileUpload(e){
+  const input=e.target;
+  const file=input?.files?.[0];
+
+  if(!file)return;
+
+  const ext=chatFileExtension(file.name);
+
+  if(!CHAT_FILE_EXTENSIONS.includes(ext)){
+    alert(`Dateityp nicht unterstützt: ${ext||"ohne Endung"}. Erlaubt sind PDF, DOCX, XLSX, TXT und CSV.`);
+    input.value="";
+    return;
+  }
+
+  if(file.size>CHAT_FILE_MAX_BYTES){
+    alert(`Datei zu groß: ${file.name}. Maximal 10 MB.`);
+    input.value="";
+    return;
+  }
+
+  showPendingChatFile(file);
+
+  const scan=await scanFileForUpload(file);
+
+  if(!scan.ok){
+    pendingChatFile=null;
+    showPendingChatFile(null);
+    alert(`Datei abgelehnt: ${file.name} — ${scan.reason}`);
+    input.value="";
+    return;
+  }
+
+  pendingChatFile=file;
+  showPendingChatFile(file);
+
+  const el=document.getElementById("chat-input");
+
+  if(!el.value.trim()){
+    el.value=`Analysiere die Datei "${file.name}" und fasse die wichtigsten Inhalte strukturiert zusammen.`;
+  }
+
+  autoResize(el);
+  onChatInputChanged();
+  el.focus();
+  input.value="";
+}
+async function uploadProjectFile(index,input){
+  const project=projects[index];
+  const files=input?.files?Array.from(input.files):[];
+  if(!project||!files.length)return;
+  project.files=getProjectFiles(project);
+  let acceptedCount=0,rejectedCount=0,lastRejectReason="";
+  for(const file of files){
+    showProjectUploadStatus(`Prüfe Datei: ${file.name}`);
+    const scan=await scanFileForUpload(file);
+    if(!scan.ok){
+      rejectedCount++;lastRejectReason=`${file.name}: ${scan.reason}`;
+      continue;
+    }
+    project.files.push({
+      name:file.name,
+      uploaded_at:new Date().toISOString(),
+      decision:scan.decision,
+      highest_risk_class:scan.highest_risk_class
+    });
+    acceptedCount++;
+  }
+  saveProjects();
+  renderProjects();
+  renderProjectList();
+  if(rejectedCount&&acceptedCount){
+    showProjectUploadStatus(`${acceptedCount} Datei(en) aufgenommen, ${rejectedCount} abgelehnt (${lastRejectReason})`,"err");
+  }else if(rejectedCount){
+    showProjectUploadStatus(`Datei abgelehnt: ${lastRejectReason}`,"err");
+  }else{
+    showProjectUploadStatus(`${acceptedCount} Datei(en) aufgenommen.`,"ok");
+  }
+  if(input)input.value="";
+}
+function renderProjectFiles(project,index){
+  const files=getProjectFiles(project);
+  const items=files.length?files.map((file,fileIndex)=>`
+    <div class="project-file-item">
+      <div class="project-file-main">
+        <div class="project-file-name">${escapeHtml(file.name)}</div>
+        <div class="project-file-meta">Scan: ${escapeHtml(file.decision)} · Risiko: ${escapeHtml(file.highest_risk_class||"n/a")} · ${escapeHtml(file.uploaded_at||"")}</div>
+      </div>
+      <button class="project-file-delete" title="Datei entfernen" onclick="event.stopPropagation();deleteProjectFile(${index},${fileIndex})">✕</button>
+    </div>
+  `).join(""):'<div class="project-file-empty">Keine Dateien</div>';
+  return `<div class="project-files">
+    <div class="project-files-head">
+      <div class="project-files-title">Dateien</div>
+      <button class="project-file-upload" onclick="event.stopPropagation();document.getElementById('project-file-input-${index}').click()">＋ Datei</button>
+      <input class="project-file-input" id="project-file-input-${index}" type="file" multiple onclick="event.stopPropagation()" accept=".pdf,.docx,.xlsx,.txt,.csv,.md,.html,.htm,.rtf,.json,.xml,.yaml,.yml,.sql,.js,.ts,.py,.css,.php" onchange="uploadProjectFile(${index},this)">
+    </div>
+    <div class="project-file-list">${items}</div>
+  </div>`;
+}
+function deleteProjectFile(projectIndex,fileIndex){
+  const project=projects[projectIndex];
+  if(!project||!Array.isArray(project.files)||!project.files[fileIndex])return;
+  project.files.splice(fileIndex,1);
+  saveProjects();
+  renderProjects();
+  renderProjectList();
+  showProjectUploadStatus("Datei-Metadaten entfernt.","ok");
+}
+function updateChatProjectLabel(){
+  const el=document.getElementById("active-project-name");if(!el)return;
+  const project=getActiveProject();
+  if(project){el.textContent=`‹ Projekt: ${project.name}`;el.classList.add("visible");
+    el.style.cursor="pointer";el.title="Zurück zu den Projekten";
+    el.onclick=()=>showView("projects");}
+  else{el.textContent="";el.classList.remove("visible");el.onclick=null}
+}
+function setActiveProject(project){
+  activeProjectId=project?String(project.id):null;
+  if(activeProjectId)localStorage.setItem("ailiza_active_project_id",activeProjectId);
+  else localStorage.removeItem("ailiza_active_project_id");
+  updateChatProjectLabel();
+}
+function persistActiveChat(){
+  localStorage.setItem(getActiveChatStorageKey(),JSON.stringify(chatHistory.slice(-100)));
+  if(!activeProjectId){localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));return;}
+  // Projekt-Chat: best effort auch serverseitig ablegen (Cross-Device-Ordner)
+  const p=getActiveProject();
+  if(p&&currentChatId&&chatHistory.length){
+    const meta=JSON.parse(localStorage.getItem("ailiza_chat_meta")||"{}");
+    serverPutChat({id:currentChatId,messages:chatHistory,project_id:p.serverId||p.id,title:p.name,
+      version:meta[currentChatId]?meta[currentChatId].version:undefined})
+      .then(res=>{meta[currentChatId]={updated:res.updated_at,version:res.version};
+        localStorage.setItem("ailiza_chat_meta",JSON.stringify(meta));setSyncStatus("ok");})
+      .catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es nach */});
+  }
+}
+function loadActiveProjectFromStorage(){
+  if(!activeProjectId)return;
+  const project=getActiveProject();
+  if(!project||!project.chat_id){setActiveProject(null);return}
+  currentChatId=project.chat_id;
+  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(project.chat_id))||"[]");
+}
 function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
   document.getElementById("m-days").textContent=days;
-  updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();renderPrivacyMemory();checkStatus();refreshAuthButton();
+  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderPrivacyMemory();checkStatus();refreshAuthButton();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
@@ -806,6 +1240,7 @@ async function refreshAuthButton(){
       const me=await r.json();
       btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
       btn.onclick=doLogout;
+      if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
     }
   }catch(e){/* Netzwerkfehler: Button bleibt auf "Anmelden" */}
@@ -814,6 +1249,7 @@ async function refreshAuthButton(){
 }
 async function doLogout(){
   try{await fetch(`${API}/auth/logout`,{method:"POST"});}catch(e){}
+  _projectsSynced=false;_chatsSynced=false;   // naechster Login startet Erst-Sync erneut
   refreshAuthButton();
 }
 function showView(name,el){
@@ -944,6 +1380,7 @@ function loadChat(id){
   const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
   const chat=list.find(c=>c.id===id);
   if(!chat)return;
+  setActiveProject(null);
   currentChatId=id;
   localStorage.setItem("ailiza_current_chat_id",id);
   chatHistory=chat.messages||[];
@@ -955,7 +1392,8 @@ function loadChat(id){
 }
 function newChat(){
   saveCurrentChat();
-  currentChatId=Date.now().toString();
+  currentChatId=createChatId();
+  setActiveProject(null);
   localStorage.setItem("ailiza_current_chat_id",currentChatId);
   chatHistory=[];context=[];
   localStorage.setItem("ailiza_chat","[]");
@@ -969,17 +1407,44 @@ function newChat(){
   document.getElementById("chat-input").value="";
   document.getElementById("chat-input").focus();
 }
-function clearChat(){if(!confirm("Verlauf löschen?"))return;chatHistory=[];context=[];localStorage.setItem("ailiza_chat","[]");if(currentChatId){const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));renderRecent()}renderChat();renderPrivacyMemory()}
+function clearChat(){
+  if(!confirm("Verlauf löschen?"))return;
+  chatHistory=[];context=[];
+  if(activeProjectId&&currentChatId){
+    localStorage.setItem(getProjectChatStorageKey(currentChatId),"[]");
+  }else{
+    localStorage.setItem("ailiza_chat","[]");
+    if(currentChatId){
+      const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+      localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));
+      serverDeleteChat(currentChatId);   // best effort: auch serverseitig entfernen
+      renderRecent();
+    }
+  }
+  renderChat();renderPrivacyMemory();
+}
 function exportChat(){const b=new Blob([chatHistory.map(m=>`[${m.role}] ${m.content}`).join("\n\n")],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ailiza-chat-"+Date.now()+".txt";a.click()}
 function saveCurrentChat(){
   if(!chatHistory.length||!currentChatId)return;
+  persistActiveChat();
+  if(activeProjectId)return;
   const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
   const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);
+  const now=new Date().toISOString();
   const idx=list.findIndex(c=>c.id===currentChatId);
-  if(idx>=0){list[idx]={id:currentChatId,name,messages:chatHistory}}
-  else{list.push({id:currentChatId,name,messages:chatHistory})}
+  const prev=idx>=0?list[idx]:null;
+  const entry={id:currentChatId,name,messages:chatHistory,updated:now,version:prev?prev.version:undefined};
+  if(idx>=0){list[idx]=entry}else{list.push(entry)}
   localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
   renderRecent();
+  // Best effort: bei eingeloggtem Nutzer sofort serverseitig ablegen (Cross-Device)
+  serverPutChat({id:currentChatId,messages:chatHistory,title:name,version:entry.version})
+    .then(res=>{entry.version=res.version;entry.updated=res.updated_at;
+      const l=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+      const i=l.findIndex(c=>c.id===currentChatId);
+      if(i>=0){l[i].version=res.version;l[i].updated=res.updated_at;localStorage.setItem("ailiza_chat_list",JSON.stringify(l));}
+      setSyncStatus("ok");})
+    .catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es nach */});
 }
 function renderChat(){
   const inner=document.getElementById("chat-inner");
@@ -989,6 +1454,64 @@ function renderChat(){
   // Alle AI-Blasen sofort öffnen (History, kein Streaming)
   inner.querySelectorAll(".bubble.ai").forEach(b=>b.classList.add("open"));
   scrollToBottom();
+  updateLongChatHint();
+}
+// ── TS3c: Folge-Chat-Vorschlag bei langen Chats + governance-gepruefte
+//    Kurz-Zusammenfassung. Nicht-blockierend, nur auf Klick. Alter Chat bleibt
+//    vollstaendig. Die Zusammenfassung laeuft ueber /agent/run -> volle
+//    Governance-Pipeline (Schwaerzung); echte Werte setzt der Server im RAM
+//    wieder ein (main.py reinsert), nie geloggt.
+const LONG_CHAT_THRESHOLD=100;
+let _followUpInFlight=false;
+function updateLongChatHint(){
+  const el=document.getElementById("long-chat-hint");if(!el)return;
+  const dismissed=currentChatId&&localStorage.getItem("ailiza_longhint_dismissed_"+currentChatId)==="1";
+  el.style.display=(chatHistory.length>=LONG_CHAT_THRESHOLD&&!dismissed&&!_followUpInFlight)?"flex":"none";
+}
+function dismissLongChatHint(){
+  if(currentChatId)localStorage.setItem("ailiza_longhint_dismissed_"+currentChatId,"1");
+  updateLongChatHint();
+}
+async function startFollowUpChat(){
+  if(_followUpInFlight)return;
+  _followUpInFlight=true;
+  updateLongChatHint();
+  const sourceProject=getActiveProject();               // ggf. Projekt-Kontext merken
+  const projectNote=sourceProject?` (Fortsetzung aus Projekt: ${sourceProject.name})`:"";
+  // Verlauf als Text fuer die Zusammenfassung (letzte 100 Nachrichten)
+  const verlauf=chatHistory.slice(-100).map(m=>`${m.role==="user"?"Nutzer":"AILIZA"}: ${m.content||""}`).join("\n");
+  const task=`Fasse den folgenden Chatverlauf in 3-5 Saetzen als kurze Erinnerung fuer die Fortsetzung zusammen. Nenne Ziel, offene Punkte und wichtige Fakten. Verlauf:\n\n${verlauf}`;
+  showTyping();
+  let summary="";
+  try{
+    const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),
+      body:JSON.stringify({task,history:[]})});
+    if(r.ok){const d=await r.json();
+      if(d.status!=="login_required"&&d.status!=="consent_required")summary=(d.ai_response||"").trim();}
+  }catch(e){/* Fallback unten */}
+  hideTyping();
+  // Fallback (kein Frust): Mini-Notiz, falls Zusammenfassung nicht klappt/geblockt
+  if(!summary){
+    const heute=new Date().toLocaleDateString("de-DE");
+    summary=`Fortsetzung eines vorherigen Chats vom ${heute}.`+projectNote;
+  }else{
+    summary=`📌 Erinnerung an den bisherigen Chat${projectNote}:\n\n${summary}`;
+  }
+  // Alten Chat sichern (bleibt vollstaendig erhalten), dann neuen Chat anlegen
+  saveCurrentChat();
+  currentChatId=createChatId();
+  setActiveProject(null);                                // neuer Folge-Chat ist ein freier Chat
+  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  chatHistory=[{role:"ai",content:summary,time:new Date().toISOString()}];
+  context=[{role:"assistant",content:summary}];
+  persistActiveChat();
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  renderChat();renderPrivacyMemory();
+  saveCurrentChat();                                     // Folge-Chat in Liste + Server
+  _followUpInFlight=false;
+  updateLongChatHint();
+  document.getElementById("chat-input").focus();
 }
 function renderMsg(m,idx){
   const text=(m.content||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");
@@ -1056,8 +1579,33 @@ function loadHistory(){
   renderChat();
 }
 function scrollToBottom(){document.getElementById("chat-body").scrollTop=9999}
-function showTyping(){const i=document.getElementById("chat-inner");if(document.getElementById("typing"))return;const d=document.createElement("div");d.id="typing";d.className="msg ai";d.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';i.appendChild(d);scrollToBottom()}
-function hideTyping(){document.getElementById("typing")?.remove()}
+function scrollMessageIntoView(el){
+  // Zuverlässiges Hinscrollen zur konkreten Antwort-Blase (nicht nur ans Ende
+  // des Containers) -- wichtig bei sehr langen Nutzer-Nachrichten, damit die
+  // KI-Antwort direkt sichtbar ist, statt im Verlauf zu verschwinden.
+  if(el&&el.scrollIntoView)el.scrollIntoView({block:"end",behavior:"smooth"});
+}
+let _typingLongWaitTimer=null;
+function showTyping(){
+  const i=document.getElementById("chat-inner");
+  if(document.getElementById("typing"))return;
+  const d=document.createElement("div");
+  d.id="typing";d.className="msg ai";
+  d.innerHTML='<div class="typing"><span></span><span></span><span></span><span class="typing-note" id="typing-note"></span></div>';
+  i.appendChild(d);scrollToBottom();
+  // Kaltstart-Hinweis: Render.com (Free-Tier) kann bis zu ~50 Sek. brauchen,
+  // um nach Inaktivitaet wieder aufzuwachen. Ohne Hinweis wirkt das wie
+  // "nichts passiert" (Karo-Fund 2026-07-17). Text erscheint erst nach einer
+  // kurzen Verzoegerung, damit normale, schnelle Antworten ihn nie sehen.
+  _typingLongWaitTimer=setTimeout(()=>{
+    const note=document.getElementById("typing-note");
+    if(note)note.textContent="AILIZA arbeitet noch — Serverstart kann bis zu 50 Sekunden dauern.";
+  },6000);
+}
+function hideTyping(){
+  clearTimeout(_typingLongWaitTimer);
+  document.getElementById("typing")?.remove();
+}
 let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
@@ -1075,7 +1623,7 @@ async function sendMessage(){
   document.getElementById("kI-input-preview").value="";
   const label=document.getElementById("kI-preview-label");
   if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
-  await _doSend(text,{});
+  await _doSend(text,{},pendingChatFile);
 }
 async function approvePiiConsent(){
   localStorage.setItem("ailiza_pii_consent","1");
@@ -1089,22 +1637,69 @@ function denyPiiConsent(){
   document.getElementById("pii-consent").classList.remove("show");
   _pendingSendText="";_pendingMap={};
 }
-async function _doSend(sendText,map){
+async function _doSend(sendText,map,fileOverride=null){
   const inp=document.getElementById("chat-input");
-  inp.value="";autoResize(inp);
+  const file=fileOverride||pendingChatFile;
+
+  inp.value="";
+  autoResize(inp);
   document.getElementById("send-btn").disabled=true;
-  if(!chatHistory.length)document.getElementById("chat-inner").innerHTML="";
-  // Blase zeigt den geschwärzten Text — Nutzer sieht Platzhalter statt echter Daten
-  chatHistory.push({role:"user",content:sendText,time:new Date().toISOString()});
+
+  if(!chatHistory.length){
+    document.getElementById("chat-inner").innerHTML="";
+  }
+
+  const displayText=file
+    ? `${sendText}\n\n[Datei: ${file.name}]`
+    : sendText;
+
+  chatHistory.push({
+    role:"user",
+    content:displayText,
+    time:new Date().toISOString()
+  });
+
   Object.assign(activeRedactionMap,map);
+
   const inner=document.getElementById("chat-inner");
-  inner.innerHTML+=renderMsg(chatHistory[chatHistory.length-1],chatHistory.length-1);
+  inner.innerHTML+=renderMsg(
+    chatHistory[chatHistory.length-1],
+    chatHistory.length-1
+  );
+
   flyOutPiiBubbles();
-  renderPrivacyMemory();scrollToBottom();
+  renderPrivacyMemory();
+  scrollToBottom();
   showTyping();
+
+  if(file){
+    pendingChatFile=null;
+    showPendingChatFile(null);
+  }
+
   try{
-    await runAgent(sendText,Object.keys(map).length>0?map:null);
-  }catch(e){hideTyping();activeRedactionMap={};renderPrivacyMemory();addAiMessage("Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)","Verbindungsfehler");}
+    await runAgent(
+      sendText,
+      Object.keys(map).length>0?map:null,
+      undefined,
+      file
+    );
+  }catch(e){
+    hideTyping();
+    activeRedactionMap={};
+    renderPrivacyMemory();
+
+    if(file){
+      pendingChatFile=file;
+      showPendingChatFile(file);
+    }
+
+    addAiMessage(
+      "Backend nicht erreichbar. Render.com noch am Starten? (30 Sek warten)",
+      "Verbindungsfehler"
+    );
+  }
+
   document.getElementById("send-btn").disabled=false;
   document.getElementById("chat-input").focus();
 }
@@ -1113,58 +1708,168 @@ async function _doSend(sendText,map){
 // werden kann. Nur im RAM — wird nie gespeichert.
 let gatedTask=null;
 let gatedConsentApprovalId=null;
+let gatedFile=null;
 
-async function runAgent(text,redactionMap,consentApprovalId){
-  // Phase 1.3: History wird bereits durch Backend geschwärzt
-  const history=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
-  const body={task:text,history};
-  if(consentApprovalId)body.consent_approval_id=consentApprovalId;
-  const r=await fetch(`${API}/agent/run`,{method:"POST",headers:authHeaders(),body:JSON.stringify(body)});
+async function runAgent(text,redactionMap,consentApprovalId,file=null){
+  const history=chatHistory.slice(-20).map(m=>({
+    role:m.role==="ai"?"assistant":m.role,
+    content:m.content
+  }));
+
+  let r;
+
+  if(file){
+    const form=new FormData();
+    form.append("task",text);
+    form.append("file",file,file.name);
+
+    if(consentApprovalId){
+      form.append("consent_approval_id",String(consentApprovalId));
+    }
+
+    r=await fetch(`${API}/documents/agent-run`,{
+      method:"POST",
+      headers:documentUploadHeaders(),
+      body:form
+    });
+  }else{
+    const body={task:text,history};
+
+    if(consentApprovalId){
+      body.consent_approval_id=consentApprovalId;
+    }
+
+    r=await fetch(`${API}/agent/run`,{
+      method:"POST",
+      headers:authHeaders(),
+      body:JSON.stringify(body)
+    });
+  }
+
   hideTyping();
-  if(!r.ok){activeRedactionMap={};renderPrivacyMemory();addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);return}
-  const data=await r.json();
-  // B2: Drei-Stufen-Modell — Login-Gate (Dokumentationspflicht) und
-  // Einwilligungs-Gate (auch nach Schwärzung nicht konform). Kein Hartblock.
-  if(data.status==="login_required"){
-    activeRedactionMap={};renderPrivacyMemory();
-    gatedTask=text;gatedConsentApprovalId=null;
-    addAiMessage(data.message||"Bitte einloggen.",undefined);
-    appendActionRow([{label:"Jetzt anmelden",primary:true,handler:openLoginModal}]);
+
+  if(!r.ok){
+    activeRedactionMap={};
+    renderPrivacyMemory();
+
+    if(file){
+      pendingChatFile=file;
+      showPendingChatFile(file);
+    }
+
+    addAiMessage("Anfrage fehlgeschlagen.","HTTP "+r.status);
     return;
   }
-  if(data.status==="consent_required"){
-    activeRedactionMap={};renderPrivacyMemory();
-    gatedTask=text;gatedConsentApprovalId=data.approval_id||null;
-    addAiMessage(data.message||"Bestätigung erforderlich.",undefined);
+
+  const data=await r.json();
+
+  if(data.status==="login_required"){
+    activeRedactionMap={};
+    renderPrivacyMemory();
+
+    gatedTask=text;
+    gatedConsentApprovalId=null;
+    gatedFile=file||null;
+
+    addAiMessage(data.message||"Bitte einloggen.",undefined);
     appendActionRow([
-      {label:"Trotzdem senden (wird dokumentiert)",primary:true,handler:consentResend},
-      {label:"Abbrechen",primary:false,handler:()=>{gatedTask=null;gatedConsentApprovalId=null;}}
+      {
+        label:"Jetzt anmelden",
+        primary:true,
+        handler:openLoginModal
+      }
     ]);
     return;
   }
+
+  if(data.status==="consent_required"){
+    activeRedactionMap={};
+    renderPrivacyMemory();
+
+    gatedTask=text;
+    gatedConsentApprovalId=data.approval_id||null;
+    gatedFile=file||null;
+
+    addAiMessage(
+      data.message||"Bestätigung erforderlich.",
+      undefined
+    );
+
+    appendActionRow([
+      {
+        label:"Trotzdem senden (wird dokumentiert)",
+        primary:true,
+        handler:consentResend
+      },
+      {
+        label:"Abbrechen",
+        primary:false,
+        handler:()=>{
+          gatedTask=null;
+          gatedConsentApprovalId=null;
+          gatedFile=null;
+        }
+      }
+    ]);
+    return;
+  }
+
+  gatedFile=null;
+
   let answer=data.ai_response||"";
-  if(data.message&&data.message!=="Agent run completed")answer=data.message;
-  if(!answer&&data.results)for(const res of data.results){const s=res.summary||{};if(s.top_results?.length){const t=s.top_results[0];answer+=(t.title||"")?": "+(t.content||"").slice(0,300)+" ":""}}
-  if(!answer.trim())answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
-  // Platzhalter in der Antwort wieder durch Originalwerte ersetzen
+
+  if(data.message&&data.message!=="Agent run completed"){
+    answer=data.message;
+  }
+
+  if(!answer&&data.results){
+    for(const res of data.results){
+      const s=res.summary||{};
+
+      if(s.top_results?.length){
+        const t=s.top_results[0];
+        answer+=(t.title||"")
+          ?": "+(t.content||"").slice(0,300)+" "
+          :"";
+      }
+    }
+  }
+
+  if(!answer.trim()){
+    answer="Ich konnte keine Antwort finden. Bitte präzisiere die Frage.";
+  }
+
   let reinserted=answer.trim();
+
   if(Object.keys(activeRedactionMap).length>0){
     for(const [ph,val] of Object.entries(activeRedactionMap)){
       reinserted=reinserted.split(ph).join(val);
     }
-    // Blasen leeren nach Reinsertion
+
     activeRedactionMap={};
   }
+
   const isDraft=data.status==="draft"||data.draft===true;
-  const draftHint=isDraft?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert.":"";
-  const testModeInfo=data.test_mode?{provider:data.provider,model:data.model}:undefined;
-  addAiMessage(reinserted,undefined,isDraft?draftHint:undefined,testModeInfo);
+  const draftHint=isDraft
+    ?"Entwurf erstellt. Menschliche Prüfung erforderlich. Der Vorgang wurde dokumentiert."
+    :"";
+
+  const testModeInfo=data.test_mode
+    ?{provider:data.provider,model:data.model}
+    :undefined;
+
+  addAiMessage(
+    reinserted,
+    undefined,
+    isDraft?draftHint:undefined,
+    testModeInfo
+  );
 }
 function addAiMessage(text,warn,draftHint,testModeInfo){
   const msg={role:"ai",content:text,time:new Date().toISOString()};
   if(warn)msg.warn=warn;if(draftHint)msg.draft=draftHint;if(testModeInfo)msg.testMode=testModeInfo;
   chatHistory.push(msg);
-  localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));
+  persistActiveChat();
   saveCurrentChat();
   const inner=document.getElementById("chat-inner");
   inner.innerHTML+=renderMsg(msg,chatHistory.length-1);
@@ -1172,7 +1877,11 @@ function addAiMessage(text,warn,draftHint,testModeInfo){
   const bubbles=inner.querySelectorAll(".bubble.ai");
   const last=bubbles[bubbles.length-1];
   if(last){streamAiBubble(last,text);}
-  renderPrivacyMemory();scrollToBottom();
+  renderPrivacyMemory();scrollToBottom();updateLongChatHint();
+  // Nochmal NACH dem Animations-Tick gezielt zur Blase scrollen (nicht nur
+  // ans Container-Ende) -- verhindert, dass die Antwort bei sehr langen
+  // vorherigen Nachrichten optisch "verloren" wirkt.
+  if(last)setTimeout(()=>scrollMessageIntoView(last),450);
 }
 // ── B2: Aktions-Buttons unter einer AI-Nachricht (nicht persistiert — nach
 // einem Neu-Rendern der History verschwinden sie bewusst) ────────────────────
@@ -1190,6 +1899,7 @@ function appendActionRow(buttons){
   }
   inner.appendChild(row);
   scrollToBottom();
+  scrollMessageIntoView(row);
 }
 
 // ── B2 Fall 3: Einwilligung bestätigen und erneut senden ─────────────────────
@@ -1201,10 +1911,10 @@ async function consentResend(){
   });
   if(r.status===401){openLoginModal();return;}
   if(!r.ok&&r.status!==409){addAiMessage("Bestätigung fehlgeschlagen.","HTTP "+r.status);return;}
-  const task=gatedTask,aid=gatedConsentApprovalId;
-  gatedTask=null;gatedConsentApprovalId=null;
+  const task=gatedTask,aid=gatedConsentApprovalId,file=gatedFile;
+  gatedTask=null;gatedConsentApprovalId=null;gatedFile=null;
   showTyping();
-  try{await runAgent(task,null,aid);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+  try{await runAgent(task,null,aid,file);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
 }
 
 // ── B2: Minimales Login (Cookie-Flow, /auth/login setzt HttpOnly-Cookie) ─────
@@ -1224,12 +1934,14 @@ async function doLogin(){
   if(d.totp_required){err.textContent="Dieses Konto erfordert TOTP — bitte über die Admin-Oberfläche anmelden.";err.style.display="block";return;}
   document.getElementById("login-pass").value="";
   closeLoginModal();
+  _projectsSynced=false;_chatsSynced=false;   // frischer Login -> Erst-Sync erneut zulassen
   refreshAuthButton();
   addAiMessage(`Angemeldet als ${u}. `+(gatedTask?"Ihre Anfrage wird erneut gesendet.":""),undefined);
   if(gatedTask){
-    const task=gatedTask;gatedTask=null;gatedConsentApprovalId=null;
+    const task=gatedTask,file=gatedFile;
+    gatedTask=null;gatedConsentApprovalId=null;gatedFile=null;
     showTyping();
-    try{await runAgent(task,null);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+    try{await runAgent(task,null,undefined,file);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
   }
 }
 
@@ -1264,10 +1976,13 @@ function handlePaste(e){
 function autoResize(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,140)+"px"}
 function openProjModal(){document.getElementById("proj-modal").classList.add("open")}
 function closeProjModal(){document.getElementById("proj-modal").classList.remove("open")}
-function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;projects.push({id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:new Date().toISOString()});localStorage.setItem("ailiza_projects",JSON.stringify(projects));closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value=""}
-function deleteProject(i){if(!confirm("Löschen?"))return;projects.splice(i,1);localStorage.setItem("ailiza_projects",JSON.stringify(projects));renderProjects();renderProjectList()}
-function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card"><div class="card-h">${p.name}</div><div class="card-desc">${p.desc||""}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${p.prio}</span><button class="meta-pill del" onclick="deleteProject(${i})">✕</button></div></div>`).join("")}
-function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${p.name}</span></div>`).join("")}
+function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;const now=new Date().toISOString();const p={id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:now,updated:now};projects.push(p);saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value="";
+  // Best effort: bei eingeloggtem Nutzer sofort serverseitig anlegen (Cross-Device)
+  serverCreateProject(p).then(created=>{p.serverId=created.id;p.version=created.version;saveProjects();}).catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es spaeter nach */});}
+function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
+function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);if(p&&p.chat_id)serverDeleteChat(p.chat_id);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
+function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}<div class="card-openchat">💬 Chat öffnen ›</div></div>`).join("")}
+function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
@@ -1338,8 +2053,9 @@ async function deleteMyData(){
   const msg=document.getElementById("delete-data-msg");
   msg.style.display="block";msg.style.color="var(--text-muted)";msg.textContent="Wird gelöscht…";
   // Lokale Daten löschen
-  ["ailiza_chat","ailiza_chat_list","ailiza_current_chat_id","ailiza_projects","ailiza_folders","ailiza_tools","ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
-  chatHistory=[];context=[];currentChatId=null;projects=[];
+  ["ailiza_chat","ailiza_chat_list","ailiza_current_chat_id","ailiza_active_project_id","ailiza_projects","ailiza_folders","ailiza_tools","ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
+  for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith("ailiza_chat_"))localStorage.removeItem(k)}
+  chatHistory=[];context=[];currentChatId=null;activeProjectId=null;projects=[];
   // Server-Daten löschen
   try{
     const r=await fetch(`${API}/user/delete-data`,{method:"POST",headers:{"Content-Type":"application/json"}});

@@ -31,6 +31,8 @@ try:
     from .anthropic_provider import AnthropicProvider
     from .openai_provider import OpenAIProvider
     from .provider_profiles import check_provider_policy, get_profile
+    from .gated_client import GatedLLMClient
+    from .gate_types import Zweck
     from ..capabilities.registry import check_capability
     from ..governance.data_governance import DataClass
     from ..registry.registry_loader import (
@@ -46,6 +48,8 @@ except ImportError:  # pragma: no cover
     from providers.anthropic_provider import AnthropicProvider
     from providers.openai_provider import OpenAIProvider
     from providers.provider_profiles import check_provider_policy, get_profile
+    from providers.gated_client import GatedLLMClient
+    from providers.gate_types import Zweck
     from capabilities.registry import check_capability
     from governance.data_governance import DataClass
     from registry.registry_loader import (
@@ -105,6 +109,7 @@ class ProviderOrchestrator:
         self.last_model: str | None = None
         self.last_failover_occurred: bool = False
         self.last_failover_from: list[str] = []
+        self._gate = GatedLLMClient()
 
     # ── Registry-Check ─────────────────────────────────────────────────────────
 
@@ -310,6 +315,8 @@ class ProviderOrchestrator:
         messages: list[dict[str, Any]],
         context: Any = None,
         provider_id: str | None = None,
+        zweck: Zweck | None = None,
+        ingress_source: str | None = None,
     ) -> str:
         enforce_kill_switch()
 
@@ -343,7 +350,9 @@ class ProviderOrchestrator:
             start = time.time()
             error_type = None
             try:
-                result = provider.generate(messages, context)
+                result = self._gate.generate(
+                    provider, messages, context, zweck=zweck, ingress_source=ingress_source,
+                )
                 tokens_out = provider.count_tokens(result)
                 model_name = getattr(provider, "model", "unknown")
                 print(

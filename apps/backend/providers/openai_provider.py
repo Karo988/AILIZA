@@ -16,9 +16,11 @@ from typing import Any
 
 try:
     from .base import LLMProvider
+    from .gate_types import ProviderResult
     from ..errors import AILIZAError
 except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
+    from providers.gate_types import ProviderResult
     from errors import AILIZAError
 
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
@@ -67,15 +69,33 @@ class OpenAIProvider(LLMProvider):
             )
         return key
 
+    @property
+    def supports_json_mode(self) -> bool:
+        return True
+
     def generate(self, messages: list[dict[str, Any]], context: Any = None) -> str:
+        return self._call(messages, response_format=None)
+
+    def generate_with_meta(
+        self,
+        messages: list[dict[str, Any]],
+        context: Any = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> ProviderResult:
+        return ProviderResult(text=self._call(messages, response_format=response_format), stop_reason=None)
+
+    def _call(self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None) -> str:
         api_key = self._api_key()
-        print(f"AILIZA OPENAI CALL | model={self.model}", flush=True)
-        payload = json.dumps({
+        print(f"AILIZA OPENAI CALL | model={self.model} json_mode={bool(response_format)}", flush=True)
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "max_tokens": 1000,
             "temperature": 0.3,
-        }).encode()
+        }
+        if response_format:
+            body["response_format"] = response_format
+        payload = json.dumps(body).encode()
         req = urllib.request.Request(
             _OPENAI_URL,
             data=payload,

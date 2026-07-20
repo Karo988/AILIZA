@@ -68,7 +68,8 @@ class RedactionEngineV2:
             r"(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
         ),
         "name_field": re.compile(
-            r"(?i:Name|Ansprechpartner|Antragsteller|Bewerber(?:in)?|Kunde|Kundin)[ \t]*:[ \t]*"
+            r"(?i:Name|Ansprechpartner|Antragsteller|Bewerber(?:in)?|Kunde|Kundin"
+            r"|Versicherungsnehmer(?:in)?)[ \t]*:[ \t]*"
             r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\-]+)*",
         ),
         "name_standalone_line": re.compile(
@@ -134,7 +135,17 @@ class RedactionEngineV2:
             r"\b(?:Geburtsdatum|geb\.|geboren[ \t]+am)[ \t]*:?[ \t]*\d{1,2}\.\d{1,2}\.\d{2,4}",
             re.IGNORECASE,
         ),
-        "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
+        # Karo-Fund 2026-07-15: Kopplungsverbot - der zur IBAN gehoerende
+        # Kontostand ist Teil desselben Finanzdatensatzes und muss mit
+        # geschwaerzt werden, sonst bleibt die eigentlich sensible Zahl
+        # (Vermoegen/Umsatz) trotz geschwaerzter IBAN im Klartext stehen.
+        # Optionales, mehrsprachiges Label (Stand/Saldo/салдо/zůstatek)
+        # direkt nach der IBAN auf derselben Zeile wird mit erfasst.
+        "iban": re.compile(
+            r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"
+            r"(?:[ \t]*,?[ \t]*(?i:Stand|Saldo|салдо|zůstatek|Balance)[ \t]*:"
+            r"[ \t]*[\d.,]+[ \t]*[A-Z]{3})?"
+        ),
         "bic": re.compile(r"\bBIC[ \t]*:?[ \t]*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b", re.IGNORECASE),
         "card": re.compile(r"\b(?:\d{4}[\s\-]?){3}\d{4}\b"),
         # Amtliche Ausweis-/ID-Nummern (Karo-Fund 2026-07-11, erweiterter
@@ -144,7 +155,7 @@ class RedactionEngineV2:
         "official_id": re.compile(
             r"(?i:Personalausweisnummer|Reisepassnummer|Steueridentifikationsnummer"
             r"|Steuer-?ID|Sozialversicherungsnummer|Führerscheinnummer"
-            r"|Krankenversicherungsnummer)[ \t]*:?[ \t]*[\w \-]{4,25}",
+            r"|Krankenversicherungsnummer|Zoll-?ID|Muita)[ \t]*:?[ \t]*[\w \-]{4,25}",
         ),
         # Zugangsdaten/Geheimnisse (DSGVO/CLAUDE.md-Kategorie "secret" ⚫ —
         # nie ausgeben). Label-basiert: die Werte selbst haben kein
@@ -167,10 +178,25 @@ class RedactionEngineV2:
         # Fragment ("...ht mehr rein!)") hinter dem Platzhalter stehen
         # blieb. Grenze auf 300 Zeichen angehoben (deckt realistische
         # Zeilenlaengen ab, faengt weiterhin bei Zeilenende).
+        # Karo-Fund 2026-07-15 (Golden-Brief, Root-Zugang zu Patientenakten):
+        # "User: admin_root" blieb unredigiert, weil "Benutzername" nur die
+        # deutsche Form abdeckte. Internationale Mails nutzen haeufig
+        # englische Labels. "User"/"Username" ergaenzt (Doppelpunkt-Pflicht
+        # bleibt bestehen, sonst wuerde "User" beliebigen Fliesstext fressen
+        # wie einst "Antwort" - siehe Karo-Fund 2026-07-12 oben).
         "credential": re.compile(
-            r"(?i:Benutzername|Passwort|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
+            # Karo-Fund 2026-07-15 (BaFin-/Riga-Kontrollbriefe): "Password:"
+            # und "Login:" (englische Labels) blieben unredigiert.
+            r"(?i:Benutzername|User(?:name)?|Login|Passwort|Password|WLAN-Passwort|PIN|Sicherheitsfrage|Antwort"
             r"|Wiederherstellungscode|Zwei-Faktor-Authentifizierungsschlüssel)"
             r"[ \t]*:[ \t]*[^\n]{1,300}",
+        ),
+        # Karo-Fund 2026-07-15: Server-/Dateipfade verraten interne
+        # Systemstruktur (z.B. wo Patientenakten liegen) unabhaengig von
+        # eigentlichen Zugangsdaten - eigenes Muster, Label-basiert wie
+        # "credential".
+        "server_path": re.compile(
+            r"(?i:Pfad|Path)[ \t]*:[ \t]*[^\n]{1,300}",
         ),
         # Technische Kennungen mit Standort-/Identifizierungsbezug.
         "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
@@ -183,6 +209,14 @@ class RedactionEngineV2:
             r"(?i:Monatliches Nettoeinkommen|Monatliche Mietkosten|Laufender Ratenkredit"
             r"|Dispositionskredit|Aktueller Kontostand|Bonitätsscore"
             r"|SCHUFA-ähnliche Risikoeinstufung)[ \t]*:?[ \t]*[^\n]{1,300}",
+        ),
+        # Karo-Fund 2026-07-15 (BaFin-/Riga-Kontrollbriefe): Kontostaende und
+        # Beitraege standen auch OHNE IBAN auf derselben Zeile im Klartext
+        # ("Jahresbeitrag: 14.500,00 EUR", "Atlikums (Kontostand): 55.400,00
+        # EUR"). Label-basiert, mehrsprachig, Betrag + Waehrungscode.
+        "financial_balance": re.compile(
+            r"(?i:Kontostand|Jahresbeitrag|Atlikums|Saldo|салдо|zůstatek|Balance)"
+            r"[^\n]{0,30}?:[ \t]*[\d.,]+[ \t]*[A-Z]{3}",
         ),
         # SCHUFA/Bonität auch als freistehende Erwaehnung erkennen (nicht nur
         # in der exakten Label-Zeile oben) — Karo-Fund 2026-07-11.
@@ -284,6 +318,9 @@ class RedactionEngineV2:
             # stehenlassen. \w matcht im Unicode-Modus auch Kyrillisch/
             # Diakritika, IGNORECASE deckt die Gross-/Kleinschreibung ab.
             "диагноза", "диабет", "diagnóza", "deprese",
+            # Karo-Fund 2026-07-15 (BaFin-Kontrollbrief): "Chemotherapie-Plan"
+            # blieb unredigiert - "krebs" matchte nur "Krebsbehandlung".
+            "chemotherapie",
         ],
         "religion": ["religion", "muslimisch", "christlich", "buddhistische", "jüdisch", "atheist", "katholisch", "evangelisch"],
         "politics": ["politische", "wahlbezirk", "spd", "cdu", "grüne", "linke", "afd", "fdp"],
@@ -296,13 +333,26 @@ class RedactionEngineV2:
         # nicht, da das "s" fehlt).
         "union": ["gewerkschaft", "tarifvertrag", "betriebsrat"],
         "genetic": ["genetisch", "dna", "chromosom", "genom"],
-        "criminal": ["strafrechtlich", "verurteilung", "strafregister"],
+        # Karo-Fund 2026-07-15 (BaFin-Kontrollbrief): "Verdacht auf
+        # unberechtigten Vorsteuerabzug" (Straftat-Verdachtsbezug, Art. 10
+        # DSGVO) blieb unredigiert. Bewusst NUR die Verdachts-Formulierung
+        # ("verdacht auf unberechtigt...") und explizite Straftat-Begriffe -
+        # NICHT das neutrale Wort "Vorsteuerabzug" allein, sonst wuerde jede
+        # harmlose Steuerfrage eines KMU faelschlich als Art.-10-Fall gelten.
+        "criminal": ["strafrechtlich", "verurteilung", "strafregister",
+                     "steuerbetrug", "steuerhinterziehung",
+                     "verdacht auf unberechtigt"],
     }
 
     # Schwarz-Indikatoren (automatisierte Entscheidungen)
     BLACK_KEYWORDS = {
-        "triggers": ["automatisierte entscheidung", "automatische empfehlung", "automatisch", "vollständig automatisch", "keine manuelle prüfung"],
-        "impacts": ["ablehnen", "kündigen", "nicht einstellen", "vorkasse", "score", "risiko", "bonität"],
+        # Karo-Fund 2026-07-15: "automatisches Reporting" von "High-Risk-
+        # Profiles" loeste keinen BLACK-Hinweis aus - Trigger/Impacts waren
+        # rein deutsch. "automated" (EN) + "risk" (EN, matcht "High-Risk")
+        # ergaenzt. BLACK blockiert weiterhin NICHT, sondern erzwingt nur
+        # menschliche Pruefung (anwenderfreundlich).
+        "triggers": ["automatisierte entscheidung", "automatische empfehlung", "automatisch", "vollständig automatisch", "keine manuelle prüfung", "automated"],
+        "impacts": ["ablehnen", "kündigen", "nicht einstellen", "vorkasse", "score", "risiko", "risk", "bonität"],
     }
 
     # KRITISCH-Marker (DSGVO-Verstöße)
@@ -534,11 +584,13 @@ class RedactionEngineV2:
             "reference": "Referenznummer",
             "official_id": "Ausweisnummer",
             "credential": "Zugangsdaten",
+            "server_path": "Systempfad",
             "ip_address": "IP-Adresse",
             "gps_coords": "Standort",
             "device_id": "Gerätekennung",
             "financial_detail": "Finanzangabe",
             "financial_keyword": "Finanzangabe",
+            "financial_balance": "Finanzangabe",
             "card_cvv": "Kartenprüfnummer",
             "card_expiry": "Kartengültigkeit",
             "child_field": "Kinderdaten (Art. 8 DSGVO)",
