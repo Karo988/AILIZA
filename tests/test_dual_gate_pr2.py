@@ -143,6 +143,8 @@ _BASELINE_REQUIREMENTS = {
     "slowapi==0.1.9", "apscheduler==3.10.4", "tavily-python==0.3.3",
     "anthropic>=0.40.0", "pyyaml>=6.0", "bcrypt==4.1.3",
     "python-multipart==0.0.9", "cryptography>=42.0.0",
+    # Neon/Postgres-Persistenz (bereits in main via requirements-core.txt)
+    "psycopg[binary]>=3.1",
 }
 
 

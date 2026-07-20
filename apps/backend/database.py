@@ -87,6 +87,15 @@ if DATABASE_URL.startswith("sqlite"):
     engine_options["connect_args"] = {"check_same_thread": False}
 if DATABASE_URL in {"sqlite:///:memory:", "sqlite://"}:
     engine_options["poolclass"] = StaticPool
+if not DATABASE_URL.startswith("sqlite"):
+    # Neon/Postgres trennt inaktive Verbindungen serverseitig. Ohne
+    # pool_pre_ping wuerde SQLAlchemy eine tote Pool-Verbindung wiederverwenden
+    # und mit OperationalError abstuerzen (HTTP 500) -- pool_pre_ping prueft
+    # vor jeder Nutzung kurz, ob die Verbindung noch lebt, und holt bei Bedarf
+    # automatisch eine neue. pool_recycle erneuert Verbindungen zusaetzlich
+    # praeventiv, bevor Neon sie von sich aus killt.
+    engine_options["pool_pre_ping"] = True
+    engine_options["pool_recycle"] = 1800
 
 engine: Engine = create_engine(DATABASE_URL, **engine_options)
 
