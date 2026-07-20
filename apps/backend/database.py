@@ -37,11 +37,22 @@ def _resolve_database_url(raw: str) -> str:
         # Dev-Fallback: relativ zum Repo-Root (apps/backend/../..)
         repo_root = Path(__file__).resolve().parent.parent.parent
         fallback = repo_root / "data" / "ailiza_dev.db"
-        warnings.warn(
-            f"AILIZA_DATABASE_URL nicht gesetzt. Dev-Fallback: {fallback}. "
-            "In Produktion AILIZA_DATABASE_URL mit absolutem Pfad setzen.",
-            stacklevel=2,
-        )
+        if os.getenv("AILIZA_ENV", "development").strip().lower() == "production":
+            # Fail-soft (kein Hard-Block): App bleibt erreichbar, aber ohne
+            # persistenten Speicher droht Datenverlust bei jedem Neustart.
+            warnings.warn(
+                "PRODUCTION-WARNUNG: AILIZA_ENV=production, aber AILIZA_DATABASE_URL "
+                "ist nicht gesetzt. Daten gehen bei jedem Neustart/Deploy verloren. "
+                "Fuer autarken Betrieb: AILIZA_DATABASE_URL=sqlite:////data/ailiza.sqlite "
+                "mit persistentem Volume setzen (siehe docs/AUTARKER_BETRIEB.md).",
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                f"AILIZA_DATABASE_URL nicht gesetzt. Dev-Fallback: {fallback}. "
+                "In Produktion AILIZA_DATABASE_URL mit absolutem Pfad setzen.",
+                stacklevel=2,
+            )
         raw = f"sqlite:///{fallback}"
 
     # Postgres-Dialekt-Normalisierung: postgres:// oder postgresql:// → postgresql+psycopg://

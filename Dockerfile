@@ -19,5 +19,11 @@ RUN pip install --no-cache-dir -r requirements-${MODE}.txt \
 
 COPY apps/ ./apps/
 
+# Persistenter Datenordner fuer autarken Betrieb (SQLite oder spaeter
+# lokaler Postgres-Container). Auf Render Free wirkungslos (kein
+# persistentes Volume dort) -- fuer eigenen Server/VPS/NAS via
+# docker-compose.yml gemountet.
+VOLUME ["/data"]
+
 EXPOSE 8000
 CMD ["uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,31 @@
+# AILIZA — Autarker Betrieb (ohne Render/Neon)
+# Start: docker compose up -d
+# Daten liegen dauerhaft im benannten Volume ailiza_data (SQLite-Datei).
+#
+# Fuer lokalen Postgres-Container statt SQLite: siehe
+# docs/AUTARKER_BETRIEB.md (Abschnitt "Optional: Postgres" -- bewusst
+# nicht in dieser Datei vorkonfiguriert, um den Standardfall einfach zu
+# halten).
+
+services:
+  ailiza:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODE: core
+    ports:
+      - "8000:8000"
+    environment:
+      AILIZA_ENV: production
+      AILIZA_DATABASE_URL: sqlite:////data/ailiza.sqlite
+      AILIZA_EXTERNAL_LLM_ENABLED: "false"
+      # Weitere Secrets (AILIZA_SECRET_KEY, GROQ_API_KEY, ...) in einer
+      # .env-Datei setzen und hier per env_file einbinden, z. B.:
+      # env_file: .env
+    volumes:
+      - ailiza_data:/data
+    restart: unless-stopped
+
+volumes:
+  ailiza_data:
