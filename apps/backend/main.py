@@ -48,6 +48,7 @@ try:
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
+        export_user_data, delete_own_account_data,
     )
     from .auth.models import UserCreate, UserInDB
     from .auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
@@ -72,6 +73,7 @@ except ImportError:
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
+        export_user_data, delete_own_account_data,
     )
     from apps.backend.gateway import guarded_tool_call
     from apps.backend.routers.approvals import router as approvals_router
@@ -2869,6 +2871,33 @@ def api_reject_memory_suggestion(
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
     reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id)
     return {"status": "rejected", "id": suggestion_id}
+
+
+# ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ─────────
+@app.get("/api/me/export")
+def api_export_me(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    return export_user_data(user.user_id, user.tenant_id)
+
+
+@app.delete("/api/me")
+def api_delete_me(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Deaktiviert den Account (active=0) und loescht abhaengige
+    persoenliche Daten in einer Transaktion. Kein hartes Loeschen des
+    users-Datensatzes (Karo-Entscheidung, siehe docs/BLOCK_B_MASTER_AUFTRAG.md)."""
+    user = _require_user(token)
+    delete_own_account_data(user.user_id, user.tenant_id)
+    # Nur Codes im Audit -- keine Inhalte.
+    write_audit_entry(
+        action="user.self_deletion_requested",
+        tenant_id=user.tenant_id,
+        metadata={"user_id": user.user_id},
+    )
+    return {"status": "deactivated_and_data_deleted", "user_id": user.user_id}
 
 
 @app.get("/api/user-chats")
