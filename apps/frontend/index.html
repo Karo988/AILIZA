@@ -29,6 +29,13 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
+/* Mobile-Fix: 100% (=100vh) berücksichtigt nicht die dynamische
+   Adressleiste mobiler Browser (Chrome/Android) -- bei sichtbarer Leiste
+   wird der untere Seitenbereich (Chat-Eingabefeld) hinter die Browser-UI
+   geschoben. 100dvh reagiert korrekt auf die tatsächliche sichtbare Höhe.
+   Bleibt additiv: Browser ohne dvh-Unterstützung ignorieren die Zeile und
+   behalten den bestehenden 100%-Fallback von oben. */
+@supports (height:100dvh){html,body{height:100dvh}}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--bg);
