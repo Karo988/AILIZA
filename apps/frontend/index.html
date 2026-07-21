@@ -36,6 +36,13 @@ html,body{height:100%;overflow:hidden}
    Bleibt additiv: Browser ohne dvh-Unterstützung ignorieren die Zeile und
    behalten den bestehenden 100%-Fallback von oben. */
 @supports (height:100dvh){html,body{height:100dvh}}
+/* Mobile-Fix (Tastatur): 100dvh allein reagiert auf vielen Geraeten NICHT
+   auf die eingeblendete Bildschirmtastatur -- window.visualViewport meldet
+   die tatsaechlich sichtbare Hoehe zuverlaessig. --app-viewport-height wird
+   per JS gesetzt/aktualisiert (siehe setAppViewportHeight() im Script);
+   ohne JS oder in Browsern ohne visualViewport bleibt die Variable unset
+   und diese Regel faellt auf 100dvh (bzw. via Kaskade oben auf 100%) zurueck. */
+html,body{height:var(--app-viewport-height, 100dvh)}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--bg);
@@ -722,6 +729,35 @@ body{
 // noetig (vorher: window.AILIZA_API-Fallback auf eine feste Production-Basis-URL,
 // wodurch z.B. Staging heimlich Production ansprach).
 const API = "";
+
+// ── Mobile-Fix: Tastatur-/VisualViewport-Fallback ───────────────────────────
+// 100dvh allein reagiert auf vielen mobilen Browsern NICHT auf die
+// eingeblendete Bildschirmtastatur (nur auf die Adressleiste). window.
+// visualViewport meldet die tatsaechlich sichtbare Hoehe zuverlaessig,
+// inkl. Tastatur. Setzt --app-viewport-height, die html/body per CSS
+// nutzen (siehe @supports/var()-Kaskade oben im <style>-Block). Laeuft
+// sofort beim Laden -- kein modularer Code hier, daher kein explizites
+// Cleanup noetig (Listener leben fuer die gesamte Seiten-Lebensdauer,
+// wie alle anderen globalen Event-Listener in diesem Skript).
+(function setupAppViewportHeightFallback(){
+  function setAppViewportHeight(){
+    const vv=window.visualViewport;
+    const h=vv?vv.height:window.innerHeight;
+    document.documentElement.style.setProperty("--app-viewport-height",h+"px");
+  }
+  setAppViewportHeight();
+  if(window.visualViewport){
+    window.visualViewport.addEventListener("resize",setAppViewportHeight);
+    window.visualViewport.addEventListener("scroll",setAppViewportHeight);
+  }else{
+    window.addEventListener("resize",setAppViewportHeight);
+  }
+  // Manche mobilen Browser melden die Tastaturhoehe verzoegert nach dem
+  // ersten resize-Event -- kurz danach nochmal nachmessen.
+  const _reMeasure=()=>setTimeout(setAppViewportHeight,150);
+  window.addEventListener("resize",_reMeasure);
+  if(window.visualViewport)window.visualViewport.addEventListener("resize",_reMeasure);
+})();
 
 const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
 const SKILLS=[
