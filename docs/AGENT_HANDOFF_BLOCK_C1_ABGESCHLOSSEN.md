@@ -28,19 +28,19 @@ Block D (Desktop-Distribution ohne Docker)            ⏳ separater, späterer A
 
 ## 3. Nächster großer Schritt: Block C Phase C2 (Dokument-Ingestion)
 
-**Nicht sofort automatisch starten** — vorher die 3 offenen Stop-Fragen aus `AILIZA_BLOCK_C_STOP_DECISIONS.md` klären, die C2 direkt betreffen:
+Alle 3 Stop-Fragen aus `AILIZA_BLOCK_C_STOP_DECISIONS.md` sind entschieden — C2 kann beauftragt werden, sobald PR #48 gemergt ist:
 
-| # | Frage | Empfehlung | Deine Entscheidung |
-|---|---|---|---|
-| 1 | Speicherort Originaldateien? | `/data/uploads` (Docker-Volume) + Metadaten in DB | ⬜ offen |
-| 2 | Erlaubte Dateitypen für v1? | TXT + Markdown zuerst, PDF/DOCX später | ✅ **Karo-Entscheidung: Erst sicherer Kern mit nur TXT + Markdown, Erweiterung auf weitere Dateitypen erst als späterer, separater Schritt nach erneuter Freigabe** |
-| 3 | Umgang mit sensiblen Dokumenten? | Nicht frei entscheidbar — braucht dein OK (blockieren / redigieren / Admin-Freigabe) | ⬜ offen |
+| # | Frage | Karo-Entscheidung |
+|---|---|---|
+| 1 | Speicherort Originaldateien? | ✅ `/data/uploads` (Docker-Volume). DB speichert nur Pfad, Hash, Status, Besitzer, Sichtbarkeit, Berechtigungen — keine Binärdaten in der Datenbank. |
+| 2 | Erlaubte Dateitypen für v1? | ✅ Nur TXT + Markdown (C2a). PDF (C2b) und DOCX (C2c) folgen als eigene, spätere Schritte nach erneuter Freigabe — nicht "vorbereitend" im selben PR. |
+| 3 | Umgang mit sensiblen Dokumenten? | ✅ Fail-closed: als sensibel/riskant erkannte Dokumente werden **nicht** als aktive Wissensquelle verarbeitet — Status `blocked` oder `pending_review`, keine Chunks für aktive Nutzung, keine Inhalte an externe LLMs. Immer verständliche Erklärung + Alternative für den Nutzer, nie stillschweigendes Blockieren ohne Feedback. |
 
-**Noch 2 offene Fragen**, bevor C2 vollständig beauftragt werden kann — der nächste Agent-Prompt unten enthält sie als expliziten Stopp-Punkt, nicht als Freibrief zum Raten.
+Alle 3 Entscheidungen sind bereits in den Agent-Prompt unten eingearbeitet.
 
 ## 4. Fertiger Prompt für den nächsten Agenten (Block C2, nach PR #48-Merge)
 
-Kopiere diesen Block 1:1, sobald PR #48 gemergt ist und du die 3 Fragen oben beantwortet hast (oder den Agenten explizit fragen lässt):
+Kopiere diesen Block 1:1, sobald PR #48 gemergt ist:
 
 ```text
 Lies zuerst docs/AGENT_HANDOFF_BLOCK_B_ABGESCHLOSSEN.md und
@@ -55,17 +55,40 @@ Aktueller Stand: Block C1 (Tabellen knowledge_sources, knowledge_chunks,
 knowledge_source_permissions) ist in main gemergt. Prüfe das existierende
 Schema in apps/backend/database.py, bevor du etwas Neues baust.
 
-Karo-Entscheidung zu Dateitypen: ERST sicherer Kern, DANN Dateitypen
-erweitern. Das heisst konkret fuer diesen Auftrag:
+Karo hat alle 3 Stop-Fragen aus AILIZA_BLOCK_C_STOP_DECISIONS.md bereits
+entschieden -- NICHT erneut fragen, diese Entscheidungen sind bindend:
+
+1. Speicherort Originaldateien: /data/uploads (Docker-Volume). Die
+   Datenbank speichert NUR Metadaten (Pfad, Hash, Status, Besitzer,
+   Sichtbarkeit, Berechtigungen) -- keine Binaerdaten in der DB.
+2. Dateitypen: NUR TXT + Markdown in diesem Auftrag (C2a). PDF (C2b)
+   und DOCX (C2c) sind spaetere, separate Auftraege nach erneuter
+   Freigabe -- nicht "vorbereitend" im selben PR.
+3. Umgang mit sensiblen Dokumenten: fail-closed. Als sensibel/riskant
+   erkannte Dokumente werden NICHT als aktive Wissensquelle verarbeitet.
+   Status auf "blocked" oder "pending_review" setzen. Keine Chunks fuer
+   aktive Nutzung/Suche freigeben. Keine Inhalte an externe LLM-/
+   Embedding-Dienste senden. Der Nutzer bekommt immer eine
+   verstaendliche Erklaerung und wo sinnvoll eine Alternative (z.B.
+   "Bitte Admin-Freigabe anfragen") -- kein stillschweigendes Verwerfen
+   ohne Feedback.
 
 Setze nur Block C Phase C2 Schritt 1 um (sicherer Ingestion-Kern,
 NUR TXT + Markdown):
 - Dokumente aufnehmen -- ausschliesslich .txt und .md, alles andere
   wird mit klarer, verstaendlicher Fehlermeldung abgelehnt (fail-closed,
   keine Erkennung/Sniffing von "eigentlich doch okay")
+- Originaldatei nach /data/uploads schreiben (Docker-Volume), DB-Zeile
+  in knowledge_sources bekommt storage_path + content_hash (nur
+  Metadaten, keine Binaerdaten in der DB)
 - Text extrahieren (fuer TXT/MD ist das reines Einlesen, keine
   Parsing-Bibliothek noetig -- bewusst der einfachste/sicherste Fall zuerst)
-- Inhalte chunkweise in knowledge_chunks speichern
+- Vor dem Speichern: bestehende Governance-classify()-Pipeline auf den
+  Inhalt anwenden (siehe apps/backend/governance/) -- bei sensiblem
+  Befund status=blocked oder pending_review setzen, siehe Stop-Antwort 3
+  oben. Keine neue eigene Klassifikation erfinden, bestehende nutzen.
+- Inhalte chunkweise in knowledge_chunks speichern (nur wenn Source
+  aktiv/freigegeben ist)
 - Quellen (knowledge_sources) und Berechtigungen
   (knowledge_source_permissions) beachten - keine Ingestion ohne
   gueltige Source, kein Auto-Approve
@@ -87,14 +110,10 @@ Schritt sobald der Kern sicher steht und Karo das freigibt):
 - Keine automatische Erinnerung aus Dokumenten in memory_items
 - Keine Firmenwissen-Suggestion aus Dokumenten
 
-Stop-Regeln (siehe AILIZA_BLOCK_C_STOP_DECISIONS.md) - bei diesen
-Punkten IMMER erst fragen, nicht raten:
-- Speicherort Originaldateien (Empfehlung: /data/uploads + Metadaten in DB,
-  noch nicht von Karo final bestaetigt -- nachfragen falls nicht laengst geklaert)
-- Umgang mit sensiblen Dokumenten (blockieren/redigieren/Admin-Freigabe -
-  NICHT frei entscheiden, noch offen)
+Weiterhin bindende Stop-Regel (siehe AILIZA_BLOCK_C_STOP_DECISIONS.md) --
+bei diesem Punkt IMMER erst fragen, nicht raten, falls er relevant wird:
 - Keine Dokumente/Chunks an externe LLM-/Embedding-Dienste ohne
-  ausdrueckliche Freigabe
+  ausdrueckliche Freigabe (Kill-Switch-Pipeline gilt auch hier)
 
 Autarker Betrieb bleibt primaer (SQLite, kein Postgres-Zwang).
 Tests zuerst (TDD).
