@@ -1396,6 +1396,76 @@ def apply_confirmed_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
     return confirm_memory_suggestion(suggestion_id, confirmed_by=confirmed_by, reviewer_role=reviewer_role)
 
 
+# ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ──────────
+# Karo-Entscheidung zur Stop-Regel: DELETE /api/me deaktiviert den Account
+# (active=0) und loescht/anonymisiert abhaengige persoenliche Daten. KEIN
+# hartes Loeschen des users-Datensatzes in dieser PR.
+
+def export_user_data(user_id: str, tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
+    """Alle eigenen Daten fuer den Nutzer-Export (Art. 20 DSGVO). Niemals
+    hashed_password, niemals fremde Daten, nur user_memory-Scope (kein
+    Firmenwissen -- das gehoert nicht dem einzelnen Nutzer)."""
+    user = get_user(user_id, tenant_id)
+    user_export = None
+    if user:
+        user_export = {k: v for k, v in user.items() if k != "hashed_password"}
+    return {
+        "user": user_export,
+        "user_settings": get_user_settings(user_id, tenant_id),
+        "user_projects": list_user_projects(tenant_id, user_id),
+        "user_chats": list_user_chats(tenant_id, user_id),
+        "memory_items": list_active_memory_items_for_user(user_id, tenant_id),
+        "memory_suggestions": list_memory_suggestions_for_user(user_id, tenant_id, status=None),
+    }
+
+
+def _soft_delete_owned_memory_items(conn: Any, user_id: str, tenant_id: str, now: datetime) -> None:
+    conn.execute(
+        update(memory_items)
+        .where(memory_items.c.owner_user_id == user_id)
+        .where(memory_items.c.tenant_id == tenant_id)
+        .values(status="deleted", updated_at=now)
+    )
+
+
+def delete_own_account_data(user_id: str, tenant_id: str = DEFAULT_TENANT_ID) -> None:
+    """Loescht/deaktiviert alle eigenen personenbezogenen Daten in EINER
+    Transaktion (alles oder nichts): user_projects, user_chats,
+    user_settings, eigene memory_items (soft-delete), eigene
+    memory_suggestions. Setzt users.active=0 -- der users-Datensatz selbst
+    bleibt bestehen (keine physische Loeschung in dieser PR, siehe
+    docs/BLOCK_B_MASTER_AUFTRAG.md)."""
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        conn.execute(
+            delete(user_projects)
+            .where(user_projects.c.user_id == user_id)
+            .where(user_projects.c.tenant_id == tenant_id)
+        )
+        conn.execute(
+            delete(user_chats)
+            .where(user_chats.c.user_id == user_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+        )
+        conn.execute(
+            delete(user_settings)
+            .where(user_settings.c.user_id == user_id)
+            .where(user_settings.c.tenant_id == tenant_id)
+        )
+        _soft_delete_owned_memory_items(conn, user_id, tenant_id, now)
+        conn.execute(
+            delete(memory_suggestions)
+            .where(memory_suggestions.c.user_id == user_id)
+            .where(memory_suggestions.c.tenant_id == tenant_id)
+        )
+        conn.execute(
+            update(users)
+            .where(users.c.user_id == user_id)
+            .where(users.c.tenant_id == tenant_id)
+            .values(active=0)
+        )
+
+
 def _max_attempts() -> int:
     return int(os.getenv("AILIZA_MAX_LOGIN_ATTEMPTS", "5"))
 
