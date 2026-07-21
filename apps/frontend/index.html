@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#2D5F3F">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -29,20 +29,6 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
-/* Mobile-Fix: 100% (=100vh) berücksichtigt nicht die dynamische
-   Adressleiste mobiler Browser (Chrome/Android) -- bei sichtbarer Leiste
-   wird der untere Seitenbereich (Chat-Eingabefeld) hinter die Browser-UI
-   geschoben. 100dvh reagiert korrekt auf die tatsächliche sichtbare Höhe.
-   Bleibt additiv: Browser ohne dvh-Unterstützung ignorieren die Zeile und
-   behalten den bestehenden 100%-Fallback von oben. */
-@supports (height:100dvh){html,body{height:100dvh}}
-/* Mobile-Fix (Tastatur): 100dvh allein reagiert auf vielen Geraeten NICHT
-   auf die eingeblendete Bildschirmtastatur -- window.visualViewport meldet
-   die tatsaechlich sichtbare Hoehe zuverlaessig. --app-viewport-height wird
-   per JS gesetzt/aktualisiert (siehe setAppViewportHeight() im Script);
-   ohne JS oder in Browsern ohne visualViewport bleibt die Variable unset
-   und diese Regel faellt auf 100dvh (bzw. via Kaskade oben auf 100%) zurueck. */
-html,body{height:var(--app-viewport-height, 100dvh)}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--bg);
@@ -96,7 +82,7 @@ body{
 .side-add{padding:7px 10px;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;border-radius:6px;background:var(--accent-soft);margin:4px 8px;text-align:center}
 .side-add:hover{background:#d4e8d8;color:#234a31}
 .side-footer{border-top:1px solid var(--border);padding:10px 14px;font-size:10px;color:var(--text-muted);text-align:center}
-.main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
 .view{display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden}
 .view.active{display:flex}
 .chat-header{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:12px;flex-shrink:0}
@@ -107,7 +93,7 @@ body{
 .chat-actions{margin-left:auto;display:flex;gap:6px}
 .btn-mini{border:1px solid var(--border);background:var(--surface);padding:4px 10px;font-size:11px;border-radius:5px;cursor:pointer;color:var(--text-soft)}
 .btn-mini:hover{background:var(--surface-2)}
-.chat-body{flex:1;min-height:0;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center}
+.chat-body{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center}
 .chat-inner{width:100%;max-width:720px;display:flex;flex-direction:column;gap:14px}
 .welcome{text-align:center;padding:48px 20px 24px}
 .welcome-h{font-size:22px;font-weight:600;margin-bottom:8px;letter-spacing:-.3px}
@@ -334,7 +320,7 @@ body{
   .welcome-h{font-size:18px}
   .welcome-chips{gap:5px}
   .chip{font-size:11px;padding:6px 10px}
-  .input-wrap{padding:10px 12px calc(14px + env(safe-area-inset-bottom));position:sticky;bottom:0;z-index:10}
+  .input-wrap{padding:10px 12px 14px;position:sticky;bottom:0;z-index:10}
   .privacy-panel{display:none}
   .dsgvo-sidebar{display:none}
   .privacy-panel.expanded{display:block}
@@ -729,35 +715,6 @@ body{
 // noetig (vorher: window.AILIZA_API-Fallback auf eine feste Production-Basis-URL,
 // wodurch z.B. Staging heimlich Production ansprach).
 const API = "";
-
-// ── Mobile-Fix: Tastatur-/VisualViewport-Fallback ───────────────────────────
-// 100dvh allein reagiert auf vielen mobilen Browsern NICHT auf die
-// eingeblendete Bildschirmtastatur (nur auf die Adressleiste). window.
-// visualViewport meldet die tatsaechlich sichtbare Hoehe zuverlaessig,
-// inkl. Tastatur. Setzt --app-viewport-height, die html/body per CSS
-// nutzen (siehe @supports/var()-Kaskade oben im <style>-Block). Laeuft
-// sofort beim Laden -- kein modularer Code hier, daher kein explizites
-// Cleanup noetig (Listener leben fuer die gesamte Seiten-Lebensdauer,
-// wie alle anderen globalen Event-Listener in diesem Skript).
-(function setupAppViewportHeightFallback(){
-  function setAppViewportHeight(){
-    const vv=window.visualViewport;
-    const h=vv?vv.height:window.innerHeight;
-    document.documentElement.style.setProperty("--app-viewport-height",h+"px");
-  }
-  setAppViewportHeight();
-  if(window.visualViewport){
-    window.visualViewport.addEventListener("resize",setAppViewportHeight);
-    window.visualViewport.addEventListener("scroll",setAppViewportHeight);
-  }else{
-    window.addEventListener("resize",setAppViewportHeight);
-  }
-  // Manche mobilen Browser melden die Tastaturhoehe verzoegert nach dem
-  // ersten resize-Event -- kurz danach nochmal nachmessen.
-  const _reMeasure=()=>setTimeout(setAppViewportHeight,150);
-  window.addEventListener("resize",_reMeasure);
-  if(window.visualViewport)window.visualViewport.addEventListener("resize",_reMeasure);
-})();
 
 const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
 const SKILLS=[
