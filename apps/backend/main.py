@@ -46,6 +46,8 @@ try:
         save_user_project, list_user_projects, delete_user_project,
         save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
         get_user_settings, upsert_user_settings,
+        decide_memory_storage, create_memory_suggestion, MemoryValidationError,
+        list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
     )
     from .auth.models import UserCreate, UserInDB
     from .auth.totp import generate_secret, verify_totp, build_otpauth_uri, generate_backup_codes, hash_backup_code
@@ -68,6 +70,8 @@ except ImportError:
         save_user_project, list_user_projects, delete_user_project,
         save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
         get_user_settings, upsert_user_settings,
+        decide_memory_storage, create_memory_suggestion, MemoryValidationError,
+        list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
     )
     from apps.backend.gateway import guarded_tool_call
     from apps.backend.routers.approvals import router as approvals_router
@@ -1550,12 +1554,95 @@ def _test_mode_fields(provider: str | None, model: str | None) -> dict[str, Any]
     }
 
 
+# ── Block B Schritt 1: Chat-Anbindung der Speicher-Entscheidungslogik ───────
+# Kein LLM-Call zur info_kind-Klassifikation (Karo-Vorgabe) -- nutzt die
+# bestehende, pattern-basierte Governance-Klassifikation (classify()) und
+# ergaenzt nur feste, einfache Regeln fuer Einstellungs-Phrasen.
+_SETTING_PHRASE_PATTERN = re.compile(
+    r"\b(bitte\s+)?antworte(?:n)?\s+(mir\s+)?(bitte\s+)?(immer|k[uü]nftig|generell)\b"
+    r"|\bantworte\s+(bitte\s+)?(kurz|k[uü]rzer|lang|ausf[uü]hrlich|f[oö]rmlich|informell|sachlich)\b",
+    re.IGNORECASE,
+)
+
+_SENSITIVE_DATA_CLASSES = {
+    DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY,
+    DataClass.SECURITY_SENSITIVE, DataClass.HR,
+}
+
+
+def classify_info_kind_for_memory(text: str) -> str:
+    """Regelbasierte info_kind-Ableitung fuer decide_memory_storage() -- KEIN
+    LLM-Call. Nutzt die bestehende Governance-Klassifikation als primaeres
+    Signal, ergaenzt nur eine feste Regel fuer Einstellungs-Phrasen."""
+    try:
+        result = classify(text)
+    except Exception:  # noqa: BLE001 - fail-closed: im Zweifel sensibel
+        return "sensitive"
+    if result.highest_risk_class in _SENSITIVE_DATA_CLASSES:
+        return "sensitive"
+    if _SETTING_PHRASE_PATTERN.search(text or ""):
+        return "setting"
+    return "user_knowledge"
+
+
+def _maybe_suggest_memory(*, task: str, result: dict[str, Any],
+                          token: "TokenData | None", tenant_id: str) -> None:
+    """Best effort: erzeugt hoechstens einen memory_suggestion-Vorschlag nach
+    einer erfolgreichen Agentenantwort und haengt ihn (nur id/title, keine
+    Rohinhalte) an das Response-dict an, damit das Frontend eine bestaetigbare
+    Aktion anzeigen kann. Wird NIE zur direkten Speicherung in memory_items
+    fuehren (das passiert erst nach Bestaetigung, siehe confirm_memory_
+    suggestion()). Jede Exception wird hier verschluckt -- die eigentliche
+    Agentenantwort darf niemals durch einen Fehler in dieser Zusatzlogik
+    blockiert werden (Karo-Grundsatz: AILIZA antwortet immer)."""
+    try:
+        if token is None:
+            return  # kein Nutzerkontext -> keine Zuordnung moeglich
+        if result.get("status") not in ("completed", "draft"):
+            return
+        info_kind = classify_info_kind_for_memory(task)
+        decision = decide_memory_storage(
+            user_id=token.user_id, tenant_id=tenant_id,
+            info_kind=info_kind, reusable=True, has_source=True,
+            content=task,
+        )
+        if decision != "create_user_memory_suggestion":
+            return  # setting/sensitive/technical/temporary/discard -> keine Suggestion
+        title = (task[:100] if task else "Chat-Hinweis")
+        suggestion = create_memory_suggestion(
+            user_id=token.user_id, tenant_id=tenant_id, suggested_scope="user_memory",
+            suggested_title=title, suggested_content=task,
+            suggested_purpose="Aus Chat abgeleiteter Hinweis",
+            source_type="user_confirmation", source_reference=None,
+        )
+        # Nur id/title in die Antwort -- keine Rohinhalte doppelt herumreichen.
+        result["memory_suggestion"] = {"id": suggestion["id"], "title": title}
+    except Exception:  # noqa: BLE001 - best effort, darf Antwort nie blockieren
+        logger.exception("Memory-Suggestion-Erstellung fehlgeschlagen (best effort, kein Nutzer-Impact).")
+
+
 @app.post("/agent/run")
 @_limiter.limit("30/minute")
 def run_agent(
     request: Request,
     payload: AgentRunRequest,
     token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Duenner Wrapper um _run_agent_core(): haengt den Speicher-Vorschlags-
+    Schritt (best effort, Block B Schritt 1) an eine erfolgreiche Antwort an,
+    OHNE die eigentliche Governance-/Agenten-Logik anzufassen. Ein Fehler in
+    _maybe_suggest_memory() kann diese Antwort strukturell nie blockieren --
+    der Call steht NACH der fertigen Antwort und faengt selbst alles ab."""
+    tenant = _tenant_id(token)
+    result = _run_agent_core(request, payload, token)
+    _maybe_suggest_memory(task=payload.task, result=result, token=token, tenant_id=tenant)
+    return result
+
+
+def _run_agent_core(
+    request: Request,
+    payload: AgentRunRequest,
+    token: TokenData | None,
 ) -> dict[str, Any]:
     tenant = _tenant_id(token)
 
@@ -2739,6 +2826,49 @@ def api_update_user_settings(
     user = _require_user(token)
     fields = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
     return upsert_user_settings(user.user_id, user.tenant_id, **fields)
+
+
+# ── Block B Schritt 1: Vorschlaege bestaetigen/ablehnen ─────────────────────
+# Minimal, nutzt bestehendes appendActionRow-Frontend-Muster. Kein UI-Panel
+# in dieser PR -- nur die zwei Aktionen, die der Chat-Vorschlag ausloest.
+@app.get("/api/memory-suggestions")
+def api_list_memory_suggestions(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    suggestions = list_memory_suggestions_for_user(user.user_id, user.tenant_id)
+    return {"suggestions": suggestions, "count": len(suggestions)}
+
+
+@app.post("/api/memory-suggestions/{suggestion_id}/confirm")
+def api_confirm_memory_suggestion(
+    suggestion_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    own = {s["id"] for s in list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
+    if suggestion_id not in own:
+        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
+    try:
+        result = confirm_memory_suggestion(
+            suggestion_id, confirmed_by=user.user_id, reviewer_role=user.role,
+        )
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "confirmed", **result}
+
+
+@app.post("/api/memory-suggestions/{suggestion_id}/reject")
+def api_reject_memory_suggestion(
+    suggestion_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    own = {s["id"] for s in list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
+    if suggestion_id not in own:
+        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
+    reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id)
+    return {"status": "rejected", "id": suggestion_id}
 
 
 @app.get("/api/user-chats")

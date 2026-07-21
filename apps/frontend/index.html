@@ -1864,6 +1864,31 @@ async function runAgent(text,redactionMap,consentApprovalId,file=null){
     isDraft?draftHint:undefined,
     testModeInfo
   );
+
+  // Block B Schritt 1: bestaetigbarer Speicher-Vorschlag (best effort,
+  // rein additiv -- ohne data.memory_suggestion aendert sich nichts).
+  if(data.memory_suggestion){
+    const sid=data.memory_suggestion.id;
+    addAiMessage(`AILIZA schlägt vor, sich das zu merken: "${data.memory_suggestion.title}"`,undefined);
+    appendActionRow([
+      {
+        label:"Merken",
+        primary:true,
+        handler:async()=>{
+          try{await fetch(`${API}/api/memory-suggestions/${sid}/confirm`,{method:"POST",headers:authHeaders()});}
+          catch(e){}
+        }
+      },
+      {
+        label:"Nicht merken",
+        primary:false,
+        handler:async()=>{
+          try{await fetch(`${API}/api/memory-suggestions/${sid}/reject`,{method:"POST",headers:authHeaders()});}
+          catch(e){}
+        }
+      }
+    ]);
+  }
 }
 function addAiMessage(text,warn,draftHint,testModeInfo){
   const msg={role:"ai",content:text,time:new Date().toISOString()};
