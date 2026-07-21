@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
@@ -292,6 +292,63 @@ user_settings = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Index("ix_user_settings_user_tenant", "user_id", "tenant_id", unique=True),
+)
+
+# ── Mini-PR 2 (Gedaechtnis-Governance v1): Kernschema fuer sichtbares,
+# kontrolliertes Gedaechtnis. NUR Datenstruktur -- keine automatische
+# Erkennung, keine memory_suggestions, keine UI, kein pgvector, kein
+# Wissensgraph (siehe docs/DATABASE_MEMORY_GOVERNANCE_V1.md).
+memory_sources = Table(
+    "memory_sources",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("source_type", String(32), nullable=False),
+    Column("reference", String(255), nullable=True),
+    Column("source_title", String(255), nullable=True),
+    Column("source_date", DateTime(timezone=True), nullable=True),
+    Column("confirmed_by", String(64), nullable=True),
+    Column("approved_by", String(64), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+memory_items = Table(
+    "memory_items",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=True),  # company_memory Pflicht, user_memory optional
+    Column("scope", String(32), nullable=False),
+    Column("owner_user_id", String(64), nullable=True),  # user_memory Pflicht, company_memory None
+    # Text statt String: Inhalt kann laenger sein, keine willkuerliche Kuerzung.
+    Column("title", Text, nullable=False),
+    Column("content", Text, nullable=False),
+    Column("category", String(64), nullable=True),
+    Column("purpose", Text, nullable=True),  # aktive Eintraege: Pflicht (siehe create_memory_item)
+    Column("source_id", Integer, ForeignKey("memory_sources.id"), nullable=True),
+    Column("status", String(32), nullable=False, default="suggested"),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("last_used_at", DateTime(timezone=True), nullable=True),
+    Column("created_by", String(64), nullable=True),
+    Column("approved_by", String(64), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_memory_items_owner", "owner_user_id"),
+    Index("ix_memory_items_tenant_status", "tenant_id", "status"),
+)
+
+memory_visibility = Table(
+    "memory_visibility",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("memory_item_id", Integer, ForeignKey("memory_items.id"), nullable=False, unique=True),
+    Column("visibility_scope", String(32), nullable=False, default="private"),
+    Column("allowed_roles", JSON, nullable=False, default=list),
+    Column("allowed_user_ids", JSON, nullable=False, default=list),
+    Column("allowed_org_id", String(64), nullable=True),
+    Column("project_id", String(64), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
 
@@ -934,6 +991,162 @@ def upsert_user_settings(user_id: str, tenant_id: str = DEFAULT_TENANT_ID, **fie
                 user_id=user_id, tenant_id=tenant_id, created_at=now, updated_at=now, **values,
             ))
     return get_user_settings(user_id, tenant_id)
+
+
+# ── Mini-PR 2: Memory-Kernschema Helper ──────────────────────────────────────
+# Nur Datenstruktur + minimale Validierung. Keine automatische Erkennung,
+# keine memory_suggestions-Logik (Mini-PR 3), keine UI, kein pgvector.
+
+class MemoryValidationError(ValueError):
+    """Ein Memory-Eintrag verletzt eine Pflichtregel (Scope/Quelle/Zweck/Besitzer)."""
+
+
+_VALID_MEMORY_SCOPES = {"company_memory", "user_memory"}
+_VALID_MEMORY_STATUS = {"suggested", "confirmed", "active", "outdated", "deleted"}
+_ACTIVE_STATUS_VALUES = ("active",)
+
+
+def create_memory_source(tenant_id: str, source_type: str, *,
+                         reference: str | None = None, source_title: str | None = None,
+                         source_date: datetime | None = None,
+                         confirmed_by: str | None = None, approved_by: str | None = None) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        result = conn.execute(insert(memory_sources).values(
+            tenant_id=tenant_id, source_type=source_type, reference=reference,
+            source_title=source_title, source_date=source_date,
+            confirmed_by=confirmed_by, approved_by=approved_by,
+            created_at=now, updated_at=now,
+        ))
+        source_id = result.inserted_primary_key[0]
+    return {"id": source_id, "tenant_id": tenant_id, "source_type": source_type}
+
+
+def _validate_memory_item(scope: str, tenant_id: str | None, owner_user_id: str | None,
+                          status: str, source_id: int | None, purpose: str | None) -> None:
+    if scope not in _VALID_MEMORY_SCOPES:
+        raise MemoryValidationError(f"Ungueltiger scope: {scope!r}. Erlaubt: {_VALID_MEMORY_SCOPES}")
+    if status not in _VALID_MEMORY_STATUS:
+        raise MemoryValidationError(f"Ungueltiger status: {status!r}. Erlaubt: {_VALID_MEMORY_STATUS}")
+    if scope == "user_memory" and not owner_user_id:
+        raise MemoryValidationError("user_memory braucht owner_user_id.")
+    if scope == "company_memory" and not tenant_id:
+        raise MemoryValidationError("company_memory braucht tenant_id (Organisationsbezug).")
+    if status in _ACTIVE_STATUS_VALUES:
+        if not source_id:
+            raise MemoryValidationError("Aktiver Memory-Eintrag braucht source_id.")
+        if not purpose:
+            raise MemoryValidationError("Aktiver Memory-Eintrag braucht purpose.")
+
+
+def _default_visibility_for_scope(scope: str, tenant_id: str | None) -> dict[str, Any]:
+    if scope == "user_memory":
+        return {"visibility_scope": "private", "allowed_org_id": None}
+    return {"visibility_scope": "organization", "allowed_org_id": tenant_id}
+
+
+def create_memory_item(tenant_id: str | None, scope: str, title: str, content: str, *,
+                       purpose: str | None = None, source_id: int | None = None,
+                       owner_user_id: str | None = None, category: str | None = None,
+                       status: str = "suggested", expires_at: datetime | None = None,
+                       created_by: str | None = None, approved_by: str | None = None) -> dict[str, Any]:
+    """Legt einen Memory-Eintrag an. Kein automatischer Aufrufpfad -- diese
+    Funktion wird nur explizit aufgerufen (siehe test_no_automatic_chat_to_memory_path_exists).
+    Pflichtregeln (Scope/Zweck/Quelle/Besitzer) werden hier durchgesetzt,
+    nicht erst in einer spaeteren Schicht (fail-closed)."""
+    _validate_memory_item(scope, tenant_id, owner_user_id, status, source_id, purpose)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        result = conn.execute(insert(memory_items).values(
+            tenant_id=tenant_id, scope=scope, owner_user_id=owner_user_id,
+            title=title, content=content, category=category, purpose=purpose,
+            source_id=source_id, status=status, expires_at=expires_at,
+            created_by=created_by, approved_by=approved_by,
+            created_at=now, updated_at=now,
+        ))
+        item_id = result.inserted_primary_key[0]
+        if status in _ACTIVE_STATUS_VALUES:
+            vis = _default_visibility_for_scope(scope, tenant_id)
+            conn.execute(insert(memory_visibility).values(
+                memory_item_id=item_id, visibility_scope=vis["visibility_scope"],
+                allowed_roles=[], allowed_user_ids=[], allowed_org_id=vis["allowed_org_id"],
+                project_id=None, created_at=now, updated_at=now,
+            ))
+    return get_memory_item(item_id)
+
+
+def get_memory_item(item_id: int) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(select(memory_items).where(memory_items.c.id == item_id)).mappings().first()
+    return dict(row) if row else None
+
+
+def list_active_memory_items_for_user(user_id: str, tenant_id: str = DEFAULT_TENANT_ID) -> list[dict[str, Any]]:
+    """Nur eigene, aktive, nicht abgelaufene Eintraege -- keine fremden user_memory-Eintraege."""
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(memory_items)
+            .where(memory_items.c.owner_user_id == user_id)
+            .where(memory_items.c.tenant_id == tenant_id)
+            .where(memory_items.c.status == "active")
+        ).mappings().all()
+    return [dict(r) for r in rows if r["expires_at"] is None or _as_aware(r["expires_at"]) > now]
+
+
+def list_active_memory_items_for_org(tenant_id: str) -> list[dict[str, Any]]:
+    """Nur company_memory desselben Mandanten, aktiv, nicht abgelaufen."""
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(memory_items)
+            .where(memory_items.c.tenant_id == tenant_id)
+            .where(memory_items.c.scope == "company_memory")
+            .where(memory_items.c.status == "active")
+        ).mappings().all()
+    return [dict(r) for r in rows if r["expires_at"] is None or _as_aware(r["expires_at"]) > now]
+
+
+def _as_aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def set_memory_visibility(memory_item_id: int, *, visibility_scope: str,
+                          allowed_roles: list | None = None, allowed_user_ids: list | None = None,
+                          allowed_org_id: str | None = None, project_id: str | None = None) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(memory_visibility.c.id)
+            .where(memory_visibility.c.memory_item_id == memory_item_id)
+        ).first()
+        values = dict(
+            visibility_scope=visibility_scope, allowed_roles=allowed_roles or [],
+            allowed_user_ids=allowed_user_ids or [], allowed_org_id=allowed_org_id,
+            project_id=project_id, updated_at=now,
+        )
+        if existing:
+            conn.execute(
+                update(memory_visibility).where(memory_visibility.c.id == existing[0]).values(**values)
+            )
+        else:
+            conn.execute(insert(memory_visibility).values(
+                memory_item_id=memory_item_id, created_at=now, **values,
+            ))
+        row = conn.execute(
+            select(memory_visibility).where(memory_visibility.c.memory_item_id == memory_item_id)
+        ).mappings().first()
+    return dict(row)
+
+
+def mark_memory_item_deleted(item_id: int) -> None:
+    """Soft-Delete: status='deleted'. Geloeschte Eintraege werden von den
+    list_active_*-Funktionen nie zurueckgegeben (Status-Filter auf 'active')."""
+    with engine.begin() as conn:
+        conn.execute(
+            update(memory_items).where(memory_items.c.id == item_id)
+            .values(status="deleted", updated_at=datetime.now(timezone.utc))
+        )
 
 
 def _max_attempts() -> int:
