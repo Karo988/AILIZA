@@ -1,8 +1,8 @@
-# AILIZA Agent-Handoff: Block C Phase C1 (Schema) fertig — nächste Schritte
+# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2
 
-**Status:** PR #48 (Block C1: Dokumentquellen-Schema) ist offen, `mergeable_state: clean`, 956/956 Tests grün. Noch nicht gemergt — wartet auf Karos Review/Merge.
+**Status:** PR #48 (Block C1: Schema) ist **gemergt**. Block C2 (sichere TXT/Markdown-Ingestion) ist implementiert, 979/979 Tests grün, PR wird als nächstes erstellt.
 
-**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (nach Merge von PR #48).
+**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C3, erst nach Merge von C2).
 
 ---
 
@@ -11,130 +11,109 @@
 ```
 Block A (Autarker Betrieb, Memory-Kernschema)        ✅ gemergt
 Block B (Chat-Anbindung, Export/Löschung DSGVO)       ✅ gemergt
-Block C1 (Wissensquellen-Schema)                      ⏳ PR #48 offen, bereit zum Merge
-Block C2 (Dokument-Ingestion)                         ⏳ noch nicht begonnen
-Block C3 (Lokale Suche)                               ⏳ noch nicht begonnen
+Block C1 (Wissensquellen-Schema)                      ✅ gemergt (PR #48)
+Block C2 (TXT/Markdown-Ingestion)                     ✅ implementiert, PR folgt (Branch claude/knowledge-txt-md-ingestion)
+Block C3 (Lokale Suche)                               ⏳ erst nach Merge von C2 starten
 Block C4 (RAG mit Quellen)                            ⏳ noch nicht begonnen
 Block C5 (Optionale Vektorsuche)                      ⏳ nur nach expliziter Freigabe
 Block D (Desktop-Distribution ohne Docker)            ⏳ separater, späterer Auftrag
 ```
 
-## 2. Sofort zu erledigen (von dir, nicht vom Agenten)
+## 2. Block C2 — was gebaut wurde
 
-1. **PR #48 mergen** (oder Review-Kommentare zuerst klären)
-   - Link: https://github.com/Karo988/AILIZA/pull/48
-   - Status: clean, 956/956 Tests grün, Unicode-Hinweis bereits bereinigt
-2. Danach: nächster Agent arbeitet auf frischem `main` inkl. `knowledge_sources`/`knowledge_chunks`/`knowledge_source_permissions`
+**Branch:** `claude/knowledge-txt-md-ingestion` · **Modul:** `apps/backend/knowledge/ingestion.py` · **Tests:** `tests/test_knowledge_txt_md_ingestion.py` (23 neu) · **Baseline:** 979/979 Tests grün.
 
-## 3. Nächster großer Schritt: Block C Phase C2 (Dokument-Ingestion)
+- `ingest_txt_or_markdown_source()` — einziger Einstiegspunkt, nur `.txt`/`.md`
+- `ALLOWED_KNOWLEDGE_EXTENSIONS = {".txt", ".md"}` und `MAX_KNOWLEDGE_FILE_BYTES = 2_000_000` als eigene, klar erkennbare Konstanten
+- Originaldatei landet unter `/data/uploads` (per `AILIZA_KNOWLEDGE_UPLOAD_DIR` konfigurierbar, Dev-Fallback analog zu `_resolve_database_url`), DB speichert nur Metadaten
+- Speicherpfad wird **nie** aus dem Nutzer-Dateinamen gebaut (nur `tenant_id` + zufällige ID + validierte Extension) → Pfad-Traversal strukturell ausgeschlossen
+- Klassifikation über bestehende Governance (`classify()` + `check_data_target(target=FILE_STORAGE)`), zusätzlich `classification.needs_review` beachtet, da `FILE_STORAGE` als Ziel in der Datenziel-Matrix für `SPECIAL_CATEGORY` alleine nicht streng genug ist
+- Fail-closed: `BLOCK` → Status `blocked`; `APPROVAL_REQUIRED`/`REDACT_REQUIRED`/`needs_review` → Status `pending_review`; sonst `approved`. Nur bei `approved` werden `knowledge_chunks` angelegt
+- Verständliche deutsche Nutzermeldungen ohne technische Details, Audit-Eintrag ohne Rohinhalte
+- **Docker-Test:** nicht möglich (Daemon in der Sandbox nicht erreichbar) — auf echtem PC mit `docker compose up -d` verifizieren
 
-Alle 3 Stop-Fragen aus `AILIZA_BLOCK_C_STOP_DECISIONS.md` sind entschieden — C2 kann beauftragt werden, sobald PR #48 gemergt ist:
+**Noch offen:** PR für C2 muss von dir gemerged werden, bevor C3 beauftragt wird.
 
-| # | Frage | Karo-Entscheidung |
-|---|---|---|
-| 1 | Speicherort Originaldateien? | ✅ `/data/uploads` (Docker-Volume). DB speichert nur Pfad, Hash, Status, Besitzer, Sichtbarkeit, Berechtigungen — keine Binärdaten in der Datenbank. |
-| 2 | Erlaubte Dateitypen für v1? | ✅ Nur TXT + Markdown (C2a). PDF (C2b) und DOCX (C2c) folgen als eigene, spätere Schritte nach erneuter Freigabe — nicht "vorbereitend" im selben PR. |
-| 3 | Umgang mit sensiblen Dokumenten? | ✅ Fail-closed: als sensibel/riskant erkannte Dokumente werden **nicht** als aktive Wissensquelle verarbeitet — Status `blocked` oder `pending_review`, keine Chunks für aktive Nutzung, keine Inhalte an externe LLMs. Immer verständliche Erklärung + Alternative für den Nutzer, nie stillschweigendes Blockieren ohne Feedback. |
+## 3. Nächster großer Schritt: Block C Phase C3 (Lokale Suche)
 
-Alle 3 Entscheidungen sind bereits in den Agent-Prompt unten eingearbeitet.
+**Nur starten, wenn die C2-PR gemergt ist.**
 
-## 4. Fertiger Prompt für den nächsten Agenten (Block C2, nach PR #48-Merge)
-
-Kopiere diesen Block 1:1, sobald PR #48 gemergt ist:
+Kopiere diesen Block 1:1, sobald das der Fall ist:
 
 ```text
-Lies zuerst docs/AGENT_HANDOFF_BLOCK_B_ABGESCHLOSSEN.md und
-docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md im Repo Karo988/AILIZA.
+Lies zuerst docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md im Repo
+Karo988/AILIZA (Abschnitt "Block C2 -- was gebaut wurde" fuer den
+aktuellen Stand von apps/backend/knowledge/ingestion.py).
 
-Danach (falls noch im Upload-Paket vorhanden, sonst im Repo suchen):
-- AILIZA_BLOCK_C_MASTER_AUFTRAG.md
-- AILIZA_BLOCK_C_PHASE_C2_INGESTION_PIPELINE.md
-- AILIZA_BLOCK_C_STOP_DECISIONS.md
+Aktueller Stand: Block C1 (Schema: knowledge_sources, knowledge_chunks,
+knowledge_source_permissions) und Block C2 (sichere TXT/Markdown-
+Ingestion, apps/backend/knowledge/ingestion.py) sind in main gemergt.
+Pruefe beide, bevor du etwas Neues baust.
 
-Aktueller Stand: Block C1 (Tabellen knowledge_sources, knowledge_chunks,
-knowledge_source_permissions) ist in main gemergt. Prüfe das existierende
-Schema in apps/backend/database.py, bevor du etwas Neues baust.
+Setze nur Block C Phase C3 um: einfache lokale Suche ueber freigegebene
+knowledge_chunks.
 
-Karo hat alle 3 Stop-Fragen aus AILIZA_BLOCK_C_STOP_DECISIONS.md bereits
-entschieden -- NICHT erneut fragen, diese Entscheidungen sind bindend:
+Ziel:
+- AILIZA kann lokal ueber freigegebene knowledge_chunks suchen.
+- Nur berechtigte, aktive und freigegebene Quellen duerfen gefunden werden
+  (status="approved", nicht blocked/deleted/expired/pending_review,
+  Berechtigung ueber knowledge_source_permissions/tenant_id pruefen).
 
-1. Speicherort Originaldateien: /data/uploads (Docker-Volume). Die
-   Datenbank speichert NUR Metadaten (Pfad, Hash, Status, Besitzer,
-   Sichtbarkeit, Berechtigungen) -- keine Binaerdaten in der DB.
-2. Dateitypen: NUR TXT + Markdown in diesem Auftrag (C2a). PDF (C2b)
-   und DOCX (C2c) sind spaetere, separate Auftraege nach erneuter
-   Freigabe -- nicht "vorbereitend" im selben PR.
-3. Umgang mit sensiblen Dokumenten: fail-closed. Als sensibel/riskant
-   erkannte Dokumente werden NICHT als aktive Wissensquelle verarbeitet.
-   Status auf "blocked" oder "pending_review" setzen. Keine Chunks fuer
-   aktive Nutzung/Suche freigeben. Keine Inhalte an externe LLM-/
-   Embedding-Dienste senden. Der Nutzer bekommt immer eine
-   verstaendliche Erklaerung und wo sinnvoll eine Alternative (z.B.
-   "Bitte Admin-Freigabe anfragen") -- kein stillschweigendes Verwerfen
-   ohne Feedback.
+Suchstrategie:
+- Einfach und autark: lokale Keyword-Suche (z.B. LIKE/Substring-Matching
+  oder SQLite FTS, falls ohne zusaetzliche Abhaengigkeit moeglich).
+- Kein pgvector, keine Embeddings, kein externer Dienst.
+- SQLite-kompatibel (kein Postgres-Zwang, autarker Betrieb bleibt primaer).
 
-Setze nur Block C Phase C2 Schritt 1 um (sicherer Ingestion-Kern,
-NUR TXT + Markdown):
-- Dokumente aufnehmen -- ausschliesslich .txt und .md, alles andere
-  wird mit klarer, verstaendlicher Fehlermeldung abgelehnt (fail-closed,
-  keine Erkennung/Sniffing von "eigentlich doch okay")
-- Originaldatei nach /data/uploads schreiben (Docker-Volume), DB-Zeile
-  in knowledge_sources bekommt storage_path + content_hash (nur
-  Metadaten, keine Binaerdaten in der DB)
-- Text extrahieren (fuer TXT/MD ist das reines Einlesen, keine
-  Parsing-Bibliothek noetig -- bewusst der einfachste/sicherste Fall zuerst)
-- Vor dem Speichern: bestehende Governance-classify()-Pipeline auf den
-  Inhalt anwenden (siehe apps/backend/governance/) -- bei sensiblem
-  Befund status=blocked oder pending_review setzen, siehe Stop-Antwort 3
-  oben. Keine neue eigene Klassifikation erfinden, bestehende nutzen.
-- Inhalte chunkweise in knowledge_chunks speichern (nur wenn Source
-  aktiv/freigegeben ist)
-- Quellen (knowledge_sources) und Berechtigungen
-  (knowledge_source_permissions) beachten - keine Ingestion ohne
-  gueltige Source, kein Auto-Approve
-- Dateityp-Whitelist als eigene, klar erkennbare Konstante/Funktion
-  implementieren (z.B. ALLOWED_INGESTION_TYPES = {"txt", "md"}), NICHT
-  hart im Ablauf verstreut -- das ist die Stelle, die spaeter für
-  PDF/DOCX erweitert wird, also muss sie einfach erweiterbar UND leicht
-  auditierbar sein
+TDD: Tests zuerst schreiben.
 
-Ausdruecklich NICHT in diesem Auftrag (kommt als eigener, spaeterer
-Schritt sobald der Kern sicher steht und Karo das freigibt):
-- Kein PDF/DOCX/CSV, auch nicht "testweise" oder "vorbereitend"
-- Keine Erweiterung der Whitelist ohne Karos ausdrueckliches OK
-- Keine Suche
-- Kein RAG
-- Keine Embeddings
-- Kein pgvector
-- Keine Upload-UI
-- Keine automatische Erinnerung aus Dokumenten in memory_items
-- Keine Firmenwissen-Suggestion aus Dokumenten
+Tests fuer C3:
+- Nutzer findet eigene/freigegebene Chunks.
+- Nutzer findet fremde/private Chunks nicht.
+- blocked/deleted/pending_review Sources werden nicht gefunden.
+- Suche liefert Quelle, Titel, Chunk-ID und kurzen Ausschnitt.
+- Suche respektiert tenant_id/Berechtigungen.
+- Suche funktioniert ohne externe Dienste.
+- kein RAG in dieser PR.
+- bestehende Tests bleiben gruen.
 
-Weiterhin bindende Stop-Regel (siehe AILIZA_BLOCK_C_STOP_DECISIONS.md) --
-bei diesem Punkt IMMER erst fragen, nicht raten, falls er relevant wird:
-- Keine Dokumente/Chunks an externe LLM-/Embedding-Dienste ohne
-  ausdrueckliche Freigabe (Kill-Switch-Pipeline gilt auch hier)
+Ergebnisformat je Treffer:
+- source_id, chunk_id, title, snippet, score/einfache Relevanz,
+  source_type, visibility_scope, status
+
+Nutzerfreundlichkeit:
+- Nichts gefunden: "Ich habe in freigegebenen Quellen nichts Passendes
+  gefunden."
+- Nicht freigegebene Quelle: nicht anzeigen, nicht andeuten, nicht
+  zitieren.
+
+Nicht im Scope C3:
+- kein RAG, keine Antwortgenerierung mit Quellen, keine UI-Neugestaltung,
+  kein pgvector, keine Embeddings, kein Wissensgraph, kein PDF/DOCX,
+  keine automatische Speicherung als memory_item.
 
 Autarker Betrieb bleibt primaer (SQLite, kein Postgres-Zwang).
-Tests zuerst (TDD).
 Aktive Testsuite: pytest tests/ -v --tb=short
-Kleine, einzeln bestaetigte PR statt grosser Umbau.
-Branch: claude/knowledge-document-ingestion
+Branch: claude/knowledge-local-search
+Kleine, klare Commits. Kein Force-Push ohne Rueckfrage. Keine Branches
+loeschen. Keine Secrets/PII in Logs oder Commits.
+Wenn Docker moeglich ist: docker compose up -d kurz pruefen, sonst klar
+melden.
 
 Nach PR-Erstellung stoppen.
 ```
 
-## 5. Governance-Erinnerung (bleibt für jede Phase bindend)
+## 4. Governance-Erinnerung (bleibt für jede Phase bindend)
 
-- Erst fragen, dann programmieren — bei den 3 Stop-Fragen oben NICHT raten
+- Erst fragen, dann programmieren — bei Unklarheiten NICHT raten, Karo fragen
 - Keine Dokumente/Chunks an externe LLM-Dienste ohne ausdrückliche Freigabe (Kill-Switch-Pipeline gilt auch hier)
 - Jede Antwort aus Dokumentwissen braucht später Quellen (erst ab C4 relevant, aber Architektur muss es von Anfang an ermöglichen)
-- Gelöschte/blockierte Quellen dürfen nie genutzt werden (in C1 bereits durchgesetzt über `list_active_chunks_for_source`)
+- Gelöschte/blockierte Quellen dürfen nie genutzt werden (durchgesetzt über `list_active_chunks_for_source`)
 
-## 6. Modell-Empfehlung
+## 5. Modell-Empfehlung
 
-**Sonnet 5** für C2 (iterative Ingestion-Pipeline, Tests, TDD).
-**Opus 4.8 nur** falls eine echte Architekturentscheidung zu Chunking-Strategie oder Datei-Handling nötig wird und du das explizit anstoßen willst.
+**Sonnet 5** für C3 (iterative Such-Logik, Tests, TDD).
+**Opus 4.8 nur** falls eine echte Architekturentscheidung zur Suchstrategie (z.B. FTS5 vs. einfaches LIKE) nötig wird und du das explizit anstoßen willst.
 
 ---
 
