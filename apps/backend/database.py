@@ -460,6 +460,10 @@ knowledge_sources = Table(
     Column("mime_type", String(128), nullable=True),
     Column("status", String(32), nullable=False, default="uploaded"),
     Column("visibility_scope", String(32), nullable=False, default="private"),
+    # Block D0: rein manuelle, optionale Demo-Kategorie (kein LLM, keine
+    # automatische Klassifikation). Nullable, aendert nichts an bestehendem
+    # Verhalten fuer Sources ohne Kategorie.
+    Column("category", String(64), nullable=True),
     Column("approved_by", String(64), nullable=True),
     Column("approved_at", DateTime(timezone=True), nullable=True),
     Column("expires_at", DateTime(timezone=True), nullable=True),
@@ -576,6 +580,8 @@ def ensure_sqlite_schema() -> None:
         # Version-Spalte fuer serverseitige Speicherung (Optimistic Locking)
         _add_column_if_missing(connection, "user_projects", "version", "INTEGER DEFAULT 1")
         _add_column_if_missing(connection, "user_chats", "version", "INTEGER DEFAULT 1")
+        # Block D0: manuelle Demo-Kategorie fuer bestehende knowledge_sources-Tabellen
+        _add_column_if_missing(connection, "knowledge_sources", "category", "VARCHAR(64)")
         # TOTP-Felder (Tabellen werden durch metadata_obj.create_all angelegt)
 
 
@@ -1260,6 +1266,7 @@ def create_knowledge_source(*, tenant_id: str | None, uploaded_by: str | None,
                             mime_type: str | None = None,
                             status: str = "uploaded",
                             visibility_scope: str = "private",
+                            category: str | None = None,
                             approved_by: str | None = None,
                             approved_at: datetime | None = None,
                             expires_at: datetime | None = None) -> dict[str, Any]:
@@ -1281,7 +1288,7 @@ def create_knowledge_source(*, tenant_id: str | None, uploaded_by: str | None,
             tenant_id=tenant_id, uploaded_by=uploaded_by, source_type=source_type,
             title=title, original_filename=original_filename, storage_path=storage_path,
             content_hash=content_hash, mime_type=mime_type, status=status,
-            visibility_scope=visibility_scope, approved_by=approved_by,
+            visibility_scope=visibility_scope, category=category, approved_by=approved_by,
             approved_at=approved_at, expires_at=expires_at,
             created_at=now, updated_at=now,
         ))
@@ -1295,6 +1302,29 @@ def get_knowledge_source(source_id: int) -> dict[str, Any] | None:
             select(knowledge_sources).where(knowledge_sources.c.id == source_id)
         ).mappings().first()
     return dict(row) if row else None
+
+
+def list_knowledge_sources_for_tenant(tenant_id: str) -> list[dict[str, Any]]:
+    """Alle Wissensquellen eines Mandanten inkl. Chunk-Anzahl (Block D0 --
+    Demo-/Nachschlagewerk-Ansicht). Liefert bewusst ALLE Status (auch
+    blocked/pending_review/deleted/expired), damit die UI den vollen
+    Ueberblick zeigen kann -- Nutzbarkeit im Chat wird separat ueber den
+    Status kommuniziert, hier wird nichts versteckt oder gefiltert."""
+    from sqlalchemy import func
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(knowledge_sources).where(knowledge_sources.c.tenant_id == tenant_id)
+        ).mappings().all()
+        sources = [dict(r) for r in rows]
+        counts = dict(conn.execute(
+            select(knowledge_chunks.c.source_id, func.count(knowledge_chunks.c.id))
+            .where(knowledge_chunks.c.tenant_id == tenant_id)
+            .where(knowledge_chunks.c.status == "active")
+            .group_by(knowledge_chunks.c.source_id)
+        ).all())
+    for source in sources:
+        source["chunk_count"] = counts.get(source["id"], 0)
+    return sources
 
 
 def _knowledge_source_status(conn: Any, source_id: int) -> str | None:

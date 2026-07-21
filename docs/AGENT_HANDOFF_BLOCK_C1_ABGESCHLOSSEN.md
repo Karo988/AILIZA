@@ -1,8 +1,8 @@
-# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3 + C4 (alle gemergt)
+# AILIZA Agent-Handoff: Block C (C1–C4, alle gemergt) + Block D0 (Demo-UI)
 
-**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion), PR #50 (lokale Suche) und PR #51 (interne Wissensquellen im Chat mit Quellenanzeige) sind **alle gemergt**. Block C ist damit für die aktuelle Roadmap-Stufe fertig — Block C5 (Vektorsuche) und Websuche bleiben bewusst zurückgestellt.
+**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion), PR #50 (lokale Suche) und PR #51 (interne Wissensquellen im Chat mit Quellenanzeige) sind **alle gemergt**. Block D0 (kleine Demo-/UI-Schicht "Firmendatenbank") ist implementiert, 1077/1077 Tests grün, PR wird als nächstes erstellt (siehe Abschnitt 8).
 
-**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für den empfohlenen Folgeschritt, siehe Abschnitt 5).
+**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent.
 
 ---
 
@@ -232,16 +232,9 @@ Handoff-Dokument nach Umsetzung aktualisieren.
 Nach PR-Erstellung stoppen.
 ```
 
-## 5. Empfohlener Folgeschritt (noch NICHT beauftragt)
+## 5. Empfohlener Folgeschritt (umgesetzt als Block D0, siehe Abschnitt 8)
 
-Block C (C1–C4) ist jetzt vollständig gemergt, aber es gibt aktuell **keine Möglichkeit, das praktisch zu sehen** — kein Upload-UI, kein Chat-UI, das `sources`/`answer_mode` anzeigt. Empfehlung für den nächsten kleinen Schritt:
-
-**Kleine UI-/Demo-Schicht**, damit Karo AILIZA praktisch testen kann:
-- Minimaler Upload-Weg für TXT/Markdown (Frontend-Formular oder gut dokumentierter API-Call)
-- Chat-Antwort zeigt `sources` (Titel, evtl. `source_id`) sichtbar an, falls vorhanden
-- Explizit **kein** großes UI-Redesign — kleinster Schnitt, der die Demo-Checkliste oben tatsächlich durchspielbar macht
-
-**Noch nicht umsetzen** — nur als Folgepunkt notiert, wartet auf Karos Beauftragung.
+~~Block C (C1–C4) ist jetzt vollständig gemergt, aber es gibt aktuell keine Möglichkeit, das praktisch zu sehen~~ — **erledigt durch Block D0** (Abschnitt 8): kleine Demo-/UI-Schicht "Firmendatenbank" mit Upload, Statusanzeige und Quellenliste im Chat.
 
 ## 6. Governance-Erinnerung (bleibt für jede Phase bindend)
 
@@ -253,7 +246,78 @@ Block C (C1–C4) ist jetzt vollständig gemergt, aber es gibt aktuell **keine M
 ## 7. Modell-Empfehlung
 
 **Sonnet 5** für C4 war korrekt — alle Architekturfragen waren durch Karo bereits final entschieden, reine Integration bestehender Bausteine, kein offener Architektur-Entwurf.
-**Für den empfohlenen Folgeschritt (UI-/Demo-Schicht): ebenfalls Sonnet 5** — kleine, klar abgegrenzte Frontend-/API-Anbindung ohne neue Architekturentscheidung.
+**Für Block D0: ebenfalls Sonnet 5** — kleine, klar abgegrenzte Frontend-/API-Anbindung ohne neue Architekturentscheidung (bestätigt sich im Ergebnis).
+
+## 8. Block D0 — Demo-/UI-Schicht "Firmendatenbank" (was gebaut wurde)
+
+**Branch:** `claude/knowledge-demo-ui` · **Tests:** 43 neu (`test_knowledge_demo_view.py`: 13, `test_knowledge_demo_db.py`: 6, `test_knowledge_txt_md_ingestion.py`: +3 Kategorie-Tests, `test_knowledge_demo_api.py`: 21) · **Baseline:** 1077/1077 Tests grün.
+
+### Backend (additiv, keine bestehende Logik verändert)
+
+- **`category`-Spalte** auf `knowledge_sources` (nullable, additive SQLite-Migration analog bestehendem Muster) — rein manuell, feste Whitelist `ALLOWED_DEMO_CATEGORIES` in `apps/backend/knowledge/ingestion.py` (Allgemein, Richtlinie, Projekt, Kunde, Vorlage, Anleitung, Vertrag/Compliance). **Keine automatische Kategorisierung per LLM.**
+- **`list_knowledge_sources_for_tenant()`** (neu in `database.py`) — alle Quellen eines Mandanten inkl. Chunk-Anzahl, ungefiltert nach Status (die UI zeigt bewusst auch blockierte/wartende Quellen, damit der volle Überblick sichtbar ist).
+- **`ingest_txt_or_markdown_source()`** um optionalen `category`-Parameter erweitert (validiert, sonst `KnowledgeIngestionError`).
+- **Neues Modul `apps/backend/knowledge/demo_view.py`** (reine Anzeigelogik, keine DB-Schreibzugriffe):
+  - `usability_label_for_status()` → "Nutzbar im Chat" / "Wartet auf Prüfung" / "Blockiert" / "Nicht aktiv"
+  - `status_explanation()` — nutzerfreundliche Erklärung ohne technische Details
+  - `sort_sources_for_demo()` — approved zuerst, dann wartend, dann blocked/deleted/expired, je Gruppe neueste zuerst
+  - `to_public_source_view()` — Whitelist-Ansicht (`PUBLIC_SOURCE_FIELDS`), **niemals** `storage_path` oder `chunk_text`
+- **Neue Endpunkte in `main.py`** (alle mit Login-Pflicht, `_require_user()`):
+  - `POST /api/knowledge/upload` — nutzt `ingest_txt_or_markdown_source()` direkt, keine Parallel-Logik
+  - `GET /api/knowledge/sources` — sortierte, öffentliche Ansicht aller Quellen des eigenen Mandanten
+  - `GET /api/knowledge/sources/{id}` — Detailansicht, 404 bei fremdem Mandanten oder unbekannter ID
+
+### Frontend (`apps/frontend/index.html`, additiv)
+
+- Neuer Sidebar-Eintrag **"Firmendatenbank"** (eigene View `view-wissensdb`, unabhängig von der bestehenden "Wissensbibliothek" für Prompt-Vorlagen)
+- Upload-Formular (Datei + optionale Kategorie-Auswahl), Status-/Filter-Leiste (Alle/Nutzbar/Wartet auf Prüfung/Blockiert/Nicht aktiv), Suche (Titel/Dateiname/Kategorie/source_id)
+- Karten-Ansicht mit Status-Badge, Klick zeigt Detailbereich (Status-Erklärung, source_id, Kategorie, Sichtbarkeit, Chunk-Anzahl); bei nutzbaren Quellen Button "Frage zu dieser Quelle stellen" (öffnet nur den Chat mit vorbereitetem Text, ändert **nie** direkt einen Datenbankstatus)
+- Chat-Antwort zeigt jetzt zusätzlich (rein additiv, nur wenn vom Backend geliefert): `data.knowledge_notice` (z. B. "Antwort basiert auf: internes Wissen.") und `data.sources` als einfache Liste (Titel, `source_id`, `chunk_id`)
+
+### Sicherheit / Statuslogik (durchgesetzt, nicht nur behauptet)
+
+- `approved` = nutzbar, `pending_review`/`uploaded` = sichtbar, nicht nutzbar, `blocked` = sichtbar, nicht nutzbar, `deleted`/`expired` = nicht aktiv — durch `is_usable_in_chat()` hart codiert, nicht im Frontend entscheidbar
+- Backend gibt **nie** `storage_path` oder rohes `chunk_text` heraus (durch `to_public_source_view()`-Whitelist strukturell ausgeschlossen, per Test abgesichert)
+- Kein neuer externer Dienst, keine Websuche, kein pgvector, keine Embeddings, kein Wissensgraph
+
+### Bewusst nicht gebaut
+
+- Keine Rollenverwaltung, kein Admin-Cockpit
+- Keine Export-/Löschfunktion in D0 (bestehende Export/Löschung aus Block B bleibt unverändert und unabhängig)
+- Keine Memory-Verwaltung, keine automatische Memory-Erzeugung aus Dokumenten
+- Keine PDF/DOCX-Verarbeitung (weiterhin nur `.txt`/`.md`, wie in C2 entschieden)
+- Kein neues Designsystem — bestehende CSS-Klassen (`.card`, `.grid`, `.meta-pill`, `.wissen-cat-btn`) wiederverwendet
+- Keine produktive Kundenfreigabe — D0 ist explizit ein Demo-/Prüfmodus
+
+### Tests
+
+Kein Frontend-Testsystem im Repo vorhanden. Stattdessen durchgeführt:
+- `pytest tests/ -v --tb=short` → **1077/1077 grün**
+- `node --check` auf den extrahierten `<script>`-Inhalt von `index.html` → **kein Syntaxfehler**
+- Python `html.parser` über die gesamte Datei → **keine Parse-Fehler**
+
+### Docker-Test
+
+Nicht möglich — Docker-Daemon in dieser Sandbox nicht erreichbar (`/var/run/docker.sock` fehlt), wie bei C2/C3/C4. **Bitte auf echtem PC mit `docker compose up -d` verifizieren.**
+
+### Manuelle Demo
+
+In dieser Sandbox nicht als Browser-Klickdurchlauf durchführbar (kein Docker, kein Browser). Die Demo-Schritte sind aber **funktional über die neuen API-Tests abgedeckt** (Upload → Statusanzeige → Chat mit Quelle → Chat ohne Treffer → explizite Dokumentenfrage). Checkliste für die echte Durchführung auf einem PC:
+
+1. Firmendatenbank öffnen (Sidebar → "Firmendatenbank").
+2. TXT- oder Markdown-Datei hochladen, optional Kategorie wählen.
+3. Prüfen: Status wird als Badge angezeigt ("Nutzbar im Chat" / "Wartet auf Prüfung" / "Blockiert").
+4. Bei einer `approved`-Quelle: im Chat eine Frage zum Dokumentinhalt stellen (oder über "Frage zu dieser Quelle stellen").
+5. Prüfen: Antwort erscheint, danach ein Hinweis wie "Antwort basiert auf: internes Wissen." und eine Quellenliste mit Titel/`source_id`/`chunk_id`.
+6. Eine Frage ohne Treffer stellen — prüfen: Chat antwortet normal, kein Standardhinweis.
+7. Explizit fragen: "Was steht dazu in unseren Dokumenten?" — bei keinem Treffer erscheint: "Ich habe in freigegebenen Quellen nichts Passendes gefunden."
+8. Prüfen: keine Websuche, keine externen Quellen, keine automatische Memory-Erzeugung, keine ganzen Dokumente im Prompt, kein `storage_path` irgendwo sichtbar.
+
+### Offene Folgepunkte
+
+- Kein automatisiertes Frontend-Testsystem im Repo — falls gewünscht, separater kleiner Auftrag (z. B. Playwright)
+- Manuelle Kategorie kann aktuell nur beim Upload gesetzt werden, kein nachträgliches Bearbeiten (bewusst kleinster Schnitt)
+- Echte Browser-Demo auf einem PC mit Docker steht noch aus
 
 ---
 

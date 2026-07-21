@@ -70,6 +70,7 @@ Schritt "Tests (Root)") ebenfalls grün.
 | C2 Sichere TXT/Markdown-Ingestion (`apps/backend/knowledge/ingestion.py`) | ✅ gemergt (PR #49) |
 | C3 Lokale Suche (`apps/backend/knowledge/search.py`, `search_knowledge_chunks()`) | ✅ gemergt (PR #50) |
 | C4 Interne Wissensquellen im Chat mit Quellenanzeige (`apps/backend/knowledge/rag_context.py` + Anbindung in `main.py`) | ✅ gemergt (PR #51) |
+| D0 Demo-/UI-Schicht "Firmendatenbank" (`apps/backend/knowledge/demo_view.py` + `/api/knowledge/*` + Frontend-Panel) | ✅ implementiert, PR folgt (Branch `claude/knowledge-demo-ui`) |
 
 **C4 kurz:** `run_agent()` baut best-effort Chat-Kontext aus freigegebenen Wissensquellen
 (`_maybe_build_knowledge_context()`), injiziert ihn (max. 3 Snippets, max. 800 Zeichen,
@@ -77,6 +78,15 @@ je Snippet erneut gegen `EXTERNAL_LLM` klassifiziert) in `effective_task` innerh
 `_run_agent_core()`, und hängt nach der Antwort Quellenliste/`answer_mode` an
 (`_attach_knowledge_result()`). Fehler an jeder Stelle → normaler Chat läuft unverändert
 weiter. Keine Websuche, kein pgvector, keine Embeddings, kein Wissensgraph, keine UI.
+
+**D0 kurz:** Kleine Demo-/Prüfoberfläche "Firmendatenbank" (Sidebar-Panel) — Upload
+(nur `.txt`/`.md`), Statusanzeige (Nutzbar im Chat/Wartet auf Prüfung/Blockiert/Nicht
+aktiv), optionale manuelle Kategorie (feste Whitelist, keine automatische
+Klassifikation), Chat zeigt jetzt `sources`/`knowledge_notice` an, falls vom Backend
+geliefert. Neue Endpunkte `POST/GET /api/knowledge/*`, alle Login-pflichtig, nutzen
+ausschließlich bestehende Ingestion-/Such-/RAG-Funktionen (keine Parallel-Logik).
+Nie `storage_path`/rohes `chunk_text` im Response. 1077/1077 Tests grün. Details und
+Demo-Checkliste: `docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md` Abschnitt 8.
 
 ## 5. Zurückgestellt (separate spätere Aufträge)
 
