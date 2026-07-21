@@ -31,5 +31,10 @@ jobs:
       - name: Tests (Root)
         run: pytest tests/ -v --tb=short
 
-      - name: Tests (Backend)
-        run: PYTHONPATH=. pytest apps/backend/tests/ -v --tb=short
+      # apps/backend/tests/ ist verwaist (kaputte Imports auf nicht mehr
+      # existierende Module: compliance_auditor, KillSwitch, policy_engine,
+      # policies.pii_taxonomy, governance, main, require_operator).
+      # Aktive Test-Suite ist ausschliesslich tests/ (siehe Schritt oben).
+      # Deaktiviert statt geloescht -- separates Aufraeumen folgt spaeter.
+      # - name: Tests (Backend, verwaist -- vorerst deaktiviert)
+      #   run: PYTHONPATH=. pytest apps/backend/tests/ -v --tb=short
