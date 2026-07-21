@@ -62,11 +62,30 @@ Schritt "Tests (Root)") ebenfalls grün.
   nur `user_memory`-Vorschläge — Firmenwissen-Erkennung im Chat ist noch nicht
   angebunden (bewusst kleiner Schnitt, siehe PR-#46-Beschreibung).
 
-## 5. Zurückgestellt (nicht Block B, separate spätere Aufträge)
+## 4b. Block C — Wissensdatenbank (Details siehe `docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md`)
+
+| Phase | Status |
+|---|---|
+| C1 Wissensquellen-Schema (`knowledge_sources`, `knowledge_chunks`, `knowledge_source_permissions`) | ✅ gemergt (PR #48) |
+| C2 Sichere TXT/Markdown-Ingestion (`apps/backend/knowledge/ingestion.py`) | ✅ gemergt (PR #49) |
+| C3 Lokale Suche (`apps/backend/knowledge/search.py`, `search_knowledge_chunks()`) | ✅ gemergt (PR #50) |
+| C4 Interne Wissensquellen im Chat mit Quellenanzeige (`apps/backend/knowledge/rag_context.py` + Anbindung in `main.py`) | ✅ implementiert, PR folgt (Branch `claude/knowledge-rag-with-sources`) |
+
+**C4 kurz:** `run_agent()` baut best-effort Chat-Kontext aus freigegebenen Wissensquellen
+(`_maybe_build_knowledge_context()`), injiziert ihn (max. 3 Snippets, max. 800 Zeichen,
+je Snippet erneut gegen `EXTERNAL_LLM` klassifiziert) in `effective_task` innerhalb
+`_run_agent_core()`, und hängt nach der Antwort Quellenliste/`answer_mode` an
+(`_attach_knowledge_result()`). Fehler an jeder Stelle → normaler Chat läuft unverändert
+weiter. Keine Websuche, kein pgvector, keine Embeddings, kein Wissensgraph, keine UI.
+
+## 5. Zurückgestellt (separate spätere Aufträge)
 
 - UI-Panel "Mein AILIZA-Gedächtnis" (reine Sichtbarkeit, ändert nichts an der
   Architektur — kann jederzeit nachgezogen werden)
-- Block C: Wissensdatenbank + Vektorsuche (pgvector)
+- Block C5: Optionale Vektorsuche (pgvector) — nur nach expliziter Freigabe
+- Websuche/Internetrecherche als eigene, spätere Capability (eigene Leitplanken,
+  siehe `docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md` Abschnitt 4) — bewusst
+  nicht Teil von Block C
 - Block D: Desktop-Distribution ohne Docker (gepackte ausführbare Datei)
 - **`apps/backend/tests/` aufräumen:** Verwaister Ordner, kaputte Imports auf
   nicht mehr existierende Module (`compliance_auditor`, `KillSwitch`,

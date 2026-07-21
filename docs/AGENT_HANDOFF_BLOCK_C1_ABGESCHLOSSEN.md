@@ -1,8 +1,8 @@
-# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3, C4 spezifiziert
+# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3 + C4
 
-**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion) und PR #50 (lokale Suche) sind **gemergt**. Block C4 (RAG mit Quellen) ist vollständig durch Karo entschieden und bereit zur Umsetzung (siehe Abschnitt 4).
+**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion) und PR #50 (lokale Suche) sind **gemergt**. Block C4 (interne Wissensquellen im Chat mit Quellenanzeige) ist implementiert, 1034/1034 Tests grün, PR wird als nächstes erstellt.
 
-**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C4).
+**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C5/Websuche, jeweils erst nach expliziter Freigabe).
 
 ---
 
@@ -14,7 +14,7 @@ Block B (Chat-Anbindung, Export/Löschung DSGVO)       ✅ gemergt
 Block C1 (Wissensquellen-Schema)                      ✅ gemergt (PR #48)
 Block C2 (TXT/Markdown-Ingestion)                     ✅ gemergt (PR #49)
 Block C3 (Lokale Suche)                               ✅ gemergt (PR #50)
-Block C4 (RAG mit Quellen)                            ⏳ entschieden, bereit zur Umsetzung
+Block C4 (RAG mit Quellen)                            ✅ implementiert, PR folgt (Branch claude/knowledge-rag-with-sources)
 Block C5 (Optionale Vektorsuche)                      ⏳ nur nach expliziter Freigabe
 Block D (Desktop-Distribution ohne Docker)            ⏳ separater, späterer Auftrag
 Websuche/Internetrecherche                            ⏳ spätere, eigene Capability (siehe Abschnitt 4, Leitplanken)
@@ -49,11 +49,40 @@ Websuche/Internetrecherche                            ⏳ spätere, eigene Capab
 - Kein RAG, keine Antwortgenerierung, keine UI, kein pgvector, keine Embeddings, kein Wissensgraph
 - **Docker-Test:** nicht möglich (Daemon in der Sandbox nicht erreichbar) — auf echtem PC mit `docker compose up -d` verifizieren
 
-**PR-Status:** #48, #49, #50 alle gemergt. Block C4 kann direkt beauftragt werden.
+**PR-Status:** #48, #49, #50 alle gemergt.
 
-## 4. Block C Phase C4 (RAG mit Quellen) — final entschieden
+## 4. Block C4 — was gebaut wurde
 
-Karo hat alle offenen Punkte final entschieden (2026-07-21). Kopiere den folgenden Block 1:1 als Auftrag:
+**Branch:** `claude/knowledge-rag-with-sources` · **Module:** `apps/backend/knowledge/rag_context.py` (neu) + Anbindung in `apps/backend/main.py` · **Tests:** `tests/test_knowledge_rag_context.py` (24 neu) + `tests/test_knowledge_chat_rag_integration.py` (11 neu) · **Baseline:** 1034/1034 Tests grün.
+
+**`apps/backend/knowledge/rag_context.py` (reine, isolierte Logik):**
+- `build_knowledge_context()` — ruft `search_knowledge_chunks()` best-effort auf, re-klassifiziert jedes Snippet gegen `DataTarget.EXTERNAL_LLM` (zusätzlich zur Ingestion-Prüfung gegen `FILE_STORAGE`), wendet Budget an (max. 3 Snippets, max. 800 Zeichen gesamt — bereits vorhandenes 160-Zeichen-Einzel-Snippet-Limit aus C3 bleibt unverändert), baut den Kontextblock mit `[Quelle N]`-Tags
+- `answer_mode` ∈ `internal_knowledge` / `general_ai` / `no_internal_source` / `blocked_sensitive` (`internal_plus_general` ist im Mapping vorgesehen, aber nicht automatisch erkennbar — Follow-up, siehe unten)
+- Explizite Dokumentenfrage per einfacher Keyword-Erkennung (`dokument`, `quelle`, `wissensdatenbank`, `interne(s) wissen`, `gespeicherte unterlage`) — **kein LLM-Klassifikator**, nur bei Nulltreffern relevant für den Hinweistext
+- `sanitize_answer_citations()` — entfernt `[Quelle N]`-Tags aus dem sichtbaren Antworttext, die nicht im Backend-`tag_map` vorkommen (gegen erfundene Zitate)
+- `build_sources_list()` — Quellenliste **ausschließlich** aus dem Backend-`tag_map`, nie aus Modelltext geparst — Modell kann strukturell keine zusätzlichen Quellen erzeugen
+- Wirft **nie** eine Exception (mehrschichtiges Fail-safe: Suche, Re-Klassifikation, Gesamtfunktion je einzeln abgesichert)
+
+**Anbindung in `main.py` (minimaler Footprint, analog `_maybe_suggest_memory()`):**
+- `_maybe_build_knowledge_context()` — best-effort Wrapper, ohne Login (kein `token`) kein Kontext (keine Zuordnung möglich, exakt wie beim Memory-Muster)
+- Einziger Injektionspunkt in `_run_agent_core()`: direkt nach `effective_task = pre_check.get("task", payload.task)` wird der geprüfte Kontextblock angehängt — dadurch automatisch wirksam für **alle** LLM-Aufrufpfade (Schreibaufgabe, AgentRuntime, Zusammenfassung), da sie alle `effective_task` verwenden. Durchläuft dadurch dieselbe Governance-Pipeline (Kill-Switch/Klassifikation/Redaction) wie jede andere Aufgabe.
+- `_attach_knowledge_result()` — hängt nach der Antwort `answer_mode`, optional `confidence`/`sources`/`knowledge_notice` an, bereinigt `message`/`ai_response` von halluzinierten Zitaten, hängt bei expliziter Dokumentenfrage ohne Treffer den wörtlichen Hinweistext an die sichtbare Antwort an, schreibt Audit-light-Eintrag (`knowledge.context_used`, nur Metadaten: `answer_mode`, `found_count`, `filtered_count`, `source_ids`, `chunk_ids` — nie Snippet-Inhalte/Rohtexte/`storage_path`)
+- Beide Wrapper vollständig fehlertolerant (try/except, `logger.exception`, nie Chat-blockierend)
+
+**Bewusst nicht umgesetzt (siehe Karo-Vorgabe unten):**
+- Keine Websuche, keine öffentlichen Quellen
+- Keine neuen Nutzereinstellungen, keine UI-Buttons
+- Kein pgvector, keine Embeddings, kein Wissensgraph
+- Kein Admin-Cockpit, kein großes RAG-Redesign
+- `internal_plus_general` (answer_mode) ist im Mapping vorbereitet, aber nicht automatisch von `internal_knowledge` unterschieden — würde erfordern zu erkennen, "wie" das Modell den Kontext genutzt hat; als Follow-up dokumentiert, nicht geraten
+
+**Docker-Test:** nicht möglich (Daemon in der Sandbox nicht erreichbar) — auf echtem PC mit `docker compose up -d` verifizieren.
+
+**Noch offen:** PR für C4 muss von dir gemerged werden. Nicht mergen ohne Karo-Freigabe.
+
+## 4a. Ursprünglicher C4-Auftrag (bereits umgesetzt, zur Nachvollziehbarkeit archiviert)
+
+Karo hat alle offenen Punkte final entschieden (2026-07-21). Der folgende Block war der ausführbare Auftrag, ist jetzt umgesetzt:
 
 ```text
 Lies zuerst docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md im Repo
