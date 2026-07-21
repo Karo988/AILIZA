@@ -442,7 +442,7 @@ skills = Table(
 # Chatnachrichten werden bereits geschwaerzt/pseudonymisiert gespeichert.
 # retention_until ist vorbereitet, aber es gibt (bewusst) noch KEINE
 # automatische Loeschung (Betreiber-Entscheidung 2026-07-16).
-# ── Block C Phase C1: Wissensdatenbank-Schema (nur Fundament) ───────────────
+# -- Block C Phase C1: Wissensdatenbank-Schema (nur Fundament) --------------
 # Nur Tabellen fuer Dokumentquellen, Text-Chunks und Berechtigungen.
 # KEINE Extraktion, KEINE Suche, KEIN RAG, KEINE Embeddings, KEIN pgvector,
 # KEINE UI in dieser Phase (siehe AILIZA_BLOCK_C_PHASE_C1_DOCUMENT_SCHEMA.md).
@@ -1237,7 +1237,7 @@ def mark_memory_item_deleted(item_id: int) -> None:
         )
 
 
-# ── Block C Phase C1: Wissensdatenbank -- nur Schema-Fundament ─────────────
+# -- Block C Phase C1: Wissensdatenbank -- nur Schema-Fundament ------------
 # Keine Extraktion, keine Suche, keine Embeddings (siehe
 # AILIZA_BLOCK_C_PHASE_C1_DOCUMENT_SCHEMA.md). Diese Funktionen legen nur
 # Quellen/Chunks/Berechtigungen an und lesen sie zurueck.
