@@ -351,6 +351,33 @@ memory_visibility = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+# ── Mini-PR 3 (Gedaechtnis-Governance v1): Pruefraum vor memory_items.
+# Vorschlaege statt heimliches Lernen -- nur bestaetigte Vorschlaege werden
+# zu memory_items ueberfuehrt. Keine freie LLM-Extraktion, keine UI.
+memory_suggestions = Table(
+    "memory_suggestions",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(64), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("suggested_scope", String(32), nullable=False),
+    Column("suggested_title", Text, nullable=False),
+    Column("suggested_content", Text, nullable=True),  # bei blocked: nie Rohinhalt
+    Column("suggested_category", String(64), nullable=True),
+    Column("suggested_purpose", Text, nullable=True),
+    Column("source_type", String(32), nullable=True),
+    Column("source_reference", String(255), nullable=True),
+    Column("status", String(32), nullable=False, default="open"),
+    Column("risk_level", String(32), nullable=False, default="low"),
+    Column("requires_admin_approval", Integer, nullable=False, default=0),
+    Column("project_id", String(64), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("reviewed_at", DateTime(timezone=True), nullable=True),
+    Column("reviewed_by", String(64), nullable=True),
+    Index("ix_memory_suggestions_user_tenant", "user_id", "tenant_id"),
+)
+
 
 messenger_bindings = Table(
     "messenger_bindings",
@@ -1147,6 +1174,226 @@ def mark_memory_item_deleted(item_id: int) -> None:
             update(memory_items).where(memory_items.c.id == item_id)
             .values(status="deleted", updated_at=datetime.now(timezone.utc))
         )
+
+
+# ── Mini-PR 3: Speicher-Entscheidungslogik + memory_suggestions Helper ───────
+# Vorschlaege statt heimliches Lernen. decide_memory_storage() entscheidet
+# deterministisch (kein LLM), was mit einer erkannten Information passiert.
+# Keine freie LLM-Extraktion -- der Aufrufer klassifiziert (info_kind), die
+# Entscheidung hier folgt festen Regeln.
+
+_VALID_SUGGESTION_STATUS = {"open", "confirmed", "rejected", "expired", "needs_admin_approval", "blocked"}
+_VALID_RISK_LEVELS = {"low", "medium", "high", "blocked"}
+
+# Wiederverwendung der bestehenden Secret-Muster-Idee (main.py contains_secret):
+# hier bewusst eigene, kleine Kopie auf DB-Ebene, damit database.py nicht
+# main.py importieren muss (Zirkularimport). Gleiche Muster-Familie.
+import re as _re
+
+_SUGGESTION_SECRET_PATTERNS = [
+    _re.compile(r"\bsk-[\w\-]{10,}\b"),
+    _re.compile(r"\bgsk_[\w\-]{10,}\b"),
+    _re.compile(r"\beyJ[\w\-\.]+\b"),
+    _re.compile(r"(?i)\b(passwort|password|api.?key|token|private.?key|recovery.?code|zugangscode)\b[ \t]*:?[ \t]*\S+"),
+]
+
+
+def _contains_secret_content(content: str | None) -> bool:
+    if not content:
+        return False
+    return any(p.search(content) for p in _SUGGESTION_SECRET_PATTERNS)
+
+
+def decide_memory_storage(*, user_id: str, tenant_id: str,
+                          info_kind: str, reusable: bool, has_source: bool,
+                          content: str | None = None,
+                          project_id: str | None = None,
+                          user_initiated: bool = False,
+                          org_related: bool = False) -> str:
+    """Deterministische Speicherentscheidung (siehe AILIZA_MINI_PR3_DECISION_LOGIC).
+
+    info_kind: "sensitive" | "technical" | "setting" | "user_knowledge"
+    Ergebnis: technically_store | store_as_setting |
+              create_user_memory_suggestion | create_company_memory_suggestion |
+              admin_approval_required | temporary_only | discard | block_sensitive
+    """
+    # 1. Secrets IMMER blockieren, egal was der Aufrufer klassifiziert hat.
+    if _contains_secret_content(content):
+        return "block_sensitive"
+    # 2. Sensible Kategorien: nie dauerhaft speichern.
+    if info_kind == "sensitive":
+        return "block_sensitive"
+    # 3. Technisch notwendig: bestehende Audit-/Datenpfade, nie Suggestion.
+    if info_kind == "technical":
+        return "technically_store"
+    # 4. Reine Einstellung: nach user_settings, nicht ins Gedaechtnis.
+    if info_kind == "setting":
+        return "store_as_setting"
+    # 5. Inhaltliches Wissen: Wiederverwendbarkeit + Quelle Pflicht.
+    if not reusable:
+        return "discard"
+    if not has_source:
+        return "temporary_only"
+    # 6. Speichermodus des Nutzers respektieren.
+    settings = get_user_settings(user_id, tenant_id) or {}
+    modus = settings.get("speichermodus", "immer_fragen")
+    if modus == "nie_automatisch" and not user_initiated:
+        return "temporary_only"
+    if modus == "projektbezogen_fragen" and not project_id:
+        return "temporary_only"
+    # 7. Ziel-Scope: Firmenwissen braucht Admin-Freigabe (Mini-PR-3-Regel).
+    if org_related:
+        return "create_company_memory_suggestion"
+    return "create_user_memory_suggestion"
+
+
+def create_memory_suggestion(*, user_id: str, tenant_id: str, suggested_scope: str,
+                             suggested_title: str, suggested_content: str | None,
+                             suggested_purpose: str | None, source_type: str | None,
+                             suggested_category: str | None = None,
+                             source_reference: str | None = None,
+                             status: str | None = None, risk_level: str = "low",
+                             project_id: str | None = None,
+                             expires_at: datetime | None = None) -> dict[str, Any]:
+    """Legt einen Vorschlag an (noch KEIN Gedaechtnis). company_memory erzwingt
+    Admin-Freigabe. Blockierte Vorschlaege speichern NIE den Rohinhalt --
+    nur Kategorie/Grund (Datensparsamkeit bei sensiblen Funden)."""
+    if suggested_scope not in _VALID_MEMORY_SCOPES:
+        raise MemoryValidationError(f"Ungueltiger suggested_scope: {suggested_scope!r}")
+    if risk_level not in _VALID_RISK_LEVELS:
+        raise MemoryValidationError(f"Ungueltiger risk_level: {risk_level!r}")
+    if not suggested_purpose:
+        raise MemoryValidationError("Vorschlag braucht suggested_purpose.")
+    if not source_type:
+        raise MemoryValidationError("Vorschlag braucht source_type.")
+
+    requires_admin = suggested_scope == "company_memory"
+    if status is None:
+        status = "needs_admin_approval" if requires_admin else "open"
+    if status not in _VALID_SUGGESTION_STATUS:
+        raise MemoryValidationError(f"Ungueltiger status: {status!r}")
+
+    # Blockierte Vorschlaege: Rohinhalt NIE speichern, nur Kategorie-Hinweis.
+    if status == "blocked" or risk_level == "blocked" or _contains_secret_content(suggested_content):
+        suggested_content = "[BLOCKIERT: sensibler Inhalt nicht gespeichert]"
+        status = "blocked"
+        risk_level = "blocked"
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        result = conn.execute(insert(memory_suggestions).values(
+            user_id=user_id, tenant_id=tenant_id, suggested_scope=suggested_scope,
+            suggested_title=suggested_title, suggested_content=suggested_content,
+            suggested_category=suggested_category, suggested_purpose=suggested_purpose,
+            source_type=source_type, source_reference=source_reference,
+            status=status, risk_level=risk_level,
+            requires_admin_approval=int(requires_admin), project_id=project_id,
+            created_at=now, expires_at=expires_at,
+        ))
+        suggestion_id = result.inserted_primary_key[0]
+    return _get_memory_suggestion(suggestion_id)
+
+
+def _get_memory_suggestion(suggestion_id: int) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+        ).mappings().first()
+    if not row:
+        return None
+    result = dict(row)
+    result["requires_admin_approval"] = bool(result["requires_admin_approval"])
+    return result
+
+
+def list_memory_suggestions_for_user(user_id: str, tenant_id: str = DEFAULT_TENANT_ID,
+                                     status: str | None = "open") -> list[dict[str, Any]]:
+    """Nur eigene Vorschlaege. status=None listet alle Status (fuer Review-Ansichten)."""
+    query = (
+        select(memory_suggestions)
+        .where(memory_suggestions.c.user_id == user_id)
+        .where(memory_suggestions.c.tenant_id == tenant_id)
+    )
+    if status is not None:
+        query = query.where(memory_suggestions.c.status == status)
+    with engine.begin() as conn:
+        rows = conn.execute(query.order_by(memory_suggestions.c.created_at.desc())).mappings().all()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["requires_admin_approval"] = bool(d["requires_admin_approval"])
+        out.append(d)
+    return out
+
+
+def reject_memory_suggestion(suggestion_id: int, *, reviewed_by: str) -> None:
+    """Abgelehnte Vorschlaege erzeugen NIE ein memory_item."""
+    with engine.begin() as conn:
+        conn.execute(
+            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+            .values(status="rejected", reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
+        )
+
+
+def mark_memory_suggestion_blocked(suggestion_id: int, *, reviewed_by: str | None = None) -> None:
+    """Blockiert + entfernt den Rohinhalt (Datensparsamkeit)."""
+    with engine.begin() as conn:
+        conn.execute(
+            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+            .values(status="blocked", risk_level="blocked",
+                    suggested_content="[BLOCKIERT: sensibler Inhalt nicht gespeichert]",
+                    reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
+        )
+
+
+def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
+                              reviewer_role: str = "user") -> dict[str, Any]:
+    """Ueberfuehrt einen bestaetigten Vorschlag in das Gedaechtnis:
+    memory_source + memory_item + memory_visibility (via create_memory_item).
+    company_memory verlangt Admin-Rolle (bestehendes Rollenmodell: admin/manager).
+    Nur Status open/needs_admin_approval sind bestaetigbar -- rejected/expired/
+    blocked erzeugen nie ein memory_item."""
+    suggestion = _get_memory_suggestion(suggestion_id)
+    if suggestion is None:
+        raise MemoryValidationError("Vorschlag nicht gefunden.")
+    if suggestion["status"] not in ("open", "needs_admin_approval"):
+        raise MemoryValidationError(
+            f"Vorschlag mit Status {suggestion['status']!r} kann nicht bestaetigt werden."
+        )
+    if suggestion["requires_admin_approval"] and reviewer_role not in ("admin", "manager"):
+        raise MemoryValidationError(
+            "company_memory-Vorschlaege brauchen Admin-/Manager-Freigabe."
+        )
+
+    source = create_memory_source(
+        tenant_id=suggestion["tenant_id"],
+        source_type=suggestion["source_type"] or "user_confirmation",
+        reference=suggestion["source_reference"],
+        source_title=f"Bestaetigter Vorschlag #{suggestion_id}",
+        confirmed_by=confirmed_by,
+        approved_by=confirmed_by if suggestion["requires_admin_approval"] else None,
+    )
+    owner = suggestion["user_id"] if suggestion["suggested_scope"] == "user_memory" else None
+    item = create_memory_item(
+        tenant_id=suggestion["tenant_id"], scope=suggestion["suggested_scope"],
+        title=suggestion["suggested_title"], content=suggestion["suggested_content"] or "",
+        purpose=suggestion["suggested_purpose"], source_id=source["id"],
+        owner_user_id=owner, category=suggestion["suggested_category"],
+        status="active", created_by=suggestion["user_id"],
+        approved_by=confirmed_by if suggestion["requires_admin_approval"] else None,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+            .values(status="confirmed", reviewed_at=datetime.now(timezone.utc), reviewed_by=confirmed_by)
+        )
+    return {"suggestion_id": suggestion_id, "memory_item_id": item["id"], "source_id": source["id"]}
+
+
+def apply_confirmed_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
+                                      reviewer_role: str = "user") -> dict[str, Any]:
+    """Alias gemaess Spec-Namensvorschlag -- identisch zu confirm_memory_suggestion."""
+    return confirm_memory_suggestion(suggestion_id, confirmed_by=confirmed_by, reviewer_role=reviewer_role)
 
 
 def _max_attempts() -> int:
