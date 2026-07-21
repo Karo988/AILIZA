@@ -442,6 +442,67 @@ skills = Table(
 # Chatnachrichten werden bereits geschwaerzt/pseudonymisiert gespeichert.
 # retention_until ist vorbereitet, aber es gibt (bewusst) noch KEINE
 # automatische Loeschung (Betreiber-Entscheidung 2026-07-16).
+# -- Block C Phase C1: Wissensdatenbank-Schema (nur Fundament) --------------
+# Nur Tabellen fuer Dokumentquellen, Text-Chunks und Berechtigungen.
+# KEINE Extraktion, KEINE Suche, KEIN RAG, KEINE Embeddings, KEIN pgvector,
+# KEINE UI in dieser Phase (siehe AILIZA_BLOCK_C_PHASE_C1_DOCUMENT_SCHEMA.md).
+knowledge_sources = Table(
+    "knowledge_sources",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("uploaded_by", String(64), nullable=False),
+    Column("source_type", String(32), nullable=False),
+    Column("title", Text, nullable=False),
+    Column("original_filename", String(255), nullable=True),
+    Column("storage_path", String(512), nullable=True),
+    Column("content_hash", String(64), nullable=True),
+    Column("mime_type", String(128), nullable=True),
+    Column("status", String(32), nullable=False, default="uploaded"),
+    Column("visibility_scope", String(32), nullable=False, default="private"),
+    Column("approved_by", String(64), nullable=True),
+    Column("approved_at", DateTime(timezone=True), nullable=True),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_knowledge_sources_tenant_status", "tenant_id", "status"),
+)
+
+knowledge_chunks = Table(
+    "knowledge_chunks",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("source_id", Integer, ForeignKey("knowledge_sources.id"), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("chunk_index", Integer, nullable=False),
+    Column("chunk_text", Text, nullable=False),
+    Column("chunk_hash", String(64), nullable=True),
+    Column("page_number", Integer, nullable=True),
+    Column("section_title", String(255), nullable=True),
+    Column("token_estimate", Integer, nullable=True),
+    Column("status", String(32), nullable=False, default="active"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_knowledge_chunks_source", "source_id"),
+)
+
+knowledge_source_permissions = Table(
+    "knowledge_source_permissions",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("source_id", Integer, ForeignKey("knowledge_sources.id"), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("visibility_scope", String(32), nullable=False, default="private"),
+    Column("allowed_roles", JSON, nullable=False, default=list),
+    Column("allowed_user_ids", JSON, nullable=False, default=list),
+    Column("project_id", String(64), nullable=True),
+    Column("created_by", String(64), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_knowledge_source_permissions_source", "source_id"),
+)
+
+
 user_projects = Table(
     "user_projects",
     metadata_obj,
@@ -1173,6 +1234,180 @@ def mark_memory_item_deleted(item_id: int) -> None:
         conn.execute(
             update(memory_items).where(memory_items.c.id == item_id)
             .values(status="deleted", updated_at=datetime.now(timezone.utc))
+        )
+
+
+# -- Block C Phase C1: Wissensdatenbank -- nur Schema-Fundament ------------
+# Keine Extraktion, keine Suche, keine Embeddings (siehe
+# AILIZA_BLOCK_C_PHASE_C1_DOCUMENT_SCHEMA.md). Diese Funktionen legen nur
+# Quellen/Chunks/Berechtigungen an und lesen sie zurueck.
+class KnowledgeValidationError(ValueError):
+    """Eine Wissensquelle/-Chunk/-Berechtigung verletzt eine Pflichtregel."""
+
+
+_VALID_SOURCE_TYPES = {"pdf", "docx", "txt", "md", "csv", "manual", "url_reference"}
+_VALID_SOURCE_STATUS = {"uploaded", "pending_review", "approved", "blocked", "deleted", "expired"}
+_INACTIVE_SOURCE_STATUS = {"blocked", "deleted", "expired"}
+_VALID_CHUNK_STATUS = {"active", "deleted", "blocked"}
+_VALID_VISIBILITY_SCOPES = {"private", "project", "team", "organization", "external_limited"}
+
+
+def create_knowledge_source(*, tenant_id: str | None, uploaded_by: str | None,
+                            source_type: str, title: str,
+                            original_filename: str | None = None,
+                            storage_path: str | None = None,
+                            content_hash: str | None = None,
+                            mime_type: str | None = None,
+                            status: str = "uploaded",
+                            visibility_scope: str = "private",
+                            approved_by: str | None = None,
+                            approved_at: datetime | None = None,
+                            expires_at: datetime | None = None) -> dict[str, Any]:
+    if not tenant_id:
+        raise KnowledgeValidationError("knowledge_source braucht tenant_id.")
+    if not uploaded_by:
+        raise KnowledgeValidationError("knowledge_source braucht uploaded_by.")
+    if source_type not in _VALID_SOURCE_TYPES:
+        raise KnowledgeValidationError(f"Ungueltiger source_type: {source_type!r}. Erlaubt: {_VALID_SOURCE_TYPES}")
+    if status not in _VALID_SOURCE_STATUS:
+        raise KnowledgeValidationError(f"Ungueltiger status: {status!r}. Erlaubt: {_VALID_SOURCE_STATUS}")
+    if visibility_scope not in _VALID_VISIBILITY_SCOPES:
+        raise KnowledgeValidationError(
+            f"Ungueltiger visibility_scope: {visibility_scope!r}. Erlaubt: {_VALID_VISIBILITY_SCOPES}")
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        result = conn.execute(insert(knowledge_sources).values(
+            tenant_id=tenant_id, uploaded_by=uploaded_by, source_type=source_type,
+            title=title, original_filename=original_filename, storage_path=storage_path,
+            content_hash=content_hash, mime_type=mime_type, status=status,
+            visibility_scope=visibility_scope, approved_by=approved_by,
+            approved_at=approved_at, expires_at=expires_at,
+            created_at=now, updated_at=now,
+        ))
+        source_id = result.inserted_primary_key[0]
+    return get_knowledge_source(source_id)
+
+
+def get_knowledge_source(source_id: int) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(knowledge_sources).where(knowledge_sources.c.id == source_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def _knowledge_source_status(conn: Any, source_id: int) -> str | None:
+    row = conn.execute(
+        select(knowledge_sources.c.status).where(knowledge_sources.c.id == source_id)
+    ).first()
+    return row[0] if row else None
+
+
+def create_knowledge_chunk(*, source_id: int, tenant_id: str | None, chunk_index: int,
+                           chunk_text: str, chunk_hash: str | None = None,
+                           page_number: int | None = None,
+                           section_title: str | None = None,
+                           token_estimate: int | None = None,
+                           status: str = "active") -> dict[str, Any]:
+    if status not in _VALID_CHUNK_STATUS:
+        raise KnowledgeValidationError(f"Ungueltiger Chunk-Status: {status!r}. Erlaubt: {_VALID_CHUNK_STATUS}")
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        if _knowledge_source_status(conn, source_id) is None:
+            raise KnowledgeValidationError(f"knowledge_chunk braucht existierende source_id (id={source_id}).")
+        result = conn.execute(insert(knowledge_chunks).values(
+            source_id=source_id, tenant_id=tenant_id, chunk_index=chunk_index,
+            chunk_text=chunk_text, chunk_hash=chunk_hash, page_number=page_number,
+            section_title=section_title, token_estimate=token_estimate, status=status,
+            created_at=now, updated_at=now,
+        ))
+        chunk_id = result.inserted_primary_key[0]
+        row = conn.execute(
+            select(knowledge_chunks).where(knowledge_chunks.c.id == chunk_id)
+        ).mappings().first()
+    return dict(row)
+
+
+def list_active_chunks_for_source(source_id: int) -> list[dict[str, Any]]:
+    """Nur aktive Chunks einer nicht geloeschten/blockierten/abgelaufenen Source."""
+    with engine.begin() as conn:
+        source_status = _knowledge_source_status(conn, source_id)
+        if source_status is None or source_status in _INACTIVE_SOURCE_STATUS:
+            return []
+        rows = conn.execute(
+            select(knowledge_chunks)
+            .where(knowledge_chunks.c.source_id == source_id)
+            .where(knowledge_chunks.c.status == "active")
+            .order_by(knowledge_chunks.c.chunk_index)
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def set_knowledge_source_permission(*, source_id: int, tenant_id: str | None,
+                                    visibility_scope: str,
+                                    allowed_roles: list | None = None,
+                                    allowed_user_ids: list | None = None,
+                                    project_id: str | None = None,
+                                    created_by: str | None = None) -> dict[str, Any]:
+    if visibility_scope not in _VALID_VISIBILITY_SCOPES:
+        raise KnowledgeValidationError(
+            f"Ungueltiger visibility_scope: {visibility_scope!r}. Erlaubt: {_VALID_VISIBILITY_SCOPES}")
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        if _knowledge_source_status(conn, source_id) is None:
+            raise KnowledgeValidationError(f"knowledge_source_permission braucht existierende source_id (id={source_id}).")
+        existing = conn.execute(
+            select(knowledge_source_permissions.c.id)
+            .where(knowledge_source_permissions.c.source_id == source_id)
+        ).first()
+        values = dict(
+            tenant_id=tenant_id, visibility_scope=visibility_scope,
+            allowed_roles=allowed_roles or [], allowed_user_ids=allowed_user_ids or [],
+            project_id=project_id, created_by=created_by, updated_at=now,
+        )
+        if existing:
+            conn.execute(
+                update(knowledge_source_permissions)
+                .where(knowledge_source_permissions.c.id == existing[0])
+                .values(**values)
+            )
+            perm_id = existing[0]
+        else:
+            result = conn.execute(insert(knowledge_source_permissions).values(
+                source_id=source_id, created_at=now, **values,
+            ))
+            perm_id = result.inserted_primary_key[0]
+        row = conn.execute(
+            select(knowledge_source_permissions).where(knowledge_source_permissions.c.id == perm_id)
+        ).mappings().first()
+    return dict(row)
+
+
+def get_knowledge_source_permission(source_id: int) -> dict[str, Any] | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(knowledge_source_permissions)
+            .where(knowledge_source_permissions.c.source_id == source_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def mark_knowledge_source_deleted(source_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            update(knowledge_sources).where(knowledge_sources.c.id == source_id)
+            .values(status="deleted", updated_at=datetime.now(timezone.utc))
+        )
+
+
+def mark_knowledge_source_blocked(source_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            update(knowledge_sources).where(knowledge_sources.c.id == source_id)
+            .values(status="blocked", updated_at=datetime.now(timezone.utc))
         )
 
 
