@@ -1,65 +1,91 @@
 # AILIZA — Übergabe-Dokument: Datenbank & Gedächtnis
 
-Stand: 20.07.2026 · Für den nächsten Agenten, falls Karo die Tokens ausgehen.
-**Bitte diese Datei zuerst lesen, dann mit Karo bestätigen, womit weitergemacht wird.**
+Stand: 21.07.2026 · Für den nächsten Agenten oder PC-Wechsel.
+**Bitte diese Datei zuerst lesen.**
 
 ---
 
-## 1. Was bereits fertig ist (3 offene Branches, keiner gemergt)
+## 1. Roadmap-Entscheidung (gilt, bis Karo sie ändert)
 
-| Branch | Inhalt | Status |
-|---|---|---|
-| `claude/postgres-pool-pre-ping` | Fix für HTTP-500-Absturz bei toter Neon-Verbindung (`pool_pre_ping`) | ✅ Fertig, 846/846 Tests grün, **wartet auf Merge-OK** |
-| `claude/autarker-betrieb` (PR #42 auf GitHub) | SQLite in `/data`-Docker-Volume für Betrieb ohne Render/Neon | ✅ Fertig, wartet auf Merge-OK |
-| `claude/memory-architecture-v1` | Konzept-Dokument `docs/MEMORY_ARCHITECTURE_V1.md` (17-Tabellen-Bestandsaufnahme, Datenklassen, Lösch-/Backup-Regeln, 3 Mini-PR-Vorschläge) | ✅ Reines Konzept, kein Code, wartet auf Entscheidung |
+Siehe `docs/ROADMAP_ENTSCHEIDUNG_AUTARK_ZUERST.md`: AILIZA wird primär **autark**
+gebaut (SQLite in `/data`-Docker-Volume), nicht als Cloud-Produkt. Neon/Postgres ist
+nur Übergangslösung für Render-Staging. Zukunftsziel (separater, noch nicht
+begonnener Auftrag): Desktop-Distribution ohne Docker-Pflicht (Block D).
 
-**Wichtig: Reihenfolge beim Mergen.** `postgres-pool-pre-ping` und `autarker-betrieb` sind unabhängig voneinander, beide gehen von `main` aus — einzeln mergebar, kein Konflikt zu erwarten.
+## 2. Gemergt in `main` (Block A, fertig)
 
----
+- Postgres-Verbindungs-Fix (`pool_pre_ping`)
+- Autarker Betrieb (SQLite `/data`-Volume, `docker-compose.yml`, PR #42)
+- Memory-Kernschema: `memory_items`, `memory_sources`, `memory_visibility` (PR #44)
+- Kontrolliertes Lernen: `memory_suggestions`, `decide_memory_storage()`,
+  `confirm_memory_suggestion()` (PR #45)
+- `user_settings` getrennt von `users` (PR #43)
+- Vollständig verifiziert: alle Tabellen entstehen automatisch, Daten überleben
+  Neustart (lokal ohne Docker-Daemon getestet, da hier keiner verfügbar war —
+  auf echtem PC mit `docker compose up -d` verifizieren).
 
-## 2. Was live auf Render passiert ist (Kontext für Debugging)
+## 3. Offen — Block B (Chat nutzbar machen), zwei gestapelte PRs
 
-- Render-Service `AILIZA-staging` läuft mit Neon-Postgres (`AILIZA_DATABASE_URL` gesetzt).
-- Zwei echte Bugs wurden auf dem Weg gefunden und bereits gefixt (auf `main` gemergt):
-  1. `agent_runtime`/`main.py` Fallback-Imports fehlte `apps.backend.` Präfix → `ModuleNotFoundError` beim Deploy.
-  2. Neon-Connection-String im Render-Dashboard hatte zuerst das maskierte Passwort statt des echten (Nutzerfehler beim Kopieren, kein Code-Bug).
-- **Noch offen:** `pool_pre_ping`-Fix (siehe oben) ist geschrieben, aber noch nicht gemergt/deployed.
+| PR | Branch | Basis | Status |
+|---|---|---|---|
+| **#46** | `claude/memory-chat-integration` | `main` | Offen, **kann direkt gemergt werden** |
+| **#47** | `claude/user-export-deletion` | PR #46 (gestapelt!) | Offen, **Merge-Sperre: erst nach #46** |
 
----
+**Reihenfolge beim Mergen:** #46 zuerst. Danach #47: Base auf `main` umstellen
+(GitHub-PR-Settings oder `gh pr edit`), Tests erneut laufen lassen, dann mergen.
 
-## 3. Der noch nicht umgesetzte Gedächtnis-Auftrag (großes Konzept)
+### PR #46 — Chat-Anbindung der Speicher-Entscheidungslogik
+- `decide_memory_storage()` läuft jetzt im echten `/agent/run`-Flow (dünner
+  Wrapper `run_agent()` um umbenanntes `_run_agent_core()`, best effort,
+  kann die Antwort strukturell nie blockieren).
+- `info_kind`-Klassifikation: **kein LLM**, nutzt bestehende `classify()`
+  (Governance) + feste Regel für Einstellungs-Phrasen.
+- Neue Endpunkte: `GET /api/memory-suggestions`, `POST .../confirm`, `.../reject`.
+- Minimale Frontend-Anzeige (bestehendes `appendActionRow`-Muster).
+- 16 neue Tests, Baseline 926/926 grün.
 
-Karo hat einen sehr detaillierten Prompt für ein "Profilregel- und Governance-Konzept" vorbereitet (13 Abschnitte: Kurzurteil, Drei-Ebenen-Modell Profil/Einstellungen/Gedächtnis, Datenmodell, Rollen, Entscheidungslogik, RAG-Logik, DSGVO/EU-AI-Act, UI-Konzept, Mini-PR-Roadmap, Risiken, Nicht-im-Scope).
+### PR #47 — Export & Löschung (Art. 20 / Art. 17 DSGVO)
+- `GET /api/me/export`, `DELETE /api/me`.
+- **Karo-Entscheidung:** Löschung deaktiviert Account (`active=0`) + löscht
+  abhängige Daten. **Kein** hartes Löschen von `users` in dieser PR.
+- `delete_own_account_data()` ist eine **echte Transaktion** (eine `engine.begin()`),
+  nicht mehrere unabhängige Aufrufe — alles-oder-nichts getestet.
+- 10 neue Tests, Baseline 936/936 grün.
 
-**Kernprinzip des Auftrags:** So wenig festes Profil wie möglich, so viel Nutzerkontrolle wie möglich. Kein heimliches Profiling. Drei getrennte Ebenen:
-- **Profil** (`users`) = nur technische Stammdaten, klein halten
-- **Einstellungen** (`user_settings`) = Arbeitspräferenzen (Ton, Länge, Sprache), keine Persönlichkeitsanalyse
-- **Gedächtnis** (`memory_items`) = inhaltliches Wissen, nur sichtbar/bestätigt/löschbar, getrennt in Firmengedächtnis vs. Nutzergedächtnis
+## 4. Offene Governance-Entscheidungen (keine Blocker, nur zur Info)
 
-**Status:** Prompt liegt vor (siehe Konversationsverlauf), **noch nicht ausgeführt**. Das ist reine Text-/Konzeptarbeit, kein Code — passt für **Opus** (Architektur/Compliance-Tiefe) oder in Etappen für Sonnet, je nach Budget.
+- Physische `users`-Löschung ist weiterhin **nicht** implementiert (bewusst,
+  Karo-Entscheidung für PR #47). Falls später gewünscht: eigener, neuer Auftrag.
+- Firmenwissen-Suggestions (`create_company_memory_suggestion`) sind in der
+  Entscheidungslogik vorhanden, aber die Chat-Anbindung (PR #46) erzeugt aktuell
+  nur `user_memory`-Vorschläge — Firmenwissen-Erkennung im Chat ist noch nicht
+  angebunden (bewusst kleiner Schnitt, siehe PR-#46-Beschreibung).
 
-**Empfehlung für den nächsten Agenten:** Diesen Prompt 1:1 übernehmen (Karo hat ihn bereits fertig formuliert, mit einer kleinen Präzisierung: "aktives aber sichtbares Merken statt heimliches Lernen"). Als reines Konzept-Dokument ausarbeiten, wie bei `MEMORY_ARCHITECTURE_V1.md` — neuer eigener Branch, kein Code, PR mit Doku, wartet auf Karo-Freigabe.
+## 5. Zurückgestellt (nicht Block B, separate spätere Aufträge)
 
----
+- UI-Panel "Mein AILIZA-Gedächtnis" (reine Sichtbarkeit, ändert nichts an der
+  Architektur — kann jederzeit nachgezogen werden)
+- Block C: Wissensdatenbank + Vektorsuche (pgvector)
+- Block D: Desktop-Distribution ohne Docker (gepackte ausführbare Datei)
 
-## 4. Arbeitsregeln, die für Karo gelten (aus CLAUDE.md, unbedingt einhalten)
+## 6. Wichtiger Hinweis für PC-Wechsel
 
-- **Erst fragen, dann programmieren.** Vor jeder Code-Änderung erklären WAS/WARUM, auf OK warten.
-- Testliste vor Implementierung, TDD.
-- Jede Antwort muss die Modell-Empfehlung explizit nennen (Sonnet 5 = Standard, Opus nur für große Architektur/Compliance-Entscheidungen).
-- Deutsche, einfache Sprache in Erklärungen (Karo-Wunsch aus dieser Session).
-- Keine Secrets/PII in Logs oder Commits.
+Nach Übertragung auf den neuen PC: **`AILIZA_DATABASE_URL` erneut setzen**
+(z. B. `sqlite:////data/ailiza.sqlite` für autarken Betrieb per Docker, oder
+lokaler Pfad für direkten Python-Start). Ohne diese Variable warnt AILIZA und
+fällt auf einen relativen Dev-Pfad zurück (kein Datenverlust-Risiko in
+Production ohne explizite Warnung, siehe `_resolve_database_url()` in
+`apps/backend/database.py`).
+
+## 7. Arbeitsregeln (aus CLAUDE.md, unbedingt einhalten)
+
+- Erst fragen, dann programmieren — bei Unklarheit Karo fragen, nicht raten.
+- TDD: Tests zuerst, dann Code.
+- Jede Antwort nennt die Modell-Empfehlung explizit (Sonnet 5 = Standard).
 - Kleine, einzeln bestätigte PRs statt große Umbauten.
+- Keine Secrets/PII in Logs oder Commits.
 
 ---
 
-## 5. Nächste sinnvolle Schritte (Prioritätsvorschlag)
-
-1. `postgres-pool-pre-ping` mergen + deployen (kleinster, dringendster Fix — behebt echten Live-Bug).
-2. `autarker-betrieb` (PR #42) reviewen + mergen, wenn Karo bereit ist.
-3. Gedächtnis-Konzept-Prompt (Abschnitt 3 oben) als eigenständiges Dokument ausarbeiten.
-4. Erst danach: erste Mini-PRs aus dem Gedächtnis-Konzept umsetzen (nicht vor Schritt 3, Architektur muss zuerst stehen).
-
----
-
-*Für den nächsten Agenten: Diese Datei ist der schnellste Weg, um ohne Kontextverlust weiterzumachen. Bei Unklarheiten: Karo fragen, nicht raten — sie legt Wert auf "erst fragen, dann handeln".*
+*Für den nächsten Agenten: Diese Datei ist der schnellste Weg, ohne Kontextverlust
+weiterzumachen. Bei Unklarheiten: Karo fragen.*
