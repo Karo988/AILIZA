@@ -338,6 +338,11 @@ body{
 </style>
 </head>
 <body>
+<!-- Diagnose-Overlay (Block: claude/mobile-chat-layout-repair). Rein
+     opt-in ueber ?debugviewport=1 in der URL -- fuer normale Nutzer und
+     Standard-Aufrufe unsichtbar und ohne jede Wirkung. Kein Redesign,
+     keine Feature-Aenderung -- dient nur der Mobile-Layout-Diagnose. -->
+<div id="viewport-debug" style="display:none;position:fixed;top:0;left:0;z-index:999999;background:rgba(0,0,0,.85);color:#0f0;font:11px/1.5 monospace;padding:8px 10px;max-width:100vw;white-space:pre;pointer-events:none"></div>
 <div class="topbar">
   <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen" aria-label="Menü öffnen">☰</button>
   <div class="brand">AI<span class="brand-mark">LIZA</span><span class="brand-sub">v0.5 · KMU · EU-konform</span></div>
@@ -715,6 +720,55 @@ body{
 // noetig (vorher: window.AILIZA_API-Fallback auf eine feste Production-Basis-URL,
 // wodurch z.B. Staging heimlich Production ansprach).
 const API = "";
+
+// ── Diagnose-Overlay fuer Mobile-Layout (nur bei ?debugviewport=1) ──────────
+// Zeigt live: window.innerHeight, visualViewport.height/offsetTop,
+// chat-body.clientHeight/scrollHeight/scrollTop, input-wrap-Position
+// relativ zum sichtbaren Viewport. Rein diagnostisch, kein Produktfeature,
+// keine Auswirkung auf normale Nutzer/Standard-Aufrufe ohne den
+// Query-Parameter. Wird entfernt/deaktiviert, sobald der eigentliche Fix
+// gefunden und verifiziert ist.
+(function setupViewportDebugOverlay(){
+  if(!/[?&]debugviewport=1(&|$)/.test(location.search))return;
+  const el=document.getElementById("viewport-debug");
+  if(!el)return;
+  el.style.display="block";
+  function fmt(n){return (typeof n==="number"&&!Number.isNaN(n))?Math.round(n):"n/a"}
+  function update(){
+    const vv=window.visualViewport;
+    const cb=document.getElementById("chat-body");
+    const iw=document.querySelector(".input-wrap");
+    const cbRect=cb?cb.getBoundingClientRect():null;
+    const iwRect=iw?iw.getBoundingClientRect():null;
+    const visibleH=vv?vv.height:window.innerHeight;
+    const lines=[
+      "-- Viewport --",
+      "window.innerHeight: "+fmt(window.innerHeight),
+      "window.innerWidth: "+fmt(window.innerWidth),
+      "visualViewport.height: "+(vv?fmt(vv.height):"n/a (kein visualViewport)"),
+      "visualViewport.offsetTop: "+(vv?fmt(vv.offsetTop):"n/a"),
+      "documentElement.clientHeight: "+fmt(document.documentElement.clientHeight),
+      "-- #chat-body (Scrollcontainer?) --",
+      "clientHeight: "+(cb?fmt(cb.clientHeight):"n/a (Element fehlt)"),
+      "scrollHeight: "+(cb?fmt(cb.scrollHeight):"n/a"),
+      "scrollTop: "+(cb?fmt(cb.scrollTop):"n/a"),
+      "rect.top/bottom: "+(cbRect?fmt(cbRect.top)+" / "+fmt(cbRect.bottom):"n/a"),
+      "-- .input-wrap --",
+      "rect.top/bottom: "+(iwRect?fmt(iwRect.top)+" / "+fmt(iwRect.bottom):"n/a (Element fehlt)"),
+      "rect.height: "+(iwRect?fmt(iwRect.height):"n/a"),
+      "vollstaendig im sichtbaren Viewport: "+(iwRect?(iwRect.bottom<=visibleH?"JA":"NEIN, um "+fmt(iwRect.bottom-visibleH)+"px verdeckt"):"n/a"),
+    ];
+    el.textContent=lines.join("\n");
+  }
+  update();
+  window.addEventListener("resize",update);
+  window.addEventListener("scroll",update,true);
+  if(window.visualViewport){
+    window.visualViewport.addEventListener("resize",update);
+    window.visualViewport.addEventListener("scroll",update);
+  }
+  setInterval(update,500);
+})();
 
 const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
 const SKILLS=[
