@@ -24,15 +24,16 @@ begonnener Auftrag): Desktop-Distribution ohne Docker-Pflicht (Block D).
   Neustart (lokal ohne Docker-Daemon getestet, da hier keiner verfügbar war —
   auf echtem PC mit `docker compose up -d` verifizieren).
 
-## 3. Offen — Block B (Chat nutzbar machen), zwei gestapelte PRs
+## 3. Block B — Chat nutzbar machen (✅ komplett gemergt in `main`)
 
-| PR | Branch | Basis | Status |
-|---|---|---|---|
-| **#46** | `claude/memory-chat-integration` | `main` | Offen, **kann direkt gemergt werden** |
-| **#47** | `claude/user-export-deletion` | PR #46 (gestapelt!) | Offen, **Merge-Sperre: erst nach #46** |
+| PR | Status |
+|---|---|
+| **#46** Chat-Anbindung der Speicher-Entscheidungslogik | ✅ gemergt |
+| **#47** Export & Löschung (Art. 20/17 DSGVO) | ✅ gemergt |
+| CI-Fix (verwaister `apps/backend/tests/`-Schritt deaktiviert) | ✅ gemergt |
 
-**Reihenfolge beim Mergen:** #46 zuerst. Danach #47: Base auf `main` umstellen
-(GitHub-PR-Settings oder `gh pr edit`), Tests erneut laufen lassen, dann mergen.
+Baseline nach beiden Merges: **936/936 Tests grün**, CI (GitHub Actions,
+Schritt "Tests (Root)") ebenfalls grün.
 
 ### PR #46 — Chat-Anbindung der Speicher-Entscheidungslogik
 - `decide_memory_storage()` läuft jetzt im echten `/agent/run`-Flow (dünner
@@ -67,6 +68,13 @@ begonnener Auftrag): Desktop-Distribution ohne Docker-Pflicht (Block D).
   Architektur — kann jederzeit nachgezogen werden)
 - Block C: Wissensdatenbank + Vektorsuche (pgvector)
 - Block D: Desktop-Distribution ohne Docker (gepackte ausführbare Datei)
+- **`apps/backend/tests/` aufräumen:** Verwaister Ordner, kaputte Imports auf
+  nicht mehr existierende Module (`compliance_auditor`, `KillSwitch`,
+  `policy_engine`, `policies.pii_taxonomy`, `governance`, `main`,
+  `require_operator`). Wird aktuell **nicht** als Pflicht-CI ausgeführt
+  (Schritt in `.github/workflows/ci.yml` bewusst auskommentiert, nicht
+  gelöscht). Ordner selbst existiert weiterhin unverändert im Repo. Später
+  in einem eigenen, kleinen Auftrag entscheiden: löschen oder reparieren.
 
 ## 6. Wichtiger Hinweis für PC-Wechsel
 
