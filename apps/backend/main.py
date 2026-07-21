@@ -57,6 +57,10 @@ try:
     from .governance.data_matrix import check_data_target, PolicyDecision
     from .compliance_auditor import evaluate_compliance, Severity
     from .kill_switch import enforce_kill_switch
+    from .knowledge.rag_context import (
+        build_knowledge_context, sanitize_answer_citations,
+        build_sources_list, answer_mode_user_text,
+    )
 except ImportError:
     from apps.backend.agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from apps.backend.database import (
@@ -90,6 +94,10 @@ except ImportError:
     from apps.backend.governance.data_matrix import check_data_target, PolicyDecision
     from apps.backend.compliance_auditor import evaluate_compliance, Severity
     from apps.backend.kill_switch import enforce_kill_switch
+    from apps.backend.knowledge.rag_context import (
+        build_knowledge_context, sanitize_answer_citations,
+        build_sources_list, answer_mode_user_text,
+    )
 
 
 # ── B7 (P-C minimal): Nicht-produktionsreife Module beim Start erkennen ────────
@@ -1623,6 +1631,83 @@ def _maybe_suggest_memory(*, task: str, result: dict[str, Any],
         logger.exception("Memory-Suggestion-Erstellung fehlgeschlagen (best effort, kein Nutzer-Impact).")
 
 
+def _maybe_build_knowledge_context(*, task: str, token: "TokenData | None",
+                                   tenant_id: str) -> dict[str, Any]:
+    """Best effort: baut Chat-Kontext aus freigegebenen internen
+    Wissensquellen auf (Block C Phase C4). Ohne Nutzerkontext (kein Login)
+    ist keine Berechtigungspruefung moeglich -- dann kein Kontext, exakt wie
+    bei _maybe_suggest_memory(). build_knowledge_context() wirft selbst
+    schon nie eine Exception, dieser zusaetzliche try/except ist ein
+    weiteres Sicherheitsnetz (gleiches Muster wie an allen Best-effort-
+    Stellen in diesem Modul). Der Fallback ist ein reines Literal (KEIN
+    erneuter Aufruf von build_knowledge_context) -- sonst wuerde ein Fehler
+    in genau dieser Funktion den Fallback selbst wieder zum Absturz bringen."""
+    _neutral: dict[str, Any] = {
+        "context_block": None, "tag_map": {}, "used_snippets": [],
+        "answer_mode": "general_ai", "confidence": "medium",
+        "status_message": None, "found_count": 0, "filtered_count": 0,
+    }
+    try:
+        if token is None:
+            return _neutral
+        return build_knowledge_context(
+            tenant_id=tenant_id, requester_user_id=token.user_id, query=task,
+        )
+    except Exception:  # noqa: BLE001 - best effort, darf Chat nie blockieren
+        logger.exception("Aufbau des Wissens-Kontexts fehlgeschlagen (best effort, kein Nutzer-Impact).")
+        return _neutral
+
+
+def _attach_knowledge_result(*, result: dict[str, Any], knowledge: dict[str, Any],
+                            tenant_id: str) -> None:
+    """Best effort: haengt answer_mode/confidence/sources an eine fertige
+    Antwort an und bereinigt die sichtbare Antwort von Quellen-Tags, die
+    nicht im Backend-tag_map vorkommen (keine erfundenen Quellen). Ein
+    Fehler hier darf die eigentliche Chat-Antwort nie veraendern/blockieren."""
+    try:
+        result["answer_mode"] = knowledge.get("answer_mode", "general_ai")
+        confidence = knowledge.get("confidence")
+        if confidence:
+            result["confidence"] = confidence
+        status_message = knowledge.get("status_message")
+        if status_message:
+            result["knowledge_status_message"] = status_message
+            # Nur bei expliziter Dokumentenfrage ohne Treffer wird der
+            # Hinweis Teil der sichtbaren Antwort (kein Standardhinweis bei
+            # jeder normalen Chat-Anfrage -- Karo-Entscheidung).
+            for field in ("message", "ai_response"):
+                if result.get(field):
+                    result[field] = f"{result[field]}\n\n{status_message}"
+
+        tag_map = knowledge.get("tag_map") or {}
+        sources = build_sources_list(tag_map)
+        if sources:
+            result["sources"] = sources
+            for field in ("message", "ai_response"):
+                if result.get(field):
+                    result[field] = sanitize_answer_citations(result[field], tag_map)
+
+        notice = answer_mode_user_text(knowledge.get("answer_mode", "general_ai"))
+        if notice:
+            result["knowledge_notice"] = notice
+
+        # Audit-light: nur Metadaten, nie Snippet-Inhalte/Rohtexte/storage_path.
+        if knowledge.get("found_count") or knowledge.get("filtered_count") or sources:
+            write_audit_entry(
+                action="knowledge.context_used",
+                tenant_id=tenant_id,
+                metadata={
+                    "answer_mode": knowledge.get("answer_mode", "general_ai"),
+                    "found_count": knowledge.get("found_count", 0),
+                    "filtered_count": knowledge.get("filtered_count", 0),
+                    "source_ids": [s["source_id"] for s in sources] if sources else [],
+                    "chunk_ids": [s["chunk_id"] for s in sources] if sources else [],
+                },
+            )
+    except Exception:  # noqa: BLE001 - best effort, darf Antwort nie veraendern/blockieren
+        logger.exception("Anhaengen des Wissens-Kontexts an die Antwort fehlgeschlagen (best effort).")
+
+
 @app.post("/agent/run")
 @_limiter.limit("30/minute")
 def run_agent(
@@ -1631,13 +1716,19 @@ def run_agent(
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Duenner Wrapper um _run_agent_core(): haengt den Speicher-Vorschlags-
-    Schritt (best effort, Block B Schritt 1) an eine erfolgreiche Antwort an,
-    OHNE die eigentliche Governance-/Agenten-Logik anzufassen. Ein Fehler in
-    _maybe_suggest_memory() kann diese Antwort strukturell nie blockieren --
-    der Call steht NACH der fertigen Antwort und faengt selbst alles ab."""
+    Schritt (best effort, Block B Schritt 1) UND den Wissens-Kontext-Schritt
+    (best effort, Block C Phase C4) an eine Antwort an, OHNE die eigentliche
+    Governance-/Agenten-Logik anzufassen. Ein Fehler in _maybe_suggest_memory()
+    oder im Wissens-Kontext kann diese Antwort strukturell nie blockieren --
+    beide Calls faengen selbst alles ab (siehe jeweilige Docstrings)."""
     tenant = _tenant_id(token)
-    result = _run_agent_core(request, payload, token)
+    knowledge = _maybe_build_knowledge_context(task=payload.task, token=token, tenant_id=tenant)
+    result = _run_agent_core(
+        request, payload, token,
+        knowledge_context_block=knowledge.get("context_block"),
+    )
     _maybe_suggest_memory(task=payload.task, result=result, token=token, tenant_id=tenant)
+    _attach_knowledge_result(result=result, knowledge=knowledge, tenant_id=tenant)
     return result
 
 
@@ -1645,6 +1736,7 @@ def _run_agent_core(
     request: Request,
     payload: AgentRunRequest,
     token: TokenData | None,
+    knowledge_context_block: str | None = None,
 ) -> dict[str, Any]:
     tenant = _tenant_id(token)
 
@@ -1710,6 +1802,15 @@ def _run_agent_core(
     pii_detected = pre_check.get("pii_detected")
     governance_is_draft = pre_check.get("is_draft", False)
     redaction_applied = bool(pii_detected) or bool(reinsertion_map)
+
+    # Block C Phase C4: bereits geprueften/bereinigten Wissens-Kontext (falls
+    # vorhanden) an die Aufgabe anhaengen -- einziger Injektionspunkt, gilt
+    # dadurch automatisch fuer alle nachfolgenden LLM-Aufrufpfade (Schreib-
+    # aufgabe, AgentRuntime, Zusammenfassung), da diese alle effective_task
+    # verwenden. Durchlaeuft dadurch dieselbe Governance-Pipeline wie jede
+    # andere Aufgabe (Kill-Switch/Klassifikation/Redaction bereits oben).
+    if knowledge_context_block:
+        effective_task = f"{effective_task}\n\n{knowledge_context_block}"
 
     # ── COMPLIANCE-Check auf der GESCHWAERZTEN Fassung ────────────────────────
     # Platzhalter ([GESCHWAERZT: ...], [NAME_1]) vorher entfernen — sie nennen
