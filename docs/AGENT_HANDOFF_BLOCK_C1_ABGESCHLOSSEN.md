@@ -33,10 +33,10 @@ Block D (Desktop-Distribution ohne Docker)            ⏳ separater, späterer A
 | # | Frage | Empfehlung | Deine Entscheidung |
 |---|---|---|---|
 | 1 | Speicherort Originaldateien? | `/data/uploads` (Docker-Volume) + Metadaten in DB | ⬜ offen |
-| 2 | Erlaubte Dateitypen für v1? | TXT + Markdown zuerst, PDF/DOCX später | ⬜ offen |
+| 2 | Erlaubte Dateitypen für v1? | TXT + Markdown zuerst, PDF/DOCX später | ✅ **Karo-Entscheidung: Erst sicherer Kern mit nur TXT + Markdown, Erweiterung auf weitere Dateitypen erst als späterer, separater Schritt nach erneuter Freigabe** |
 | 3 | Umgang mit sensiblen Dokumenten? | Nicht frei entscheidbar — braucht dein OK (blockieren / redigieren / Admin-Freigabe) | ⬜ offen |
 
-**Diese 3 Fragen sollte ich dir stellen, bevor C2 beauftragt wird** — der nächste Agent-Prompt unten enthält sie deshalb als expliziten Stopp-Punkt, nicht als Freibrief zum Raten.
+**Noch 2 offene Fragen**, bevor C2 vollständig beauftragt werden kann — der nächste Agent-Prompt unten enthält sie als expliziten Stopp-Punkt, nicht als Freibrief zum Raten.
 
 ## 4. Fertiger Prompt für den nächsten Agenten (Block C2, nach PR #48-Merge)
 
@@ -55,17 +55,30 @@ Aktueller Stand: Block C1 (Tabellen knowledge_sources, knowledge_chunks,
 knowledge_source_permissions) ist in main gemergt. Prüfe das existierende
 Schema in apps/backend/database.py, bevor du etwas Neues baust.
 
-Setze nur Block C Phase C2 um (Dokument-Ingestion):
-- Dokumente aufnehmen (nur TXT und Markdown, siehe Stop-Decision #2 -
-  falls Karo etwas anderes freigegeben hat, das priorisieren)
-- Text extrahieren (nur für die freigegebenen Dateitypen)
+Karo-Entscheidung zu Dateitypen: ERST sicherer Kern, DANN Dateitypen
+erweitern. Das heisst konkret fuer diesen Auftrag:
+
+Setze nur Block C Phase C2 Schritt 1 um (sicherer Ingestion-Kern,
+NUR TXT + Markdown):
+- Dokumente aufnehmen -- ausschliesslich .txt und .md, alles andere
+  wird mit klarer, verstaendlicher Fehlermeldung abgelehnt (fail-closed,
+  keine Erkennung/Sniffing von "eigentlich doch okay")
+- Text extrahieren (fuer TXT/MD ist das reines Einlesen, keine
+  Parsing-Bibliothek noetig -- bewusst der einfachste/sicherste Fall zuerst)
 - Inhalte chunkweise in knowledge_chunks speichern
 - Quellen (knowledge_sources) und Berechtigungen
   (knowledge_source_permissions) beachten - keine Ingestion ohne
-  gültige Source, kein Auto-Approve
+  gueltige Source, kein Auto-Approve
+- Dateityp-Whitelist als eigene, klar erkennbare Konstante/Funktion
+  implementieren (z.B. ALLOWED_INGESTION_TYPES = {"txt", "md"}), NICHT
+  hart im Ablauf verstreut -- das ist die Stelle, die spaeter für
+  PDF/DOCX erweitert wird, also muss sie einfach erweiterbar UND leicht
+  auditierbar sein
 
-Nicht umsetzen:
-- Kein PDF/DOCX (ausser Karo hat es ausdruecklich freigegeben)
+Ausdruecklich NICHT in diesem Auftrag (kommt als eigener, spaeterer
+Schritt sobald der Kern sicher steht und Karo das freigibt):
+- Kein PDF/DOCX/CSV, auch nicht "testweise" oder "vorbereitend"
+- Keine Erweiterung der Whitelist ohne Karos ausdrueckliches OK
 - Keine Suche
 - Kein RAG
 - Keine Embeddings
@@ -76,10 +89,10 @@ Nicht umsetzen:
 
 Stop-Regeln (siehe AILIZA_BLOCK_C_STOP_DECISIONS.md) - bei diesen
 Punkten IMMER erst fragen, nicht raten:
-- Speicherort Originaldateien (Empfehlung: /data/uploads + Metadaten in DB)
-- Erlaubte Dateitypen (Empfehlung: TXT/MD zuerst)
+- Speicherort Originaldateien (Empfehlung: /data/uploads + Metadaten in DB,
+  noch nicht von Karo final bestaetigt -- nachfragen falls nicht laengst geklaert)
 - Umgang mit sensiblen Dokumenten (blockieren/redigieren/Admin-Freigabe -
-  NICHT frei entscheiden)
+  NICHT frei entscheiden, noch offen)
 - Keine Dokumente/Chunks an externe LLM-/Embedding-Dienste ohne
   ausdrueckliche Freigabe
 
