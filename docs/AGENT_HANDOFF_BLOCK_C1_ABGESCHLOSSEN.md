@@ -1,8 +1,8 @@
-# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2
+# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3
 
-**Status:** PR #48 (Block C1: Schema) ist **gemergt**. Block C2 (sichere TXT/Markdown-Ingestion) ist implementiert, 979/979 Tests grün, PR wird als nächstes erstellt.
+**Status:** PR #48 (Schema) und PR #49 (TXT/Markdown-Ingestion) sind **gemergt**. Block C3 (lokale Suche) ist implementiert, 999/999 Tests grün, PR wird als nächstes erstellt.
 
-**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C3, erst nach Merge von C2).
+**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C4, erst nach Merge von C3).
 
 ---
 
@@ -12,108 +12,79 @@
 Block A (Autarker Betrieb, Memory-Kernschema)        ✅ gemergt
 Block B (Chat-Anbindung, Export/Löschung DSGVO)       ✅ gemergt
 Block C1 (Wissensquellen-Schema)                      ✅ gemergt (PR #48)
-Block C2 (TXT/Markdown-Ingestion)                     ✅ implementiert, PR folgt (Branch claude/knowledge-txt-md-ingestion)
-Block C3 (Lokale Suche)                               ⏳ erst nach Merge von C2 starten
-Block C4 (RAG mit Quellen)                            ⏳ noch nicht begonnen
+Block C2 (TXT/Markdown-Ingestion)                     ✅ gemergt (PR #49)
+Block C3 (Lokale Suche)                               ✅ implementiert, PR folgt (Branch claude/knowledge-local-search)
+Block C4 (RAG mit Quellen)                            ⏳ erst nach Merge von C3 starten
 Block C5 (Optionale Vektorsuche)                      ⏳ nur nach expliziter Freigabe
 Block D (Desktop-Distribution ohne Docker)            ⏳ separater, späterer Auftrag
 ```
 
-## 2. Block C2 — was gebaut wurde
+## 2. Block C2 — was gebaut wurde (zur Erinnerung, bereits gemergt)
 
-**Branch:** `claude/knowledge-txt-md-ingestion` · **Modul:** `apps/backend/knowledge/ingestion.py` · **Tests:** `tests/test_knowledge_txt_md_ingestion.py` (23 neu) · **Baseline:** 979/979 Tests grün.
+**Modul:** `apps/backend/knowledge/ingestion.py` · **Tests:** `tests/test_knowledge_txt_md_ingestion.py` (23)
 
 - `ingest_txt_or_markdown_source()` — einziger Einstiegspunkt, nur `.txt`/`.md`
-- `ALLOWED_KNOWLEDGE_EXTENSIONS = {".txt", ".md"}` und `MAX_KNOWLEDGE_FILE_BYTES = 2_000_000` als eigene, klar erkennbare Konstanten
-- Originaldatei landet unter `/data/uploads` (per `AILIZA_KNOWLEDGE_UPLOAD_DIR` konfigurierbar, Dev-Fallback analog zu `_resolve_database_url`), DB speichert nur Metadaten
-- Speicherpfad wird **nie** aus dem Nutzer-Dateinamen gebaut (nur `tenant_id` + zufällige ID + validierte Extension) → Pfad-Traversal strukturell ausgeschlossen
-- Klassifikation über bestehende Governance (`classify()` + `check_data_target(target=FILE_STORAGE)`), zusätzlich `classification.needs_review` beachtet, da `FILE_STORAGE` als Ziel in der Datenziel-Matrix für `SPECIAL_CATEGORY` alleine nicht streng genug ist
-- Fail-closed: `BLOCK` → Status `blocked`; `APPROVAL_REQUIRED`/`REDACT_REQUIRED`/`needs_review` → Status `pending_review`; sonst `approved`. Nur bei `approved` werden `knowledge_chunks` angelegt
-- Verständliche deutsche Nutzermeldungen ohne technische Details, Audit-Eintrag ohne Rohinhalte
+- `ALLOWED_KNOWLEDGE_EXTENSIONS = {".txt", ".md"}`, `MAX_KNOWLEDGE_FILE_BYTES = 2_000_000`
+- Originaldatei unter `/data/uploads`, DB speichert nur Metadaten
+- Speicherpfad nie aus Nutzer-Dateinamen gebaut → Pfad-Traversal strukturell ausgeschlossen
+- Fail-closed über bestehende Governance (`classify()` + `check_data_target` + `needs_review`): blocked/pending_review/approved
+
+## 3. Block C3 — was gebaut wurde
+
+**Branch:** `claude/knowledge-local-search` · **Modul:** `apps/backend/knowledge/search.py` · **Tests:** `tests/test_knowledge_local_search.py` (20 neu) · **Baseline:** 999/999 Tests grün.
+
+- `search_knowledge_chunks(*, tenant_id, requester_user_id, query, requester_roles=None, project_id=None, limit=10)` — einziger Einstiegspunkt
+- Reine lokale Substring-Relevanz (Vorkommenszählung der Suchbegriffe je Chunk), keine Bibliothek, keine Embeddings, keine externen Aufrufe
+- Nur Quellen mit `status="approved"` werden überhaupt betrachtet — blocked/deleted/expired/pending_review sind strukturell ausgeschlossen (Filter direkt in der DB-Abfrage, nicht nachträglich)
+- Sichtbarkeit über `knowledge_source_permissions`:
+  - `private` → nur Uploader/`created_by`
+  - `project` → nur bei übereinstimmender `project_id`
+  - `team`/`organization` → alle im selben Tenant (Mandantengrenze ist bereits vorher hart durchgesetzt)
+  - `external_limited` → nur `allowed_user_ids`/`allowed_roles`
+  - **Kein Permission-Eintrag vorhanden → fail-closed: nur der Uploader sieht die Quelle**
+- Ergebnis je Treffer: `source_id`, `chunk_id`, `title`, `snippet`, `score`, `source_type`, `visibility_scope`, `status`
+- Kein Treffer → `message = "Ich habe in freigegebenen Quellen nichts Passendes gefunden."`
+- Nicht freigegebene Quellen werden nie angezeigt, angedeutet oder zitiert (vollständig aus der Ergebnismenge ausgeschlossen, nicht nur redigiert)
+- Kein RAG, keine Antwortgenerierung, keine UI, kein pgvector, keine Embeddings, kein Wissensgraph
 - **Docker-Test:** nicht möglich (Daemon in der Sandbox nicht erreichbar) — auf echtem PC mit `docker compose up -d` verifizieren
 
-**Noch offen:** PR für C2 muss von dir gemerged werden, bevor C3 beauftragt wird.
+**Noch offen:** PR für C3 muss von dir gemerged werden, bevor C4 beauftragt wird.
 
-## 3. Nächster großer Schritt: Block C Phase C3 (Lokale Suche)
+## 4. Nächster großer Schritt: Block C Phase C4 (RAG mit Quellen)
 
-**Nur starten, wenn die C2-PR gemergt ist.**
+**Nur starten, wenn die C3-PR gemergt ist.** C4 ist architektonisch bedeutsamer als C1–C3 (erste Stelle, an der Such-Ergebnisse in eine Agent-Antwort einfließen) — vor Beauftragung kurz mit Karo abstimmen, ob Sonnet 5 reicht oder ein Opus-Review vorgeschaltet werden soll (siehe Modell-Empfehlung unten).
 
-Kopiere diesen Block 1:1, sobald das der Fall ist:
+Groborientierung für den Prompt (noch nicht final ausformuliert wie bei C2/C3, da C4 von Karo vermutlich nochmal geschärft wird, bevor er beauftragt wird):
 
 ```text
-Lies zuerst docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md im Repo
-Karo988/AILIZA (Abschnitt "Block C2 -- was gebaut wurde" fuer den
-aktuellen Stand von apps/backend/knowledge/ingestion.py).
+Ziel: Agent kann bei einer Chat-Anfrage passende Quellen ueber
+search_knowledge_chunks() abrufen und in der Antwort nennen.
 
-Aktueller Stand: Block C1 (Schema: knowledge_sources, knowledge_chunks,
-knowledge_source_permissions) und Block C2 (sichere TXT/Markdown-
-Ingestion, apps/backend/knowledge/ingestion.py) sind in main gemergt.
-Pruefe beide, bevor du etwas Neues baust.
-
-Setze nur Block C Phase C3 um: einfache lokale Suche ueber freigegebene
-knowledge_chunks.
-
-Ziel:
-- AILIZA kann lokal ueber freigegebene knowledge_chunks suchen.
-- Nur berechtigte, aktive und freigegebene Quellen duerfen gefunden werden
-  (status="approved", nicht blocked/deleted/expired/pending_review,
-  Berechtigung ueber knowledge_source_permissions/tenant_id pruefen).
-
-Suchstrategie:
-- Einfach und autark: lokale Keyword-Suche (z.B. LIKE/Substring-Matching
-  oder SQLite FTS, falls ohne zusaetzliche Abhaengigkeit moeglich).
-- Kein pgvector, keine Embeddings, kein externer Dienst.
-- SQLite-kompatibel (kein Postgres-Zwang, autarker Betrieb bleibt primaer).
-
-TDD: Tests zuerst schreiben.
-
-Tests fuer C3:
-- Nutzer findet eigene/freigegebene Chunks.
-- Nutzer findet fremde/private Chunks nicht.
-- blocked/deleted/pending_review Sources werden nicht gefunden.
-- Suche liefert Quelle, Titel, Chunk-ID und kurzen Ausschnitt.
-- Suche respektiert tenant_id/Berechtigungen.
-- Suche funktioniert ohne externe Dienste.
-- kein RAG in dieser PR.
-- bestehende Tests bleiben gruen.
-
-Ergebnisformat je Treffer:
-- source_id, chunk_id, title, snippet, score/einfache Relevanz,
-  source_type, visibility_scope, status
-
-Nutzerfreundlichkeit:
-- Nichts gefunden: "Ich habe in freigegebenen Quellen nichts Passendes
-  gefunden."
-- Nicht freigegebene Quelle: nicht anzeigen, nicht andeuten, nicht
-  zitieren.
-
-Nicht im Scope C3:
-- kein RAG, keine Antwortgenerierung mit Quellen, keine UI-Neugestaltung,
-  kein pgvector, keine Embeddings, kein Wissensgraph, kein PDF/DOCX,
-  keine automatische Speicherung als memory_item.
-
-Autarker Betrieb bleibt primaer (SQLite, kein Postgres-Zwang).
-Aktive Testsuite: pytest tests/ -v --tb=short
-Branch: claude/knowledge-local-search
-Kleine, klare Commits. Kein Force-Push ohne Rueckfrage. Keine Branches
-loeschen. Keine Secrets/PII in Logs oder Commits.
-Wenn Docker moeglich ist: docker compose up -d kurz pruefen, sonst klar
-melden.
+Muss-Regeln:
+- Keine Antwort auf Basis nicht freigegebener Dokumente.
+- Jede Antwort aus Dokumentwissen nennt ihre Quelle(n) (source_id/title).
+- Weiterhin nur approved/aktive/berechtigte Quellen (search_knowledge_chunks
+  garantiert das bereits -- keine eigene Parallel-Logik bauen).
+- Kein automatisches Ueberschreiben der normalen Chat-Antwort, wenn keine
+  passende Quelle gefunden wird (message aus search_knowledge_chunks nutzen).
+- Kein pgvector, keine Embeddings, keine externen Such-/RAG-Dienste.
+- TDD, aktive Testsuite: pytest tests/ -v --tb=short
+- Branch: claude/knowledge-rag-with-sources
 
 Nach PR-Erstellung stoppen.
 ```
 
-## 4. Governance-Erinnerung (bleibt für jede Phase bindend)
+## 5. Governance-Erinnerung (bleibt für jede Phase bindend)
 
 - Erst fragen, dann programmieren — bei Unklarheiten NICHT raten, Karo fragen
 - Keine Dokumente/Chunks an externe LLM-Dienste ohne ausdrückliche Freigabe (Kill-Switch-Pipeline gilt auch hier)
-- Jede Antwort aus Dokumentwissen braucht später Quellen (erst ab C4 relevant, aber Architektur muss es von Anfang an ermöglichen)
-- Gelöschte/blockierte Quellen dürfen nie genutzt werden (durchgesetzt über `list_active_chunks_for_source`)
+- Jede Antwort aus Dokumentwissen braucht Quellen (ab C4 umzusetzen — Architektur seit C1 darauf ausgelegt)
+- Gelöschte/blockierte Quellen dürfen nie genutzt werden (durchgesetzt über `list_active_chunks_for_source` und jetzt auch direkt in `search_knowledge_chunks`)
 
-## 5. Modell-Empfehlung
+## 6. Modell-Empfehlung
 
-**Sonnet 5** für C3 (iterative Such-Logik, Tests, TDD).
-**Opus 4.8 nur** falls eine echte Architekturentscheidung zur Suchstrategie (z.B. FTS5 vs. einfaches LIKE) nötig wird und du das explizit anstoßen willst.
+**Sonnet 5** für C3 war korrekt (iterative Such-Logik, Tests, TDD) — hat gereicht, keine Architektur-Rückfrage nötig.
+**Für C4:** Sonnet 5 als Standard, aber **Opus 4.8 in Erwägung ziehen**, sobald es um die konkrete Ausgestaltung "wie zitiert der Agent Quellen in der Chat-Antwort" geht — das ist näher an einer Architekturentscheidung (User-Erlebnis + Governance-Konsistenz) als reine Ingestion/Suche.
 
 ---
 
