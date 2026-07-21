@@ -69,7 +69,7 @@ Schritt "Tests (Root)") ebenfalls grün.
 | C1 Wissensquellen-Schema (`knowledge_sources`, `knowledge_chunks`, `knowledge_source_permissions`) | ✅ gemergt (PR #48) |
 | C2 Sichere TXT/Markdown-Ingestion (`apps/backend/knowledge/ingestion.py`) | ✅ gemergt (PR #49) |
 | C3 Lokale Suche (`apps/backend/knowledge/search.py`, `search_knowledge_chunks()`) | ✅ gemergt (PR #50) |
-| C4 Interne Wissensquellen im Chat mit Quellenanzeige (`apps/backend/knowledge/rag_context.py` + Anbindung in `main.py`) | ✅ implementiert, PR folgt (Branch `claude/knowledge-rag-with-sources`) |
+| C4 Interne Wissensquellen im Chat mit Quellenanzeige (`apps/backend/knowledge/rag_context.py` + Anbindung in `main.py`) | ✅ gemergt (PR #51) |
 
 **C4 kurz:** `run_agent()` baut best-effort Chat-Kontext aus freigegebenen Wissensquellen
 (`_maybe_build_knowledge_context()`), injiziert ihn (max. 3 Snippets, max. 800 Zeichen,

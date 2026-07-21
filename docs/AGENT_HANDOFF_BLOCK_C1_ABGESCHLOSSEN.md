@@ -1,8 +1,8 @@
-# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3 + C4
+# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3 + C4 (alle gemergt)
 
-**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion) und PR #50 (lokale Suche) sind **gemergt**. Block C4 (interne Wissensquellen im Chat mit Quellenanzeige) ist implementiert, 1034/1034 Tests grün, PR wird als nächstes erstellt.
+**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion), PR #50 (lokale Suche) und PR #51 (interne Wissensquellen im Chat mit Quellenanzeige) sind **alle gemergt**. Block C ist damit für die aktuelle Roadmap-Stufe fertig — Block C5 (Vektorsuche) und Websuche bleiben bewusst zurückgestellt.
 
-**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C5/Websuche, jeweils erst nach expliziter Freigabe).
+**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für den empfohlenen Folgeschritt, siehe Abschnitt 5).
 
 ---
 
@@ -14,10 +14,11 @@ Block B (Chat-Anbindung, Export/Löschung DSGVO)       ✅ gemergt
 Block C1 (Wissensquellen-Schema)                      ✅ gemergt (PR #48)
 Block C2 (TXT/Markdown-Ingestion)                     ✅ gemergt (PR #49)
 Block C3 (Lokale Suche)                               ✅ gemergt (PR #50)
-Block C4 (RAG mit Quellen)                            ✅ implementiert, PR folgt (Branch claude/knowledge-rag-with-sources)
+Block C4 (RAG mit Quellen)                            ✅ gemergt (PR #51)
 Block C5 (Optionale Vektorsuche)                      ⏳ nur nach expliziter Freigabe
 Block D (Desktop-Distribution ohne Docker)            ⏳ separater, späterer Auftrag
 Websuche/Internetrecherche                            ⏳ spätere, eigene Capability (siehe Abschnitt 4, Leitplanken)
+Empfohlener Folgeschritt: kleine UI-/Demo-Schicht      ⏳ noch nicht beauftragt (siehe Abschnitt 5)
 ```
 
 ## 2. Block C2 — was gebaut wurde (zur Erinnerung, bereits gemergt)
@@ -76,9 +77,34 @@ Websuche/Internetrecherche                            ⏳ spätere, eigene Capab
 - Kein Admin-Cockpit, kein großes RAG-Redesign
 - `internal_plus_general` (answer_mode) ist im Mapping vorbereitet, aber nicht automatisch von `internal_knowledge` unterschieden — würde erfordern zu erkennen, "wie" das Modell den Kontext genutzt hat; als Follow-up dokumentiert, nicht geraten
 
-**Docker-Test:** nicht möglich (Daemon in der Sandbox nicht erreichbar) — auf echtem PC mit `docker compose up -d` verifizieren.
+**PR #51: gemergt (2026-07-21).** CI grün, `mergeable_state: clean`, 1034/1034 Tests grün — vor dem Merge nochmal lokal gegen die C4-Checkliste geprüft (interne Quellen genutzt, Snippet-/Zeichen-Limit, Re-Klassifikation, keine erfundenen Quellen, kein Standardhinweis bei Nulltreffern, best-effort Fehlerfestigkeit, keine Websuche/pgvector/Embeddings/Wissensgraph/UI/automatische Memory-Erzeugung — alles bestätigt).
 
-**Noch offen:** PR für C4 muss von dir gemerged werden. Nicht mergen ohne Karo-Freigabe.
+**Docker-Test:** In dieser Sandbox nicht möglich (Docker-Daemon nicht erreichbar, `/var/run/docker.sock` fehlt; auch ein direkter `uvicorn`-Start ohne Docker scheitert am Package-Importkontext dieser Sandbox). **Bitte auf echtem PC mit `docker compose up -d` prüfen.**
+
+**Manuelle Demo:** In dieser Sandbox **nicht durchgeführt** (App/Docker nicht lauffähig, keine echten LLM-Provider-Keys verfügbar). Stattdessen Checkliste vorbereitet, siehe unten — bitte auf einem PC mit laufendem Docker und konfiguriertem Provider durchführen.
+
+### C4-Demo-Checkliste (auf echtem PC durchführen)
+
+1. TXT- oder Markdown-Dokument hochladen (über `ingest_txt_or_markdown_source()` bzw. eine spätere Upload-Anbindung — aktuell noch keine UI dafür, siehe Abschnitt 5).
+2. Prüfen: Quelle hat Status `approved` (nicht `pending_review`/`blocked`).
+3. Im Chat nach einem Inhalt aus dem Dokument fragen.
+4. Prüfen:
+   - Antwort nutzt internes Wissen (`answer_mode: "internal_knowledge"` im Response-Body).
+   - `sources`-Liste wird im Response-Body angezeigt.
+   - Jede Quelle enthält `title`, `source_id`, `chunk_id`.
+5. Eine Frage stellen, zu der es keinen Treffer gibt.
+6. Prüfen:
+   - Chat antwortet normal weiter.
+   - Kein Standardhinweis in der Antwort, `answer_mode: "general_ai"`.
+7. Explizit fragen: "Was steht dazu in unseren Dokumenten?"
+8. Wenn kein Treffer:
+   - Antwort enthält wörtlich: "Ich habe in freigegebenen Quellen nichts Passendes gefunden."
+   - `answer_mode: "no_internal_source"`.
+9. Prüfen:
+   - Keine Websuche ausgelöst.
+   - Keine externen Quellen in der Antwort.
+   - Keine automatische Memory-Erzeugung durch diesen Schritt (Memory-Suggestion-Logik aus Block B bleibt unverändert/unabhängig).
+   - Im Server-Log/Request an den LLM-Provider (falls einsehbar) stehen nur Snippets, nie ganze Dokumente oder `storage_path`.
 
 ## 4a. Ursprünglicher C4-Auftrag (bereits umgesetzt, zur Nachvollziehbarkeit archiviert)
 
@@ -206,17 +232,28 @@ Handoff-Dokument nach Umsetzung aktualisieren.
 Nach PR-Erstellung stoppen.
 ```
 
-## 5. Governance-Erinnerung (bleibt für jede Phase bindend)
+## 5. Empfohlener Folgeschritt (noch NICHT beauftragt)
+
+Block C (C1–C4) ist jetzt vollständig gemergt, aber es gibt aktuell **keine Möglichkeit, das praktisch zu sehen** — kein Upload-UI, kein Chat-UI, das `sources`/`answer_mode` anzeigt. Empfehlung für den nächsten kleinen Schritt:
+
+**Kleine UI-/Demo-Schicht**, damit Karo AILIZA praktisch testen kann:
+- Minimaler Upload-Weg für TXT/Markdown (Frontend-Formular oder gut dokumentierter API-Call)
+- Chat-Antwort zeigt `sources` (Titel, evtl. `source_id`) sichtbar an, falls vorhanden
+- Explizit **kein** großes UI-Redesign — kleinster Schnitt, der die Demo-Checkliste oben tatsächlich durchspielbar macht
+
+**Noch nicht umsetzen** — nur als Folgepunkt notiert, wartet auf Karos Beauftragung.
+
+## 6. Governance-Erinnerung (bleibt für jede Phase bindend)
 
 - Erst fragen, dann programmieren — bei Unklarheiten NICHT raten, Karo fragen
 - Keine Dokumente/Chunks an externe LLM-Dienste ohne ausdrückliche Freigabe (Kill-Switch-Pipeline gilt auch hier)
-- Jede Antwort aus Dokumentwissen braucht Quellen (ab C4 umzusetzen — Architektur seit C1 darauf ausgelegt)
-- Gelöschte/blockierte Quellen dürfen nie genutzt werden (durchgesetzt über `list_active_chunks_for_source` und jetzt auch direkt in `search_knowledge_chunks`)
+- Jede Antwort aus Dokumentwissen braucht Quellen (ab C4 umgesetzt — siehe Abschnitt 4)
+- Gelöschte/blockierte Quellen dürfen nie genutzt werden (durchgesetzt über `list_active_chunks_for_source` und `search_knowledge_chunks`)
 
-## 6. Modell-Empfehlung
+## 7. Modell-Empfehlung
 
-**Sonnet 5** für C3 war korrekt (iterative Such-Logik, Tests, TDD) — hat gereicht, keine Architektur-Rückfrage nötig.
-**Für C4: Sonnet 5** — alle Architekturfragen sind durch Karo bereits final entschieden (Abschnitt 4), C4 ist jetzt iterative Integration bestehender Bausteine (`search_knowledge_chunks`, Governance-Pipeline), kein offener Architektur-Entwurf mehr. Opus 4.8 wäre nur nötig gewesen, um die jetzt getroffenen Entscheidungen zu erarbeiten — das ist bereits erledigt.
+**Sonnet 5** für C4 war korrekt — alle Architekturfragen waren durch Karo bereits final entschieden, reine Integration bestehender Bausteine, kein offener Architektur-Entwurf.
+**Für den empfohlenen Folgeschritt (UI-/Demo-Schicht): ebenfalls Sonnet 5** — kleine, klar abgegrenzte Frontend-/API-Anbindung ohne neue Architekturentscheidung.
 
 ---
 
