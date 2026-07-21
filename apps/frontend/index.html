@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#2D5F3F">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -327,7 +327,7 @@ body{
   .welcome-h{font-size:18px}
   .welcome-chips{gap:5px}
   .chip{font-size:11px;padding:6px 10px}
-  .input-wrap{padding:10px 12px 14px;position:sticky;bottom:0;z-index:10}
+  .input-wrap{padding:10px 12px calc(14px + env(safe-area-inset-bottom));position:sticky;bottom:0;z-index:10}
   .privacy-panel{display:none}
   .dsgvo-sidebar{display:none}
   .privacy-panel.expanded{display:block}
