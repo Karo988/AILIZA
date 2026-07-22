@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#2D5F3F">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -29,6 +29,21 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
+/* Zentraler Mobile-Viewport-Fix. Betroffen war nicht nur der Chat-Composer,
+   sondern auch das Login-Modal (position:fixed;inset:0) -- beides teilt
+   dieselbe Ursache: 100%/100vh und die native Groesse von position:fixed
+   auf mobilen Browsern reagieren NICHT zuverlaessig auf sichtbare
+   Adressleiste oder eingeblendete Tastatur. Kaskade in drei Stufen:
+   1) 100% (aeltester, universeller Fallback)
+   2) @supports 100dvh (dynamische Viewport-Einheit, loest das
+      Adressleisten-Problem in Browsern, die dvh unterstuetzen)
+   3) --app-viewport-height (per JS aus window.visualViewport gesetzt,
+      siehe setupAppViewportHeight() im Script -- reagiert zusaetzlich
+      auf die Tastatur, was dvh allein auf vielen Geraeten NICHT tut)
+   Jede Stufe faellt sauber auf die vorherige zurueck, wenn nicht
+   unterstuetzt bzw. wenn JS die Variable noch nicht gesetzt hat. */
+@supports (height:100dvh){html,body{height:100dvh}}
+html,body{height:var(--app-viewport-height, 100dvh)}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--bg);
@@ -82,7 +97,7 @@ body{
 .side-add{padding:7px 10px;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;border-radius:6px;background:var(--accent-soft);margin:4px 8px;text-align:center}
 .side-add:hover{background:#d4e8d8;color:#234a31}
 .side-footer{border-top:1px solid var(--border);padding:10px 14px;font-size:10px;color:var(--text-muted);text-align:center}
-.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
 .view{display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden}
 .view.active{display:flex}
 .chat-header{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:12px;flex-shrink:0}
@@ -93,7 +108,7 @@ body{
 .chat-actions{margin-left:auto;display:flex;gap:6px}
 .btn-mini{border:1px solid var(--border);background:var(--surface);padding:4px 10px;font-size:11px;border-radius:5px;cursor:pointer;color:var(--text-soft)}
 .btn-mini:hover{background:var(--surface-2)}
-.chat-body{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center}
+.chat-body{flex:1;min-height:0;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center}
 .chat-inner{width:100%;max-width:720px;display:flex;flex-direction:column;gap:14px}
 .welcome{text-align:center;padding:48px 20px 24px}
 .welcome-h{font-size:22px;font-weight:600;margin-bottom:8px;letter-spacing:-.3px}
@@ -249,7 +264,14 @@ body{
 .metric-val{font-size:22px;font-weight:600;letter-spacing:-.3px}
 .metric-val.warn{color:var(--warn)}
 .metric-val.ok{color:var(--accent)}
-.modal{position:fixed;inset:0;background:rgba(20,20,20,.4);display:none;align-items:center;justify-content:center;z-index:100}
+/* inset:0 ersetzt durch top/left/right + explizite Hoehe: position:fixed
+   sizet sich sonst nach der nativen (auf vielen mobilen Browsern zu
+   grossen) Fixed-Viewport-Groesse statt nach der tatsaechlich sichtbaren
+   Hoehe -- exakt der Bug, der das Login-Modal ueber den Composer rutschen
+   liess. Nutzt dieselbe --app-viewport-height-Kaskade wie html/body. */
+.modal{position:fixed;top:0;left:0;right:0;height:100%;background:rgba(20,20,20,.4);display:none;align-items:center;justify-content:center;z-index:100}
+@supports (height:100dvh){.modal{height:100dvh}}
+.modal{height:var(--app-viewport-height, 100dvh)}
 .modal.open{display:flex}
 .modal-box{background:var(--surface);border-radius:12px;padding:20px;width:90%;max-width:440px}
 .modal-h{font-size:15px;font-weight:600;margin-bottom:14px}
@@ -320,7 +342,7 @@ body{
   .welcome-h{font-size:18px}
   .welcome-chips{gap:5px}
   .chip{font-size:11px;padding:6px 10px}
-  .input-wrap{padding:10px 12px 14px;position:sticky;bottom:0;z-index:10}
+  .input-wrap{padding:10px 12px calc(14px + env(safe-area-inset-bottom));position:sticky;bottom:0;z-index:10}
   .privacy-panel{display:none}
   .dsgvo-sidebar{display:none}
   .privacy-panel.expanded{display:block}
@@ -735,6 +757,36 @@ body{
 // noetig (vorher: window.AILIZA_API-Fallback auf eine feste Production-Basis-URL,
 // wodurch z.B. Staging heimlich Production ansprach).
 const API = "";
+
+// ── Zentraler Mobile-Viewport-Fix ────────────────────────────────────────────
+// Setzt --app-viewport-height aus window.visualViewport (Fallback:
+// window.innerHeight). Wird von html/body UND .modal genutzt (siehe
+// <style>-Block) -- EIN zentraler Messpunkt statt vieler Einzel-Patches.
+// Grund: 100dvh allein loest nur das Adressleisten-Problem, reagiert aber
+// auf vielen mobilen Browsern NICHT auf die eingeblendete Tastatur.
+// visualViewport meldet die tatsaechlich sichtbare Hoehe zuverlaessig,
+// inklusive Tastatur. Betraf nachweislich sowohl den Chat-Composer als
+// auch das Login-Modal (position:fixed;inset:0 sizet sich sonst nach der
+// nativen, oft zu grossen Fixed-Viewport-Groesse).
+(function setupAppViewportHeight() {
+  function setAppViewportHeight() {
+    var vv = window.visualViewport;
+    var h = vv ? vv.height : window.innerHeight;
+    document.documentElement.style.setProperty("--app-viewport-height", h + "px");
+  }
+  setAppViewportHeight();
+  window.addEventListener("resize", setAppViewportHeight);
+  window.addEventListener("orientationchange", setAppViewportHeight);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", setAppViewportHeight);
+    window.visualViewport.addEventListener("scroll", setAppViewportHeight);
+  }
+  // Manche mobile Browser melden die Tastaturhoehe verzoegert nach dem
+  // ersten resize-Event -- kurz danach nochmal nachmessen.
+  var _reMeasure = function () { setTimeout(setAppViewportHeight, 150); };
+  window.addEventListener("resize", _reMeasure);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", _reMeasure);
+})();
 
 // ── Diagnose-Overlay fuer Mobile-Layout (nur bei ?debugviewport=1) ──────────
 // Rein diagnostisch, kein Produktfeature, keine Auswirkung auf normale
