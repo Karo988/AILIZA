@@ -225,11 +225,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ── Ende CORS-Produktionswarnung ─────────────────────────────────────────
 
     # ── Beta-Zugangsschutz-Warnung (B8a) ──────────────────────────────────────
+    # Nur relevant, wenn das Gate ueberhaupt gewollt aktiv ist
+    # (AILIZA_BETA_LOGIN_ENABLED=true) -- das ist seit Karo-Entscheidung
+    # 2026-07-22 NICHT mehr der Default. Ohne diesen Schalter ist "kein
+    # Zugangscode gesetzt" der normale, gewollte Zustand, keine Warnung noetig.
     _env_is_prod = os.getenv("AILIZA_ENV", "development").lower() == "production"
-    if _env_is_prod and not os.getenv("AILIZA_BETA_ACCESS_CODE"):
+    if _env_is_prod and _beta_login_enabled() and not os.getenv("AILIZA_BETA_ACCESS_CODE"):
         import logging as _log_beta
         _log_beta.getLogger(__name__).warning(
-            "SECURITY: Beta ohne Zugangsschutz — AILIZA_ENV=production, aber "
+            "SECURITY: Beta-Login aktiviert (AILIZA_BETA_LOGIN_ENABLED=true), aber "
             "AILIZA_BETA_ACCESS_CODE ist nicht gesetzt. AILIZA ist ohne "
             "Zugangscode oeffentlich nutzbar."
         )
@@ -464,14 +468,28 @@ document.getElementById("f").addEventListener("submit", async (e) => {
 </script></body></html>"""
 
 
+def _beta_login_enabled() -> bool:
+    """
+    Zweiter, expliziter Schalter fuer das Beta-Gate (Karo-Entscheidung
+    2026-07-22): AILIZA_BETA_ACCESS_CODE ALLEIN darf das Gate nicht mehr
+    aktivieren -- ein Zugangscode, der versehentlich in Staging/Demo gesetzt
+    wird (wie am 22.07.2026 auf Render geschehen), sperrte sonst ungewollt
+    die gesamte App auf einem anderen Handy aus. Erst wenn BEIDES gesetzt
+    ist (dieser Schalter UND ein Code), erscheint das Gate.
+    """
+    return os.getenv("AILIZA_BETA_LOGIN_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 @app.middleware("http")
 async def beta_access_gate(request: Request, call_next):
     """
-    B8a: Wenn AILIZA_BETA_ACCESS_CODE gesetzt ist, ist die gesamte App (inkl.
-    API) nur mit gueltigem Zugangs-Cookie nutzbar. /health bleibt immer frei.
+    B8a: Nur wenn AILIZA_BETA_LOGIN_ENABLED=true UND AILIZA_BETA_ACCESS_CODE
+    gesetzt sind, ist die gesamte App (inkl. API) nur mit gueltigem
+    Zugangs-Cookie nutzbar. /health bleibt immer frei. Fehlt einer der
+    beiden Werte, ist das Gate vollstaendig wirkungslos -- App laedt direkt.
     """
     code = os.getenv("AILIZA_BETA_ACCESS_CODE", "")
-    if not code:
+    if not _beta_login_enabled() or not code:
         return await call_next(request)
 
     if request.url.path in _BETA_EXEMPT_PATHS:
