@@ -3,6 +3,7 @@ import "./App.css"
 import DashboardCard from "./components/DashboardCard"
 import LoginPage from "./components/LoginPage"
 import AgentChat from "./components/AgentChat"
+import MemorySettings from "./components/MemorySettings"
 import { getSession, logout, apiFetch } from "./api"
 
 function App() {
@@ -200,6 +201,7 @@ function App() {
           <div className="demo-card"><h3>EU AI Act Art. 50</h3><p>KI-Kennzeichnung aktiv.</p><strong>Konform</strong></div>
           <div className="demo-card"><h3>Kill-Switch</h3><p>Externe KI steuerbar über Env-Variable.</p><strong>Fail-Closed</strong></div>
         </div>
+        <MemorySettings />
       </section>
     )
   }
