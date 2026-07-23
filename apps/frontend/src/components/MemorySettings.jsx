@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import "./MemorySettings.css"
 import { apiFetch } from "../api"
 
 function display(value, fallback = "Nicht angegeben") {
