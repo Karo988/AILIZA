@@ -1590,11 +1590,14 @@ function saveCurrentChat(){
   persistActiveChat();
   if(activeProjectId)return;
   const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-  const name=(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);
   const now=new Date().toISOString();
   const idx=list.findIndex(c=>c.id===currentChatId);
   const prev=idx>=0?list[idx]:null;
-  const entry={id:currentChatId,name,messages:chatHistory,updated:now,version:prev?prev.version:undefined};
+  // Ein per Vorlage vergebener Titel (explicit) bleibt erhalten, auch nachdem
+  // die erste Nachricht gesendet wurde -- sonst wuerde "EU AI Act Check" durch
+  // den Nachrichtentext ueberschrieben.
+  const name=(prev&&prev.explicit)?prev.name:(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);
+  const entry={id:currentChatId,name,messages:chatHistory,updated:now,version:prev?prev.version:undefined,explicit:prev?prev.explicit:false};
   if(idx>=0){list[idx]=entry}else{list.push(entry)}
   localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
   renderRecent();
@@ -2220,11 +2223,29 @@ function renderWissen(){
   const cats=["Alle",...new Set(WISSEN.map(w=>w.cat))];
   document.getElementById("wissen-cats").innerHTML=cats.map(c=>`<button class="wissen-cat-btn${c===wissenCat?" active":""}" onclick="setWissenCat('${c}')">${c}</button>`).join("");
   const filtered=wissenCat==="Alle"?WISSEN:WISSEN.filter(w=>w.cat===wissenCat);
-  document.getElementById("wissen-grid").innerHTML=filtered.map(w=>`<div class="wissen-card" onclick="useWissen(${JSON.stringify(w.p).replace(/"/g,'&quot;')})"><div class="wissen-card-ic">${w.ic}</div><div class="wissen-card-title">${w.title}</div><div class="wissen-card-desc">${w.desc}</div><span class="wissen-card-cat">${w.cat}</span></div>`).join("");
+  document.getElementById("wissen-grid").innerHTML=filtered.map(w=>`<div class="wissen-card" onclick="useWissen(${JSON.stringify(w.p).replace(/"/g,'&quot;')},${JSON.stringify(w.title).replace(/"/g,'&quot;')})"><div class="wissen-card-ic">${w.ic}</div><div class="wissen-card-title">${w.title}</div><div class="wissen-card-desc">${w.desc}</div><span class="wissen-card-cat">${w.cat}</span></div>`).join("");
 }
 function setWissenCat(cat){wissenCat=cat;renderWissen()}
-function useWissen(prompt){
-  // Wechsle zum Chat und füge Prompt ein
+function registerChatListEntry(id,title){
+  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  list.push({id,name:(title||"Neuer Chat").slice(0,40),messages:[],updated:new Date().toISOString(),explicit:true});
+  localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
+}
+function useWissen(prompt,title){
+  // Vorlage startet immer einen NEUEN Chat (Karo-Entscheidung: keine Vorlagen-
+  // Vermischung im aktuell offenen Chat). Der bisherige Chat wird zuerst
+  // gespeichert und bleibt unveraendert. Die Vorlage wird nur als Entwurf
+  // eingesetzt, nicht automatisch gesendet.
+  saveCurrentChat();
+  currentChatId=createChatId();
+  setActiveProject(null);
+  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  chatHistory=[];context=[];
+  localStorage.setItem("ailiza_chat","[]");
+  registerChatListEntry(currentChatId,title);
+  document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div></div>';
+  renderPrivacyMemory();
+  renderRecent();
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   document.getElementById("view-chat").classList.add("active");
   document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
