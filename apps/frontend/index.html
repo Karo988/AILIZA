@@ -888,23 +888,75 @@ const SKILLS=[
   {ic:"🔒",n:"DSGVO-Check",d:"Datenschutz prüfen",p:"Ist das DSGVO-konform? "},
   {ic:"⚖️",n:"EU AI Act",d:"KI-Compliance",p:"Prüfe EU AI Act für: "},
 ];
-// ── Nutzertrennung fuer lokale Chats/Projekte (Sicherheits-Hotfix) ───────────
-// _scope ist "anon" (nicht angemeldet) oder die user_id des angemeldeten
-// Kontos. Alle chat-/projektbezogenen localStorage-Schluessel werden ueber
-// scopedKey() an den Scope gebunden, damit Chats/Projekte NIE zwischen
-// unterschiedlichen angemeldeten Nutzern oder zwischen anonym/angemeldet auf
-// demselben Browser sichtbar bleiben. Anonyme Alt-Daten (Scope "anon") werden
-// dabei bewusst NICHT umbenannt oder einem Nutzer zugeschlagen -- sie bleiben
-// unter dem unveraenderten, unsuffigierten Schluessel.
-let _scope="anon";
-function scopedKey(base){return _scope==="anon"?base:base+"__u_"+_scope;}
-let chatHistory=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat"))||"[]");
-let currentChatId=localStorage.getItem(scopedKey("ailiza_current_chat_id"))||null;
-let activeProjectId=localStorage.getItem(scopedKey("ailiza_active_project_id"))||null;
+// ── Nutzertrennung fuer lokale Chats/Projekte (Hotfix: Legacy-Storage-Isolation) ──
+// PR #58 fuehrte scopedKey() ein, liess aber den anonymen Scope unter dem
+// unveraenderten, unsuffigierten Alt-Schluessel (z.B. dem Chatlisten-Schluessel)
+// weiterlaufen. Dadurch blieben Alt-Daten (aus der Zeit VOR jeder
+// Scope-Trennung) unter "anon" weiter automatisch sichtbar -- das ist die
+// Ursache des Render-Livetest-Fehlschlags. Neu:
+// - anonymer Scope liegt unter einem eigenen Praefix "anon_", niemals unter
+//   dem alten unpraefigierten Namen,
+// - angemeldeter Scope liegt unter "u_<user_id>_<tenant_id>_",
+// - echte Alt-Daten (unter dem alten, unpraefigierten Namen) werden beim
+//   allerersten Laden in einen gesperrten Quarantaene-Bereich
+//   ("legacy_quarantine_<name>") verschoben -- NIE geloescht, NIE automatisch
+//   einem Scope zugeordnet. Erst nach ausdruecklicher Bestaetigung in einem
+//   Dialog werden Quarantaene-Daten in den GERADE aktiven Scope uebernommen.
+let _scope={type:"anon"};
+function scopeSignature(s){return s.type==="user"?`user:${s.userId}:${s.tenantId}`:"anon";}
+function scopedKey(base){
+  return _scope.type==="user" ? `u_${_scope.userId}_${_scope.tenantId}_${base}` : `anon_${base}`;
+}
+const _LEGACY_STORAGE_BASES=["ailiza_chat","ailiza_chat_list","ailiza_chat_meta",
+  "ailiza_current_chat_id","ailiza_active_project_id","ailiza_projects",
+  "ailiza_folders","ailiza_tools"];
+function _isLegacyPerChatMessageKey(key){
+  return key.startsWith("ailiza_chat_") && key!=="ailiza_chat_list" && key!=="ailiza_chat_meta";
+}
+function migrateLegacyKeysToQuarantine(){
+  // Idempotent: entfernt den Alt-Schluessel nach dem Verschieben, daher laeuft
+  // die eigentliche Migration nur beim allerersten Aufruf nach diesem Hotfix.
+  const allKeys=Object.keys(localStorage);
+  for(const key of allKeys){
+    const isKnownBase=_LEGACY_STORAGE_BASES.includes(key);
+    if(!isKnownBase && !_isLegacyPerChatMessageKey(key))continue;
+    const quarantineKey="legacy_quarantine_"+key;
+    if(localStorage.getItem(quarantineKey)===null){
+      localStorage.setItem(quarantineKey,localStorage.getItem(key));
+    }
+    localStorage.removeItem(key);
+  }
+}
+function hasUnclaimedLegacyQuarantine(){
+  return Object.keys(localStorage).some(k=>k.startsWith("legacy_quarantine_"))
+    && localStorage.getItem("legacy_quarantine_status")!=="claimed";
+}
+function offerLegacyQuarantineRestoreIfNeeded(){
+  if(!hasUnclaimedLegacyQuarantine())return;
+  if(localStorage.getItem("legacy_quarantine_status")==="dismissed")return;
+  const scopeLabel=_scope.type==="user"?`Konto "${_scope.userId}"`:"den anonymen Modus (nicht angemeldet)";
+  const ok=confirm(
+    `Es wurden alte, noch nicht zugeordnete Chats/Projekte aus einer frueheren Version gefunden.\n\n`+
+    `Sollen diese Alt-Daten in ${scopeLabel} uebernommen werden?\n\n`+
+    `Abbrechen: die Alt-Daten bleiben unangetastet gespeichert und werden NICHT geloescht.`
+  );
+  if(!ok){localStorage.setItem("legacy_quarantine_status","dismissed");return;}
+  for(const key of Object.keys(localStorage)){
+    if(!key.startsWith("legacy_quarantine_") || key==="legacy_quarantine_status")continue;
+    const originalBase=key.slice("legacy_quarantine_".length);
+    localStorage.setItem(scopedKey(originalBase),localStorage.getItem(key));
+  }
+  localStorage.setItem("legacy_quarantine_status","claimed");
+  reloadScopedState();
+  renderChat();renderPrivacyMemory();renderRecent();renderProjects();renderProjectList();renderFolders();renderTools();updateChatProjectLabel();
+}
+let chatHistory=[];
+let currentChatId=null;
+let activeProjectId=null;
 let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
-let projects=JSON.parse(localStorage.getItem(scopedKey("ailiza_projects"))||"[]");
-let folders=JSON.parse(localStorage.getItem(scopedKey("ailiza_folders"))||'["Compliance","Recherche","Entwürfe"]');
-let tools=JSON.parse(localStorage.getItem(scopedKey("ailiza_tools"))||'{"search":true,"auto":true}');
+let projects=[];
+let folders=["Compliance","Recherche","Entwürfe"];
+let tools={search:true,auto:true};
 let context=[];
 function reloadScopedState(){
   chatHistory=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat"))||"[]");
@@ -915,12 +967,23 @@ function reloadScopedState(){
   tools=JSON.parse(localStorage.getItem(scopedKey("ailiza_tools"))||'{"search":true,"auto":true}');
   context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
 }
+function resetAppState(){
+  // Zentrale Funktion: leert In-Memory-State und UI SOFORT -- wird von
+  // doLogout() und jedem Scope-Wechsel aufgerufen, BEVOR neue (anonyme oder
+  // nutzerbezogene) Daten geladen werden. Keine Wiederverwendung alter
+  // In-Memory-Objekte (neue Arrays/Objekte statt .length=0 etc.).
+  chatHistory=[];currentChatId=null;activeProjectId=null;projects=[];
+  folders=["Compliance","Recherche","Entwürfe"];tools={search:true,auto:true};context=[];
+  const input=document.getElementById("chat-input");
+  if(input)input.value="";
+}
 function applyScopeAndRerender(newScope){
-  if(newScope===_scope)return;
+  if(scopeSignature(newScope)===scopeSignature(_scope))return;
+  resetAppState();
   _scope=newScope;
   reloadScopedState();
-  document.getElementById("chat-input").value="";
   renderChat();renderPrivacyMemory();renderRecent();renderProjects();renderProjectList();renderFolders();renderTools();updateChatProjectLabel();
+  offerLegacyQuarantineRestoreIfNeeded();
 }
 // Backend /api/policy-redact ist die einzige Quelle der Wahrheit fuer Redaction.
 
@@ -1406,11 +1469,13 @@ function loadActiveProjectFromStorage(){
   localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);
   chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(project.chat_id))||"[]");
 }
-function init(){
+async function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
   document.getElementById("m-days").textContent=days;
-  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderPrivacyMemory();checkStatus();refreshAuthButton();
+  migrateLegacyKeysToQuarantine();   // einmalig: Alt-Daten in Quarantaene, NIE loeschen
+  await refreshAuthButton();         // ERST Auth-Status feststellen ...
+  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderPrivacyMemory();checkStatus();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
@@ -1429,14 +1494,14 @@ async function refreshAuthButton(){
       // Wechselt der Scope (anon -> Nutzer, oder Nutzer A -> Nutzer B auf
       // demselben Browser), werden Chats/Projekte NEU aus dem eigenen,
       // scope-gebundenen localStorage geladen -- nie die des vorherigen Scopes.
-      applyScopeAndRerender(me.user_id||"unknown");
+      applyScopeAndRerender({type:"user",userId:me.user_id||"unknown",tenantId:me.tenant_id||"default"});
       btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
       btn.onclick=doLogout;
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
     }
   }catch(e){/* Netzwerkfehler: Button bleibt auf "Anmelden" */}
-  applyScopeAndRerender("anon");
+  applyScopeAndRerender({type:"anon"});
   btn.textContent="Anmelden";
   btn.onclick=openLoginModal;
 }
@@ -1444,7 +1509,7 @@ async function doLogout(){
   // Sofort client-seitig auf anonymen Scope umschalten, BEVOR die
   // Netzwerk-Antwort abgewartet wird -- Chats/Projekte des Kontos duerfen
   // nicht sichtbar bleiben, auch nicht kurzzeitig, waehrend /auth/logout laeuft.
-  applyScopeAndRerender("anon");
+  applyScopeAndRerender({type:"anon"});
   try{await fetch(`${API}/auth/logout`,{method:"POST"});}catch(e){}
   _projectsSynced=false;_chatsSynced=false;   // naechster Login startet Erst-Sync erneut
   refreshAuthButton();
