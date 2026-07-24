@@ -888,14 +888,40 @@ const SKILLS=[
   {ic:"🔒",n:"DSGVO-Check",d:"Datenschutz prüfen",p:"Ist das DSGVO-konform? "},
   {ic:"⚖️",n:"EU AI Act",d:"KI-Compliance",p:"Prüfe EU AI Act für: "},
 ];
-let chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");
-let currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;
-let activeProjectId=localStorage.getItem("ailiza_active_project_id")||null;
+// ── Nutzertrennung fuer lokale Chats/Projekte (Sicherheits-Hotfix) ───────────
+// _scope ist "anon" (nicht angemeldet) oder die user_id des angemeldeten
+// Kontos. Alle chat-/projektbezogenen localStorage-Schluessel werden ueber
+// scopedKey() an den Scope gebunden, damit Chats/Projekte NIE zwischen
+// unterschiedlichen angemeldeten Nutzern oder zwischen anonym/angemeldet auf
+// demselben Browser sichtbar bleiben. Anonyme Alt-Daten (Scope "anon") werden
+// dabei bewusst NICHT umbenannt oder einem Nutzer zugeschlagen -- sie bleiben
+// unter dem unveraenderten, unsuffigierten Schluessel.
+let _scope="anon";
+function scopedKey(base){return _scope==="anon"?base:base+"__u_"+_scope;}
+let chatHistory=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat"))||"[]");
+let currentChatId=localStorage.getItem(scopedKey("ailiza_current_chat_id"))||null;
+let activeProjectId=localStorage.getItem(scopedKey("ailiza_active_project_id"))||null;
 let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
-let projects=JSON.parse(localStorage.getItem("ailiza_projects")||"[]");
-let folders=JSON.parse(localStorage.getItem("ailiza_folders")||'["Compliance","Recherche","Entwürfe"]');
-let tools=JSON.parse(localStorage.getItem("ailiza_tools")||'{"search":true,"auto":true}');
+let projects=JSON.parse(localStorage.getItem(scopedKey("ailiza_projects"))||"[]");
+let folders=JSON.parse(localStorage.getItem(scopedKey("ailiza_folders"))||'["Compliance","Recherche","Entwürfe"]');
+let tools=JSON.parse(localStorage.getItem(scopedKey("ailiza_tools"))||'{"search":true,"auto":true}');
 let context=[];
+function reloadScopedState(){
+  chatHistory=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat"))||"[]");
+  currentChatId=localStorage.getItem(scopedKey("ailiza_current_chat_id"))||null;
+  activeProjectId=localStorage.getItem(scopedKey("ailiza_active_project_id"))||null;
+  projects=JSON.parse(localStorage.getItem(scopedKey("ailiza_projects"))||"[]");
+  folders=JSON.parse(localStorage.getItem(scopedKey("ailiza_folders"))||'["Compliance","Recherche","Entwürfe"]');
+  tools=JSON.parse(localStorage.getItem(scopedKey("ailiza_tools"))||'{"search":true,"auto":true}');
+  context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
+}
+function applyScopeAndRerender(newScope){
+  if(newScope===_scope)return;
+  _scope=newScope;
+  reloadScopedState();
+  document.getElementById("chat-input").value="";
+  renderChat();renderPrivacyMemory();renderRecent();renderProjects();renderProjectList();renderFolders();renderTools();updateChatProjectLabel();
+}
 // Backend /api/policy-redact ist die einzige Quelle der Wahrheit fuer Redaction.
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -991,7 +1017,7 @@ function closeSidebar(){
   document.getElementById("sidebar").classList.remove("open");
   document.getElementById("sidebar-overlay").classList.remove("open");
 }
-function saveProjects(){localStorage.setItem("ailiza_projects",JSON.stringify(projects))}
+function saveProjects(){localStorage.setItem(scopedKey("ailiza_projects"),JSON.stringify(projects))}
 // ── TS3a: Serverseitige Projekt-Synchronisation (Cross-Device Handy<->Laptop) ─
 // Grundsatz: ADDITIV. Nicht eingeloggt => reiner localStorage-Betrieb wie bisher.
 // BEST EFFORT: Server-Fehler werden still geschluckt, localStorage bleibt Quelle,
@@ -1112,7 +1138,7 @@ async function syncChatsOnLogin(){
     // Nur freie Chats (project_id leer) in dieser Stufe
     const serverFree=serverChats.filter(s=>!s.project_id);
     const serverById=new Map(serverFree.map(s=>[String(s.id),s]));
-    let list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+    let list=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
     const localById=new Map(list.map(c=>[String(c.id),c]));
     // a) Lokale Chats hochladen, die auf dem Server fehlen ODER lokal neuer sind
     for(const c of list){
@@ -1133,11 +1159,11 @@ async function syncChatsOnLogin(){
         list.push({id:s.id,name:s.title||"Chat",messages:s.messages||[],version:s.version,updated:s.updated_at});
       }
     }
-    localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
+    localStorage.setItem(scopedKey("ailiza_chat_list"),JSON.stringify(list.slice(-30)));
     renderRecent();
     // c) Projekt-Chat-Nachrichten (project_id gesetzt) — Ordner cross-device komplett.
     //    Laeuft NACH dem Projekt-Sync, daher haben Projekte hier serverId + chat_id.
-    const meta=JSON.parse(localStorage.getItem("ailiza_chat_meta")||"{}");
+    const meta=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_meta"))||"{}");
     for(const p of projects){
       if(!p.chat_id)continue;
       const key=getProjectChatStorageKey(p.chat_id);
@@ -1161,7 +1187,7 @@ async function syncChatsOnLogin(){
         }
       }
     }
-    localStorage.setItem("ailiza_chat_meta",JSON.stringify(meta));
+    localStorage.setItem(scopedKey("ailiza_chat_meta"),JSON.stringify(meta));
     setSyncStatus(ok?"ok":"fail");
   }finally{_chatSyncInFlight=false;}
 }
@@ -1172,8 +1198,8 @@ async function syncAllOnLogin(){
   await syncChatsOnLogin();
 }
 function createChatId(prefix="chat"){return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`}
-function getProjectChatStorageKey(chatId){return `ailiza_chat_${chatId}`}
-function getActiveChatStorageKey(){return activeProjectId&&currentChatId?getProjectChatStorageKey(currentChatId):"ailiza_chat"}
+function getProjectChatStorageKey(chatId){return scopedKey(`ailiza_chat_${chatId}`)}
+function getActiveChatStorageKey(){return activeProjectId&&currentChatId?getProjectChatStorageKey(currentChatId):scopedKey("ailiza_chat")}
 function getActiveProject(){return projects.find(p=>String(p.id)===String(activeProjectId))||null}
 function getProjectFiles(project){return Array.isArray(project?.files)?project.files:[]}
 function documentUploadHeaders(){const headers={...authHeaders()};delete headers["Content-Type"];return headers}
@@ -1354,21 +1380,21 @@ function updateChatProjectLabel(){
 }
 function setActiveProject(project){
   activeProjectId=project?String(project.id):null;
-  if(activeProjectId)localStorage.setItem("ailiza_active_project_id",activeProjectId);
-  else localStorage.removeItem("ailiza_active_project_id");
+  if(activeProjectId)localStorage.setItem(scopedKey("ailiza_active_project_id"),activeProjectId);
+  else localStorage.removeItem(scopedKey("ailiza_active_project_id"));
   updateChatProjectLabel();
 }
 function persistActiveChat(){
   localStorage.setItem(getActiveChatStorageKey(),JSON.stringify(chatHistory.slice(-100)));
-  if(!activeProjectId){localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory.slice(-100)));return;}
+  if(!activeProjectId){localStorage.setItem(scopedKey("ailiza_chat"),JSON.stringify(chatHistory.slice(-100)));return;}
   // Projekt-Chat: best effort auch serverseitig ablegen (Cross-Device-Ordner)
   const p=getActiveProject();
   if(p&&currentChatId&&chatHistory.length){
-    const meta=JSON.parse(localStorage.getItem("ailiza_chat_meta")||"{}");
+    const meta=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_meta"))||"{}");
     serverPutChat({id:currentChatId,messages:chatHistory,project_id:p.serverId||p.id,title:p.name,
       version:meta[currentChatId]?meta[currentChatId].version:undefined})
       .then(res=>{meta[currentChatId]={updated:res.updated_at,version:res.version};
-        localStorage.setItem("ailiza_chat_meta",JSON.stringify(meta));setSyncStatus("ok");})
+        localStorage.setItem(scopedKey("ailiza_chat_meta"),JSON.stringify(meta));setSyncStatus("ok");})
       .catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es nach */});
   }
 }
@@ -1377,7 +1403,7 @@ function loadActiveProjectFromStorage(){
   const project=getActiveProject();
   if(!project||!project.chat_id){setActiveProject(null);return}
   currentChatId=project.chat_id;
-  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);
   chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(project.chat_id))||"[]");
 }
 function init(){
@@ -1399,16 +1425,26 @@ async function refreshAuthButton(){
     const r=await fetch(`${API}/auth/me`,{signal:AbortSignal.timeout(4000)});
     if(r.ok){
       const me=await r.json();
+      // Sicherheits-Hotfix: Chats/Projekte sind an den Nutzer-Scope gebunden.
+      // Wechselt der Scope (anon -> Nutzer, oder Nutzer A -> Nutzer B auf
+      // demselben Browser), werden Chats/Projekte NEU aus dem eigenen,
+      // scope-gebundenen localStorage geladen -- nie die des vorherigen Scopes.
+      applyScopeAndRerender(me.user_id||"unknown");
       btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
       btn.onclick=doLogout;
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
     }
   }catch(e){/* Netzwerkfehler: Button bleibt auf "Anmelden" */}
+  applyScopeAndRerender("anon");
   btn.textContent="Anmelden";
   btn.onclick=openLoginModal;
 }
 async function doLogout(){
+  // Sofort client-seitig auf anonymen Scope umschalten, BEVOR die
+  // Netzwerk-Antwort abgewartet wird -- Chats/Projekte des Kontos duerfen
+  // nicht sichtbar bleiben, auch nicht kurzzeitig, waehrend /auth/logout laeuft.
+  applyScopeAndRerender("anon");
   try{await fetch(`${API}/auth/logout`,{method:"POST"});}catch(e){}
   _projectsSynced=false;_chatsSynced=false;   // naechster Login startet Erst-Sync erneut
   refreshAuthButton();
@@ -1431,7 +1467,7 @@ function updateModels(){
 }
 function toggleKeyPop(e){if(e)e.stopPropagation();document.getElementById("key-pop").classList.toggle("open")}
 function saveKey(){const p=document.getElementById("provider-sel").value;const k=document.getElementById("key-pop-input").value.trim();if(k)localStorage.setItem("ailiza_key_"+p,k);toggleKeyPop()}
-function toggleTool(n){tools[n]=!tools[n];localStorage.setItem("ailiza_tools",JSON.stringify(tools));renderTools()}
+function toggleTool(n){tools[n]=!tools[n];localStorage.setItem(scopedKey("ailiza_tools"),JSON.stringify(tools));renderTools()}
 function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
 function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 // Redaction-Erkennung: EIN System (Server), per Vorschau-Button abgerufen —
@@ -1528,25 +1564,25 @@ async function previewRedaction(){
 function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
 function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
 function renderFolders(){document.getElementById("folder-list").innerHTML=folders.map((f,i)=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${f}</span><span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span></div>`).join("")}
-function addFolder(){const n=prompt("Ordnername:");if(!n)return;folders.push(n);localStorage.setItem("ailiza_folders",JSON.stringify(folders));renderFolders()}
-function deleteFolder(i){folders.splice(i,1);localStorage.setItem("ailiza_folders",JSON.stringify(folders));renderFolders()}
+function addFolder(){const n=prompt("Ordnername:");if(!n)return;folders.push(n);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
+function deleteFolder(i){folders.splice(i,1);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
 function renderRecent(){
-  const chats=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const chats=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
   const el=document.getElementById("recent-chats");
   if(!chats.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div>';return}
   el.innerHTML=chats.slice().reverse().slice(0,15).map(c=>`<div class="side-list-item${c.id===currentChatId?' active':''}" onclick="loadChat('${c.id}')"><span class="dot"></span><span class="side-list-text">${escapeHtml(c.name)}</span></div>`).join("");
 }
 function loadChat(id){
   saveCurrentChat();
-  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const list=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
   const chat=list.find(c=>c.id===id);
   if(!chat)return;
   setActiveProject(null);
   currentChatId=id;
-  localStorage.setItem("ailiza_current_chat_id",id);
+  localStorage.setItem(scopedKey("ailiza_current_chat_id"),id);
   chatHistory=chat.messages||[];
   context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
-  localStorage.setItem("ailiza_chat",JSON.stringify(chatHistory));
+  localStorage.setItem(scopedKey("ailiza_chat"),JSON.stringify(chatHistory));
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   document.getElementById("view-chat").classList.add("active");
   renderChat();renderPrivacyMemory();renderRecent();
@@ -1555,9 +1591,9 @@ function newChat(){
   saveCurrentChat();
   currentChatId=createChatId();
   setActiveProject(null);
-  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);
   chatHistory=[];context=[];
-  localStorage.setItem("ailiza_chat","[]");
+  localStorage.setItem(scopedKey("ailiza_chat"),"[]");
   document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div><div class="welcome-chips"><div class="chip" onclick="quickPrompt(\'Schreibe eine E-Mail: \')">📧 E-Mail</div><div class="chip" onclick="quickPrompt(\'Übersetze: \')">🌍 Übersetzen</div><div class="chip" onclick="quickPrompt(\'Fasse zusammen: \')">📝 Zusammenfassen</div></div></div>';
   renderPrivacyMemory();
   renderRecent();
@@ -1574,10 +1610,10 @@ function clearChat(){
   if(activeProjectId&&currentChatId){
     localStorage.setItem(getProjectChatStorageKey(currentChatId),"[]");
   }else{
-    localStorage.setItem("ailiza_chat","[]");
+    localStorage.setItem(scopedKey("ailiza_chat"),"[]");
     if(currentChatId){
-      const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
-      localStorage.setItem("ailiza_chat_list",JSON.stringify(list.filter(c=>c.id!==currentChatId)));
+      const list=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
+      localStorage.setItem(scopedKey("ailiza_chat_list"),JSON.stringify(list.filter(c=>c.id!==currentChatId)));
       serverDeleteChat(currentChatId);   // best effort: auch serverseitig entfernen
       renderRecent();
     }
@@ -1589,7 +1625,7 @@ function saveCurrentChat(){
   if(!chatHistory.length||!currentChatId)return;
   persistActiveChat();
   if(activeProjectId)return;
-  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const list=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
   const now=new Date().toISOString();
   const idx=list.findIndex(c=>c.id===currentChatId);
   const prev=idx>=0?list[idx]:null;
@@ -1599,14 +1635,14 @@ function saveCurrentChat(){
   const name=(prev&&prev.explicit)?prev.name:(chatHistory.find(m=>m.role==="user")?.content||"Chat").slice(0,40);
   const entry={id:currentChatId,name,messages:chatHistory,updated:now,version:prev?prev.version:undefined,explicit:prev?prev.explicit:false};
   if(idx>=0){list[idx]=entry}else{list.push(entry)}
-  localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
+  localStorage.setItem(scopedKey("ailiza_chat_list"),JSON.stringify(list.slice(-30)));
   renderRecent();
   // Best effort: bei eingeloggtem Nutzer sofort serverseitig ablegen (Cross-Device)
   serverPutChat({id:currentChatId,messages:chatHistory,title:name,version:entry.version})
     .then(res=>{entry.version=res.version;entry.updated=res.updated_at;
-      const l=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+      const l=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
       const i=l.findIndex(c=>c.id===currentChatId);
-      if(i>=0){l[i].version=res.version;l[i].updated=res.updated_at;localStorage.setItem("ailiza_chat_list",JSON.stringify(l));}
+      if(i>=0){l[i].version=res.version;l[i].updated=res.updated_at;localStorage.setItem(scopedKey("ailiza_chat_list"),JSON.stringify(l));}
       setSyncStatus("ok");})
     .catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es nach */});
 }
@@ -1665,7 +1701,7 @@ async function startFollowUpChat(){
   saveCurrentChat();
   currentChatId=createChatId();
   setActiveProject(null);                                // neuer Folge-Chat ist ein freier Chat
-  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);
   chatHistory=[{role:"ai",content:summary,time:new Date().toISOString()}];
   context=[{role:"assistant",content:summary}];
   persistActiveChat();
@@ -1738,7 +1774,7 @@ function editUserMsg(idx){
 }
 function loadHistory(){
   if(!chatHistory.length)return;
-  if(!currentChatId){currentChatId=Date.now().toString();localStorage.setItem("ailiza_current_chat_id",currentChatId);}
+  if(!currentChatId){currentChatId=Date.now().toString();localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);}
   context=chatHistory.slice(-20).map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
   renderChat();
 }
@@ -2124,7 +2160,7 @@ async function doLogin(){
   document.getElementById("login-pass").value="";
   closeLoginModal();
   _projectsSynced=false;_chatsSynced=false;   // frischer Login -> Erst-Sync erneut zulassen
-  refreshAuthButton();
+  await refreshAuthButton();   // Scope-Wechsel MUSS abgeschlossen sein, bevor die Chat-Ansicht weiterschreibt
   addAiMessage(`Angemeldet als ${u}. `+(gatedTask?"Ihre Anfrage wird erneut gesendet.":""),undefined);
   if(gatedTask){
     const task=gatedTask,file=gatedFile;
@@ -2168,8 +2204,8 @@ function closeProjModal(){document.getElementById("proj-modal").classList.remove
 function saveProject(){const name=document.getElementById("proj-name").value.trim();if(!name)return;const now=new Date().toISOString();const p={id:Date.now(),name,desc:document.getElementById("proj-desc").value,prio:document.getElementById("proj-prio").value,created:now,updated:now};projects.push(p);saveProjects();closeProjModal();renderProjects();renderProjectList();document.getElementById("proj-name").value="";document.getElementById("proj-desc").value="";
   // Best effort: bei eingeloggtem Nutzer sofort serverseitig anlegen (Cross-Device)
   serverCreateProject(p).then(created=>{p.serverId=created.id;p.version=created.version;saveProjects();}).catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es spaeter nach */});}
-function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem("ailiza_current_chat_id",currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
-function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem("ailiza_chat")||"[]");currentChatId=localStorage.getItem("ailiza_current_chat_id")||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);if(p&&p.chat_id)serverDeleteChat(p.chat_id);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
+function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
+function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat"))||"[]");currentChatId=localStorage.getItem(scopedKey("ailiza_current_chat_id"))||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);if(p&&p.chat_id)serverDeleteChat(p.chat_id);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}<div class="card-openchat">💬 Chat öffnen ›</div></div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
@@ -2227,9 +2263,9 @@ function renderWissen(){
 }
 function setWissenCat(cat){wissenCat=cat;renderWissen()}
 function registerChatListEntry(id,title){
-  const list=JSON.parse(localStorage.getItem("ailiza_chat_list")||"[]");
+  const list=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
   list.push({id,name:(title||"Neuer Chat").slice(0,40),messages:[],updated:new Date().toISOString(),explicit:true});
-  localStorage.setItem("ailiza_chat_list",JSON.stringify(list.slice(-30)));
+  localStorage.setItem(scopedKey("ailiza_chat_list"),JSON.stringify(list.slice(-30)));
 }
 function useWissen(prompt,title){
   // Vorlage startet immer einen NEUEN Chat (Karo-Entscheidung: keine Vorlagen-
@@ -2239,9 +2275,9 @@ function useWissen(prompt,title){
   saveCurrentChat();
   currentChatId=createChatId();
   setActiveProject(null);
-  localStorage.setItem("ailiza_current_chat_id",currentChatId);
+  localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);
   chatHistory=[];context=[];
-  localStorage.setItem("ailiza_chat","[]");
+  localStorage.setItem(scopedKey("ailiza_chat"),"[]");
   registerChatListEntry(currentChatId,title);
   document.getElementById("chat-inner").innerHTML='<div class="welcome"><div class="welcome-h">Was kann ich für Sie tun?</div><div class="welcome-sub">Ich bin AILIZA — Ihr KI-Assistent für E-Mails, Übersetzungen, Recherche und mehr.</div></div>';
   renderPrivacyMemory();
@@ -2260,7 +2296,7 @@ async function deleteMyData(){
   const msg=document.getElementById("delete-data-msg");
   msg.style.display="block";msg.style.color="var(--text-muted)";msg.textContent="Wird gelöscht…";
   // Lokale Daten löschen
-  ["ailiza_chat","ailiza_chat_list","ailiza_current_chat_id","ailiza_active_project_id","ailiza_projects","ailiza_folders","ailiza_tools","ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
+  [scopedKey("ailiza_chat"),scopedKey("ailiza_chat_list"),scopedKey("ailiza_current_chat_id"),scopedKey("ailiza_active_project_id"),scopedKey("ailiza_projects"),scopedKey("ailiza_folders"),scopedKey("ailiza_tools"),"ailiza_consent","ailiza_consent_ts"].forEach(k=>localStorage.removeItem(k));
   for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith("ailiza_chat_"))localStorage.removeItem(k)}
   chatHistory=[];context=[];currentChatId=null;activeProjectId=null;projects=[];
   // Server-Daten löschen
