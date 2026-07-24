@@ -81,4 +81,4 @@ def test_memory_settings_imports_responsive_styles():
     assert 'import "./MemorySettings.css"' in source
     styles = css.read_text(encoding="utf-8")
     assert "@media" in styles
-    assert "max-width: 640px" in styles
+    assert "max-width: 760px" in styles

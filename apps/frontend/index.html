@@ -526,6 +526,12 @@ body{
           </div>
         </div>
         <div class="card"><div class="card-h">Letzte Agent-Runs</div><div id="runs-list" style="margin-top:10px"><div class="empty">Lädt…</div></div></div>
+        <div class="card" style="margin-top:12px" id="memory-facts-card">
+          <div class="card-h">🧠 Mein persönliches Gedächtnis</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Das sind persönliche Erinnerungen, die AILIZA sich über Sie gemerkt hat — z.&nbsp;B. Vorlieben oder Einstellungen. Unternehmenswissen ist hiervon nicht betroffen und bleibt unverändert erhalten.</p>
+          <div id="memory-facts-list"><div class="empty">Lädt…</div></div>
+          <div id="memory-facts-msg" style="display:none;margin-top:10px;font-size:12px"></div>
+        </div>
         <div class="card" style="margin-top:12px;border-color:#D23B3B">
           <div class="card-h" style="color:var(--err)">🗑 Meine Daten löschen (DSGVO Art. 17)</div>
           <p style="font-size:12px;color:var(--text-soft);margin:8px 0 12px">Löscht alle Ihre Chat-Verläufe, Projekte und gespeicherten Daten — lokal und auf dem Server. Diese Aktion kann nicht rückgängig gemacht werden.</p>
@@ -747,6 +753,19 @@ body{
     <div id="login-error" style="display:none;color:var(--warn);font-size:12px;margin-bottom:8px"></div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Noch kein Konto? "Registrieren" legt eines an (Passwort: mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl, Sonderzeichen).</div>
     <div class="modal-acts"><button class="btn-ghost" onclick="closeLoginModal()">Abbrechen</button><button class="btn-ghost" onclick="doRegister()">Registrieren</button><button class="btn-primary" onclick="doLogin()">Anmelden</button></div>
+  </div>
+</div>
+<div class="modal" id="memory-delete-modal">
+  <div class="modal-box">
+    <div class="modal-h">Erinnerung löschen?</div>
+    <p style="font-size:13px;color:var(--text-soft);line-height:1.6;margin-bottom:6px">Diese persönliche Erinnerung wird endgültig gelöscht:</p>
+    <p style="font-size:13px;font-weight:600;background:var(--surface-2);padding:8px 10px;border-radius:6px;margin-bottom:10px;word-break:break-word" id="memory-delete-title"></p>
+    <p style="font-size:12px;color:var(--text-muted);line-height:1.6">Ihr Unternehmenswissen und alle anderen Erinnerungen sind davon nicht betroffen. Diese Aktion kann nicht rückgängig gemacht werden.</p>
+    <div id="memory-delete-error" style="display:none;font-size:12px;color:var(--err);margin-top:10px"></div>
+    <div class="modal-acts">
+      <button class="btn-ghost" id="memory-delete-cancel" onclick="closeMemoryDeleteModal()">Abbrechen</button>
+      <button class="btn-primary" id="memory-delete-confirm" style="background:var(--err)" onclick="confirmMemoryDelete()">Endgültig löschen</button>
+    </div>
   </div>
 </div>
 <script>
@@ -1418,7 +1437,7 @@ function showView(name,el){
   document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
   document.getElementById("view-"+name).classList.add("active");
   if(el)el.classList.add("active");
-  if(name==="status")loadStatus();
+  if(name==="status"){loadStatus();loadMemoryFacts();}
   if(name==="projects")renderProjects();
   if(name==="skills")renderSkills();
   if(name==="wissen")renderWissen();
@@ -2252,6 +2271,93 @@ async function deleteMyData(){
   // Seite neu laden nach Datenlöschung
   setTimeout(()=>{location.reload();},2000);
 }
+// ── Mein persönliches Gedächtnis (Self-Service, DSGVO Art. 15/17) ──
+let memoryFacts=[];
+let memoryDeletePendingId=null;
+
+async function loadMemoryFacts(){
+  const list=document.getElementById("memory-facts-list");
+  if(!list)return;
+  list.innerHTML='<div class="empty">Lädt…</div>';
+  try{
+    const r=await fetch(`${API}/memory/facts`,{signal:AbortSignal.timeout(8000)});
+    if(!r.ok){
+      list.innerHTML='<div class="empty" style="color:var(--err)">Ihre Erinnerungen konnten gerade nicht geladen werden. Bitte versuchen Sie es später erneut.</div>';
+      return;
+    }
+    const data=await r.json().catch(()=>({}));
+    memoryFacts=Array.isArray(data.items)?data.items:[];
+    renderMemoryFacts();
+  }catch{
+    list.innerHTML='<div class="empty" style="color:var(--err)">Ihre Erinnerungen konnten nicht geladen werden. Bitte prüfen Sie Ihre Internetverbindung.</div>';
+  }
+}
+
+function renderMemoryFacts(){
+  const list=document.getElementById("memory-facts-list");
+  if(!list)return;
+  if(!memoryFacts.length){
+    list.innerHTML='<div class="empty">AILIZA hat sich bisher nichts Persönliches über Sie gemerkt.</div>';
+    return;
+  }
+  list.innerHTML=memoryFacts.map(f=>`
+    <div class="memory-fact-item" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600">${escapeHtml(f.title||"Unbenannte Erinnerung")}</div>
+        <div style="font-size:12px;color:var(--text-soft);margin-top:2px">${escapeHtml(f.content||"")}</div>
+        ${f.purpose?`<div style="font-size:11px;color:var(--text-muted);margin-top:4px">Zweck: ${escapeHtml(f.purpose)}</div>`:""}
+      </div>
+      <button class="btn-ghost" style="flex-shrink:0;color:var(--err);border-color:var(--err)" onclick="openMemoryDeleteModal(${f.id})">Löschen</button>
+    </div>`).join("");
+}
+
+function openMemoryDeleteModal(id){
+  const fact=memoryFacts.find(f=>f.id===id);
+  if(!fact)return;
+  memoryDeletePendingId=id;
+  document.getElementById("memory-delete-title").textContent=fact.title||"Unbenannte Erinnerung";
+  const errBox=document.getElementById("memory-delete-error");
+  errBox.style.display="none";errBox.textContent="";
+  const confirmBtn=document.getElementById("memory-delete-confirm");
+  confirmBtn.disabled=false;confirmBtn.textContent="Endgültig löschen";
+  document.getElementById("memory-delete-cancel").disabled=false;
+  document.getElementById("memory-delete-modal").classList.add("open");
+}
+
+function closeMemoryDeleteModal(){
+  document.getElementById("memory-delete-modal").classList.remove("open");
+  memoryDeletePendingId=null;
+}
+
+async function confirmMemoryDelete(){
+  if(memoryDeletePendingId==null)return;
+  const id=memoryDeletePendingId;
+  const confirmBtn=document.getElementById("memory-delete-confirm");
+  const cancelBtn=document.getElementById("memory-delete-cancel");
+  const errBox=document.getElementById("memory-delete-error");
+  confirmBtn.disabled=true;cancelBtn.disabled=true;
+  confirmBtn.textContent="Wird gelöscht…";
+  errBox.style.display="none";errBox.textContent="";
+  try{
+    const r=await fetch(`${API}/memory/facts/${id}`,{method:"DELETE",signal:AbortSignal.timeout(8000)});
+    if(r.ok){
+      closeMemoryDeleteModal();
+      await loadMemoryFacts();
+      const msg=document.getElementById("memory-facts-msg");
+      msg.style.display="block";msg.style.color="var(--accent)";msg.textContent="✓ Die Erinnerung wurde gelöscht.";
+      setTimeout(()=>{msg.style.display="none";},4000);
+    }else{
+      errBox.textContent="Die Erinnerung konnte nicht gelöscht werden. Bitte versuchen Sie es erneut.";
+      errBox.style.display="block";
+      confirmBtn.disabled=false;cancelBtn.disabled=false;confirmBtn.textContent="Endgültig löschen";
+    }
+  }catch{
+    errBox.textContent="Verbindung fehlgeschlagen. Bitte versuchen Sie es erneut.";
+    errBox.style.display="block";
+    confirmBtn.disabled=false;cancelBtn.disabled=false;confirmBtn.textContent="Endgültig löschen";
+  }
+}
+
 // ── Auth (Login deaktiviert — kommt später) ──
 function authHeaders(){return{"Content-Type":"application/json"};}
 // App direkt starten
