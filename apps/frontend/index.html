@@ -511,12 +511,12 @@ body{
       <div class="page-wrap">
         <div class="page-head"><div><div class="page-title">Compliance & Status</div><div class="page-sub">DSGVO und EU AI Act Übersicht</div></div></div>
         <div class="metrics">
-          <div class="metric"><div class="metric-lbl">Agent-Runs</div><div class="metric-val" id="m-runs">—</div></div>
-          <div class="metric"><div class="metric-lbl">Genehmigungen</div><div class="metric-val warn" id="m-appr">—</div></div>
-          <div class="metric"><div class="metric-lbl">Compliance</div><div class="metric-val ok">OK</div></div>
-          <div class="metric"><div class="metric-lbl">EU AI Act Frist</div><div class="metric-val warn" id="m-days">—</div></div>
+          <div class="metric" style="cursor:pointer" onclick="openAgentRunsInfo()" title="Details ansehen"><div class="metric-lbl">Agent-Runs</div><div class="metric-val" id="m-runs">—</div></div>
+          <div class="metric" style="cursor:pointer" onclick="openApprovalsInfo()" title="Details ansehen"><div class="metric-lbl">Genehmigungen</div><div class="metric-val warn" id="m-appr">—</div></div>
+          <div class="metric" style="cursor:pointer" onclick="openComplianceInfo()" title="Details ansehen"><div class="metric-lbl">Compliance</div><div class="metric-val ok">OK</div></div>
+          <div class="metric" style="cursor:pointer" onclick="openAiActDeadlineInfo()" title="Details ansehen"><div class="metric-lbl">EU AI Act Frist</div><div class="metric-val warn" id="m-days">—</div></div>
         </div>
-        <div class="card" style="margin-bottom:12px">
+        <div class="card" style="margin-bottom:12px;cursor:pointer" onclick="openComplianceInfo()" title="Details ansehen">
           <div class="card-h">Compliance-Status</div>
           <div style="font-size:12px;color:var(--text-soft);margin-top:8px">
             <div style="padding:5px 0">✓ DSGVO-Schutzmechanismen aktiv</div>
@@ -524,6 +524,7 @@ body{
             <div style="padding:5px 0">✓ Transparenzhinweis nach EU AI Act Art. 50 aktiv</div>
             <div style="padding:5px 0;color:var(--warn)">⚠ Vollständige Pflichten ab 02.08.2026</div>
           </div>
+          <div style="font-size:11px;color:var(--accent);margin-top:8px">Details ansehen →</div>
         </div>
         <div class="card"><div class="card-h">Letzte Agent-Runs</div><div id="runs-list" style="margin-top:10px"><div class="empty">Lädt…</div></div></div>
         <div class="card" style="margin-top:12px;border-color:#D23B3B">
@@ -747,6 +748,13 @@ body{
     <div id="login-error" style="display:none;color:var(--warn);font-size:12px;margin-bottom:8px"></div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Noch kein Konto? "Registrieren" legt eines an (Passwort: mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl, Sonderzeichen).</div>
     <div class="modal-acts"><button class="btn-ghost" onclick="closeLoginModal()">Abbrechen</button><button class="btn-ghost" onclick="doRegister()">Registrieren</button><button class="btn-primary" onclick="doLogin()">Anmelden</button></div>
+  </div>
+</div>
+<div class="modal" id="info-modal">
+  <div class="modal-box">
+    <div class="modal-h" id="info-modal-title"></div>
+    <div id="info-modal-body" style="font-size:13px;color:var(--text-soft);line-height:1.8"></div>
+    <div class="modal-acts"><button class="btn-primary" onclick="closeInfoModal()">Verstanden</button></div>
   </div>
 </div>
 <script>
@@ -2170,7 +2178,44 @@ function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}<div class="card-openchat">💬 Chat öffnen ›</div></div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
-async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
+async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px;cursor:pointer" onclick="openAgentRunsInfo()" title="Details ansehen"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
+function openInfoModal(title,bodyHtml){
+  document.getElementById("info-modal-title").textContent=title;
+  document.getElementById("info-modal-body").innerHTML=bodyHtml;
+  document.getElementById("info-modal").classList.add("open");
+}
+function closeInfoModal(){document.getElementById("info-modal").classList.remove("open");}
+function openComplianceInfo(){
+  openInfoModal("Compliance-Status im Detail",`
+    <p style="margin-bottom:8px"><strong>Aktiv und technisch geprüft:</strong></p>
+    <ul style="margin:0 0 12px 18px">
+      <li>DSGVO-Schutzmechanismen (Klassifikation, Schwärzung) vor jeder externen KI-Anfrage</li>
+      <li>KI-Kennzeichnung nach EU AI Act Art. 50 in allen Antworten</li>
+      <li>Kill-Switch: externe KI-Aufrufe sind zentral und sofort abschaltbar</li>
+    </ul>
+    <p style="margin-bottom:8px"><strong>Nur dokumentiert, technisch noch nicht vollständig nachgewiesen:</strong></p>
+    <ul style="margin:0 0 12px 18px">
+      <li>Verschlüsselung aller Datenbankfelder "at rest"</li>
+      <li>Vollständige Trennung interner Protokolle (Agent-Runs, Genehmigungen) nach Nutzer/-in — wird gerade nachgerüstet</li>
+    </ul>
+    <p><strong>Offen:</strong> vollständige EU-AI-Act-Pflichten gelten erst ab 02.08.2026.</p>
+  `);
+}
+function openAiActDeadlineInfo(){
+  const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
+  openInfoModal("EU AI Act Frist",`
+    <p style="margin-bottom:8px"><strong>Frist:</strong> 02.08.2026 — ab diesem Datum gelten die vollständigen Pflichten des EU AI Act für Transparenz- und Hochrisiko-Anforderungen.</p>
+    <p style="margin-bottom:8px"><strong>Verbleibende Zeit:</strong> ${days} Tage.</p>
+    <p style="margin-bottom:8px"><strong>Status:</strong> Die Transparenzpflicht (Art. 50) ist bereits für alle aktiven Funktionen umgesetzt.</p>
+    <p><strong>Nächste Aufgabe / Verantwortlichkeit:</strong> Wird aktuell nicht strukturiert im System nachverfolgt. Bitte mit der Datenschutzverantwortlichen abstimmen.</p>
+  `);
+}
+function openApprovalsInfo(){
+  openInfoModal("Genehmigungen",`<p>Genehmigungsübersicht ist noch nicht verfügbar.</p>`);
+}
+function openAgentRunsInfo(){
+  openInfoModal("Agent-Runs",`<p>Eine Detailansicht einzelner Agent-Runs ist aus Datenschutzgründen aktuell nicht verfügbar: Agent-Runs sind bislang nicht pro Nutzer/-in getrennt gespeichert. Diese Trennung wird in einem eigenen Arbeitspaket nachgerüstet, bevor Einzelheiten angezeigt werden.</p>`);
+}
 document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
 
 // ── Wissensbibliothek ──
