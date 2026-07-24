@@ -400,6 +400,7 @@ body{
       <div class="side-item" onclick="showView('status',this);closeSidebar()"><span class="side-ic">🛡️</span><span>Compliance</span></div>
       <div class="side-item" onclick="showView('impressum',this);closeSidebar()"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
       <div class="side-item" onclick="showView('wissen',this);closeSidebar()"><span class="side-ic">📚</span><span>Wissensbibliothek</span></div>
+      <div class="side-item" onclick="showView('wissensdb',this);closeSidebar()"><span class="side-ic">🗄️</span><span>Firmendatenbank</span></div>
       <div class="side-item" onclick="showView('agb',this);closeSidebar()"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
     </div>
     <div class="side-section">
@@ -664,6 +665,49 @@ body{
         <div class="page-head"><div><div class="page-title">Wissensbibliothek</div><div class="page-sub">Fertige Vorlagen und Prompts für KMU — einfach anklicken und loslegen</div></div></div>
         <div class="wissen-cats" id="wissen-cats"></div>
         <div class="wissen-grid" id="wissen-grid"></div>
+      </div>
+    </div>
+
+    <!-- Block D0: Demo-/Nachschlagewerk-Ansicht der internen Wissensdatenbank.
+         Kein Redesign, keine Produktoberflaeche -- kleinstmoegliche Ansicht,
+         damit sichtbar wird: hochgeladen -> geprueft -> freigegeben -> im Chat
+         nutzbar. Zeigt NUR, was das Backend liefert (nie storage_path/rohes
+         chunk_text -- die API gibt das ohnehin nie heraus). -->
+    <div class="view" id="view-wissensdb">
+      <div class="page-wrap">
+        <div class="page-head">
+          <div>
+            <div class="page-title">Firmendatenbank</div>
+            <div class="page-sub">Dokumente, die AILIZA kennt — hochgeladen, geprüft, freigegeben, im Chat nutzbar</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-h">Dokument hinzufügen</div>
+          <p style="font-size:12px;color:var(--text-soft);margin:6px 0 10px">Nur TXT- oder Markdown-Dateien (.txt/.md). Andere Dateitypen folgen später.</p>
+          <form id="wdb-upload-form" onsubmit="uploadKnowledgeFile(event)" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <input type="file" id="wdb-file" accept=".txt,.md" required style="font-size:12px">
+            <select id="wdb-category" style="font-size:12px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text)">
+              <option value="">Keine Kategorie</option>
+              <option>Allgemein</option>
+              <option>Richtlinie</option>
+              <option>Projekt</option>
+              <option>Kunde</option>
+              <option>Vorlage</option>
+              <option>Anleitung</option>
+              <option>Vertrag/Compliance</option>
+            </select>
+            <button type="submit" class="btn-primary" style="padding:7px 14px;font-size:12px">Hochladen</button>
+          </form>
+          <div id="wdb-upload-status" style="font-size:12px;margin-top:8px"></div>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
+          <div class="wissen-cats" id="wdb-filters" style="margin:0"></div>
+          <input type="text" id="wdb-search" placeholder="Suche nach Titel, Dateiname, Kategorie, source_id…" oninput="renderKnowledgeSources()" style="flex:1;min-width:180px;font-size:12px;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text)">
+        </div>
+
+        <div id="wdb-list" class="grid"></div>
       </div>
     </div>
 
@@ -1422,6 +1466,7 @@ function showView(name,el){
   if(name==="projects")renderProjects();
   if(name==="skills")renderSkills();
   if(name==="wissen")renderWissen();
+  if(name==="wissensdb")loadKnowledgeSources();
 }
 function updateModels(){
   const p=document.getElementById("provider-sel").value;
@@ -2029,6 +2074,20 @@ async function runAgent(text,redactionMap,consentApprovalId,file=null){
     testModeInfo
   );
 
+  // Block D0/C4: sichtbar machen, wenn internes Wissen genutzt wurde (best
+  // effort, rein additiv -- ohne data.sources/knowledge_notice aendert sich
+  // nichts). Backend bleibt Quelle der Wahrheit: die Quellenliste kommt
+  // ausschliesslich aus data.sources, wird hier nie selbst erfunden/ergaenzt.
+  if(data.knowledge_notice){
+    addAiMessage(data.knowledge_notice,undefined);
+  }
+  if(Array.isArray(data.sources)&&data.sources.length){
+    const lines=data.sources.map(s=>
+      `• ${escapeHtml(s.title||"")} (source_id: ${s.source_id}, chunk_id: ${s.chunk_id})`
+    ).join("\n");
+    addAiMessage(`Quellen:\n${lines}`,undefined);
+  }
+
   // Block B Schritt 1: bestaetigbarer Speicher-Vorschlag (best effort,
   // rein additiv -- ohne data.memory_suggestion aendert sich nichts).
   if(data.memory_suggestion){
@@ -2254,6 +2313,152 @@ function useWissen(prompt,title){
   inp.value=prompt;autoResize(inp);inp.focus();
   inp.selectionStart=inp.selectionEnd=inp.value.length;
 }
+
+// ── Block D0: Firmendatenbank / Demo-Ansicht der internen Wissensquellen ──
+// Rein additiv: zeigt nur, was das Backend liefert. Nie storage_path/rohes
+// chunk_text (die API gibt das ohnehin nie heraus) -- kein Erfinden von
+// Status/Berechtigungen im Frontend.
+let knowledgeSources=[];
+let wdbFilter="alle";
+let wdbExpandedId=null;
+
+async function loadKnowledgeSources(){
+  const list=document.getElementById("wdb-list");
+  try{
+    const r=await fetch(`${API}/api/knowledge/sources`,{headers:authHeaders()});
+    if(r.status===401||r.status===403){
+      list.innerHTML='<div class="empty">Bitte anmelden, um die Firmendatenbank zu sehen.</div>';
+      return;
+    }
+    if(!r.ok){list.innerHTML='<div class="empty">Firmendatenbank aktuell nicht verfügbar.</div>';return;}
+    const data=await r.json();
+    knowledgeSources=data.sources||[];
+    renderKnowledgeSources();
+  }catch(e){
+    list.innerHTML='<div class="empty">Firmendatenbank aktuell nicht verfügbar.</div>';
+  }
+}
+
+const WDB_FILTERS=[
+  {key:"alle",label:"Alle"},
+  {key:"approved",label:"Nutzbar"},
+  {key:"pending_review",label:"Wartet auf Prüfung"},
+  {key:"blocked",label:"Blockiert"},
+  {key:"inactive",label:"Nicht aktiv"},
+];
+function setWdbFilter(key){wdbFilter=key;renderKnowledgeSources()}
+
+function wdbMatchesFilter(s){
+  if(wdbFilter==="alle")return true;
+  if(wdbFilter==="inactive")return s.status==="deleted"||s.status==="expired";
+  return s.status===wdbFilter;
+}
+
+function renderKnowledgeSources(){
+  document.getElementById("wdb-filters").innerHTML=WDB_FILTERS.map(f=>
+    `<button class="wissen-cat-btn${f.key===wdbFilter?" active":""}" onclick="setWdbFilter('${f.key}')">${f.label}</button>`
+  ).join("");
+
+  const q=(document.getElementById("wdb-search")?.value||"").trim().toLowerCase();
+  let items=knowledgeSources.filter(wdbMatchesFilter);
+  if(q){
+    items=items.filter(s=>
+      (s.title||"").toLowerCase().includes(q)||
+      (s.original_filename||"").toLowerCase().includes(q)||
+      (s.category||"").toLowerCase().includes(q)||
+      String(s.source_id).includes(q)
+    );
+  }
+
+  const list=document.getElementById("wdb-list");
+  if(!items.length){
+    list.innerHTML='<div class="empty" style="grid-column:1/-1">Keine Dokumente gefunden. Lade oben eine TXT- oder Markdown-Datei hoch.</div>';
+    return;
+  }
+  list.innerHTML=items.map(s=>{
+    const badgeColor=s.usable_in_chat?"var(--accent)":(s.status==="pending_review"?"var(--warn)":"var(--text-muted)");
+    const expanded=wdbExpandedId===s.source_id;
+    return `<div class="card" onclick="toggleWdbDetail(${s.source_id})" style="cursor:pointer">
+      <div class="card-h" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span>${escapeHtml(s.title||s.original_filename||"Ohne Titel")}</span>
+        <span class="meta-pill" style="background:${badgeColor};color:#fff">${escapeHtml(s.usability_label)}</span>
+      </div>
+      <div class="card-desc" style="font-size:12px;color:var(--text-soft)">
+        ${s.category?escapeHtml(s.category)+" · ":""}${escapeHtml(s.source_type||"")} · source_id: ${s.source_id}${s.chunk_count?" · "+s.chunk_count+" Abschnitte":""}
+      </div>
+      ${expanded?renderWdbDetail(s):""}
+    </div>`;
+  }).join("");
+}
+
+function renderWdbDetail(s){
+  return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text-soft);line-height:1.8">
+    <div><strong>Status:</strong> ${escapeHtml(s.usability_label)}</div>
+    <div>${escapeHtml(s.status_explanation)}</div>
+    <div><strong>Im Chat nutzbar:</strong> ${s.usable_in_chat?"ja":"nein"}</div>
+    <div><strong>source_id:</strong> ${s.source_id}</div>
+    <div><strong>Dateityp:</strong> ${escapeHtml(s.source_type||"")}</div>
+    ${s.category?`<div><strong>Kategorie:</strong> ${escapeHtml(s.category)}</div>`:""}
+    ${s.visibility_scope?`<div><strong>Sichtbarkeit:</strong> ${escapeHtml(s.visibility_scope)}</div>`:""}
+    ${s.chunk_count?`<div><strong>Abschnitte:</strong> ${s.chunk_count}</div>`:""}
+    ${s.usable_in_chat?`<div style="margin-top:6px"><button class="btn-ghost" style="font-size:11px;padding:5px 10px" onclick="event.stopPropagation();askAboutSource(${s.source_id},'${escapeHtml(s.title||"").replace(/'/g,"\\'")}')">Frage zu dieser Quelle stellen</button></div>`:""}
+  </div>`;
+}
+
+function toggleWdbDetail(sourceId){
+  wdbExpandedId=(wdbExpandedId===sourceId)?null:sourceId;
+  renderKnowledgeSources();
+}
+
+// Oeffnet nur den Chat mit einem vorbereiteten Fragetext -- aendert NIE
+// direkt einen Datenbankstatus, ruft keine Backend-Schreiboperation auf.
+function askAboutSource(sourceId,title){
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  document.getElementById("view-chat").classList.add("active");
+  document.querySelectorAll(".side-section .side-item").forEach(t=>t.classList.remove("active"));
+  document.querySelector(".side-section .side-item").classList.add("active");
+  const inp=document.getElementById("chat-input");
+  inp.value=`Was steht in „${title}" (Quelle ${sourceId}) zu folgendem Thema: `;
+  autoResize(inp);inp.focus();
+  inp.selectionStart=inp.selectionEnd=inp.value.length;
+}
+
+async function uploadKnowledgeFile(event){
+  event.preventDefault();
+  const fileInput=document.getElementById("wdb-file");
+  const status=document.getElementById("wdb-upload-status");
+  const file=fileInput.files[0];
+  if(!file){return;}
+  const category=document.getElementById("wdb-category").value;
+  const form=new FormData();
+  form.append("file",file);
+  if(category)form.append("category",category);
+
+  status.style.color="var(--text-soft)";
+  status.textContent="Wird hochgeladen…";
+  try{
+    const r=await fetch(`${API}/api/knowledge/upload`,{method:"POST",body:form});
+    if(r.status===401||r.status===403){
+      status.style.color="var(--warn)";
+      status.textContent="Bitte zuerst anmelden.";
+      return;
+    }
+    const data=await r.json();
+    if(!r.ok){
+      status.style.color="var(--warn)";
+      status.textContent=data.detail||"Das Dokument konnte noch nicht verwendet werden.";
+      return;
+    }
+    status.style.color="var(--accent)";
+    status.textContent=`${data.message} Status: ${data.source.usability_label}.`;
+    fileInput.value="";
+    loadKnowledgeSources();
+  }catch(e){
+    status.style.color="var(--warn)";
+    status.textContent="Das Dokument konnte gerade nicht hochgeladen werden. Bitte später erneut versuchen.";
+  }
+}
+
 // ── DSGVO Art. 17 — Datenlöschung ──
 async function deleteMyData(){
   if(!confirm("Alle Ihre Daten werden unwiderruflich gelöscht — Chat-Verlauf, Projekte, Einstellungen und Serverdaten.\n\nFortfahren?"))return;

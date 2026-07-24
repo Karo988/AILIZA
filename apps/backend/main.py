@@ -61,6 +61,11 @@ try:
         build_knowledge_context, sanitize_answer_citations,
         build_sources_list, answer_mode_user_text,
     )
+    from .knowledge.ingestion import (
+        ingest_txt_or_markdown_source, KnowledgeIngestionError, ALLOWED_DEMO_CATEGORIES,
+    )
+    from .knowledge.demo_view import to_public_source_view, sort_sources_for_demo
+    from .database import list_knowledge_sources_for_tenant, get_knowledge_source
 except ImportError:
     from apps.backend.agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from apps.backend.database import (
@@ -98,6 +103,11 @@ except ImportError:
         build_knowledge_context, sanitize_answer_citations,
         build_sources_list, answer_mode_user_text,
     )
+    from apps.backend.knowledge.ingestion import (
+        ingest_txt_or_markdown_source, KnowledgeIngestionError, ALLOWED_DEMO_CATEGORIES,
+    )
+    from apps.backend.knowledge.demo_view import to_public_source_view, sort_sources_for_demo
+    from apps.backend.database import list_knowledge_sources_for_tenant, get_knowledge_source
 
 
 # ── B7 (P-C minimal): Nicht-produktionsreife Module beim Start erkennen ────────
@@ -2990,6 +3000,63 @@ def api_reject_memory_suggestion(
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
     reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id)
     return {"status": "rejected", "id": suggestion_id}
+
+
+# ── Block D0: Demo-/Nachschlagewerk-Ansicht der Wissensdatenbank ────────────
+# Kleinster Schnitt fuer eine testbare Demo -- nutzt ausschliesslich
+# bestehende ingestion/search/rag-Funktionen (Block C2-C4), keine parallele
+# Logik zur Knowledge-Pipeline. Nur .txt/.md, wie in C2 festgelegt.
+@app.post("/api/knowledge/upload")
+@_limiter.limit("20/minute")
+async def api_knowledge_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    title: str | None = Form(None),
+    category: str | None = Form(None),
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    content = await file.read()
+    try:
+        result = ingest_txt_or_markdown_source(
+            tenant_id=user.tenant_id, uploaded_by=user.user_id,
+            filename=file.filename or "", content=content,
+            title=title, category=category,
+        )
+    except KnowledgeIngestionError as exc:
+        # Verstaendliche deutsche Fehlermeldung, kein Stack-Trace zum Client.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    view = to_public_source_view({**result["source"], "chunk_count": result["chunks_created"]})
+    return {"status": result["status"], "message": result["message"], "source": view}
+
+
+@app.get("/api/knowledge/sources")
+def api_list_knowledge_sources(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    sources = list_knowledge_sources_for_tenant(user.tenant_id)
+    ordered = sort_sources_for_demo(sources)
+    views = [to_public_source_view(s) for s in ordered]
+    return {"sources": views, "count": len(views), "categories": sorted(ALLOWED_DEMO_CATEGORIES)}
+
+
+@app.get("/api/knowledge/sources/{source_id}")
+def api_get_knowledge_source(
+    source_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    source = get_knowledge_source(source_id)
+    if source is None or source.get("tenant_id") != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Quelle nicht gefunden.")
+    # chunk_count fuer die Detailansicht separat ermitteln (gleiche Quelle
+    # der Wahrheit wie die Listenansicht, kein Parallel-Zaehler).
+    matching = [
+        s for s in list_knowledge_sources_for_tenant(user.tenant_id) if s["id"] == source_id
+    ]
+    chunk_count = matching[0]["chunk_count"] if matching else 0
+    return to_public_source_view({**source, "chunk_count": chunk_count})
 
 
 # ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ─────────

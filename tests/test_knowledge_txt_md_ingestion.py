@@ -309,3 +309,31 @@ def test_invalid_utf8_content_rejected():
             tenant_id="default", uploaded_by="alice", filename="bin.txt",
             content=b"\xff\xfe\x00\x01invalid",
         )
+
+
+# -- Testgruppe 13 (Block D0): optionale, manuelle Demo-Kategorie -----------
+
+def test_valid_category_accepted():
+    _make_user()
+    result = ingest_txt_or_markdown_source(
+        tenant_id="default", uploaded_by="alice", filename="richtlinie.txt",
+        content=b"Ein Richtlinientext.", category="Richtlinie",
+    )
+    assert result["source"]["category"] == "Richtlinie"
+
+
+def test_no_category_is_none():
+    _make_user()
+    result = ingest_txt_or_markdown_source(
+        tenant_id="default", uploaded_by="alice", filename="x.txt", content=b"Text ohne Kategorie.",
+    )
+    assert result["source"]["category"] is None
+
+
+def test_invalid_category_rejected():
+    _make_user()
+    with pytest.raises(KnowledgeIngestionError):
+        ingest_txt_or_markdown_source(
+            tenant_id="default", uploaded_by="alice", filename="x.txt", content=b"Text",
+            category="ErfundeneKategorie",
+        )
