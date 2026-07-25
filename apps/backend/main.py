@@ -1864,28 +1864,20 @@ def _run_agent_core(
         _consumed_consent = None
         if payload.consent_approval_id:
             # PR 2 Nachbesserung: nutzer- und tenantgebundene, EINMALIGE
-            # Verwendung -- Autorisierung (Owner/Tenant/Tool/Status/Hash)
-            # und die Statusaenderung approved->consumed sind EIN atomares
-            # UPDATE, kein separater globaler Lookup nach approval_id.
+            # Verwendung -- Autorisierung (Owner/Tenant/Tool/Status/Hash/
+            # aktiver-nicht-gesperrter-Nutzer), die Statusaenderung
+            # approved->consumed UND der compliance.consent_used-Audit-
+            # Eintrag laufen als EINE gemeinsame Transaktion (kein
+            # separater write_audit_entry()-Aufruf mehr hier -- schlaegt
+            # der Audit-Insert fehl, wird auch der Verbrauch zurueckgerollt).
             _consumed_consent = consume_compliance_consent(
                 approval_id=payload.consent_approval_id, task=payload.task,
                 user_id=token.user_id, tenant_id=tenant,
+                audit_metadata={"audit_id": compliance_check.get("audit_id")},
             )
 
         if _consumed_consent is not None:
-            # Einwilligung wurde soeben (und nur genau jetzt) verbraucht →
-            # dokumentieren, dann mit der geschwaerzten Fassung weiterlaufen.
-            # Audit erfolgt ERST nach erfolgreichem atomarem Verbrauch.
-            write_audit_entry(
-                action="compliance.consent_used",
-                tenant_id=tenant,
-                metadata={
-                    "approval_id": payload.consent_approval_id,
-                    "user_id": token.user_id,
-                    "audit_id": compliance_check.get("audit_id"),
-                    "violations_summary": _violations[:5],
-                },
-            )
+            pass  # Einwilligung + Audit sind bereits atomar verbraucht/dokumentiert.
         else:
             approval = create_approval_request(
                 tool="compliance_consent",

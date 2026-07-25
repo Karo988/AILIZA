@@ -745,6 +745,9 @@ _CONSENT_TASK = (
 def _make_approved_consent(owner_user_id: str = "alice", tenant_id: str = "default", task: str = _CONSENT_TASK):
     import hashlib
     from apps.backend.database import create_approval_request, resolve_approval_request
+    # consume_compliance_consent() verlangt seit der Haertung einen aktiven,
+    # nicht gesperrten users-Datensatz -- ein Token allein reicht nicht mehr.
+    _ensure_user(owner_user_id, tenant_id)
     approval = create_approval_request(
         tool="compliance_consent",
         input_params={"task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest()},
@@ -816,6 +819,140 @@ def test_unapproved_consent_is_rejected():
         approval_id=approval["id"], task=_CONSENT_TASK, user_id="alice", tenant_id="default",
     )
     assert result is None
+
+
+def test_deactivated_user_cannot_consume_consent():
+    from apps.backend.database import consume_compliance_consent, users, engine
+    from sqlalchemy import update as sa_update
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    with engine.begin() as connection:
+        connection.execute(sa_update(users).where(users.c.user_id == "alice").values(active=0))
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert result is None
+
+
+def test_currently_locked_user_cannot_consume_consent():
+    from apps.backend.database import consume_compliance_consent, users, engine
+    from sqlalchemy import update as sa_update
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    with engine.begin() as connection:
+        connection.execute(
+            sa_update(users).where(users.c.user_id == "alice")
+            .values(locked_until=datetime.now(timezone.utc) + timedelta(hours=1))
+        )
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert result is None
+
+
+def test_missing_user_row_rejects_consent_consumption():
+    from apps.backend.database import consume_compliance_consent, users, engine
+    from sqlalchemy import delete as sa_delete
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    with engine.begin() as connection:
+        connection.execute(sa_delete(users).where(users.c.user_id == "alice"))
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert result is None
+
+
+def test_expired_lock_allows_consent_consumption_again():
+    from apps.backend.database import consume_compliance_consent, users, engine
+    from sqlalchemy import update as sa_update
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    with engine.begin() as connection:
+        connection.execute(
+            sa_update(users).where(users.c.user_id == "alice")
+            .values(locked_until=datetime.now(timezone.utc) - timedelta(hours=1))
+        )
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert result is not None
+    assert result["status"] == "consumed"
+
+
+def test_resolved_at_unchanged_after_consumption():
+    from apps.backend.database import consume_compliance_consent, get_approval_request
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    before = get_approval_request(approval_id)
+    original_resolved_at = before["resolved_at"]
+    assert original_resolved_at is not None
+
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert result is not None
+    assert result["resolved_at"] == original_resolved_at
+
+
+def test_consumption_and_audit_succeed_together():
+    from apps.backend.database import consume_compliance_consent, query_audit_events
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+        audit_metadata={"audit_id": "test-audit-1"},
+    )
+    assert result is not None
+    entries = query_audit_events(tenant_id="default", action="compliance.consent_used")
+    matching = [e for e in entries if e["metadata"].get("approval_id") == approval_id]
+    assert len(matching) == 1
+    assert matching[0]["metadata"].get("audit_id") == "test-audit-1"
+    assert "user_id" in matching[0]["metadata"]
+    assert "tenant_id" in matching[0]["metadata"]
+
+
+def test_simulated_audit_failure_rolls_back_consumption(monkeypatch):
+    from apps.backend import database as db_module
+    approval_id = _make_approved_consent(owner_user_id="alice")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulierter Audit-Fehler")
+
+    monkeypatch.setattr(db_module, "_insert_audit_entry_on_connection", _boom)
+    with pytest.raises(RuntimeError):
+        db_module.consume_compliance_consent(
+            approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+        )
+
+    entry = db_module.get_approval_request(approval_id)
+    assert entry["status"] == "approved"
+
+
+def test_status_stays_approved_after_rollback_and_second_consumption_still_impossible_then_possible(monkeypatch):
+    """Nach einem zurueckgerollten Audit-Fehlversuch bleibt der Status
+    'approved' -- die naechste (echte) Verwendung ist daher weiterhin
+    genau EINMAL moeglich, danach wieder gesperrt."""
+    from apps.backend import database as db_module
+    approval_id = _make_approved_consent(owner_user_id="alice")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulierter Audit-Fehler")
+
+    monkeypatch.setattr(db_module, "_insert_audit_entry_on_connection", _boom)
+    with pytest.raises(RuntimeError):
+        db_module.consume_compliance_consent(
+            approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+        )
+    monkeypatch.undo()
+
+    first = db_module.consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert first is not None
+    second = db_module.consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert second is None
+
+    from apps.backend.database import query_audit_events
+    entries = query_audit_events(tenant_id="default", action="compliance.consent_used")
+    matching = [e for e in entries if e["metadata"].get("approval_id") == approval_id]
+    assert len(matching) == 1
 
 
 def test_consent_used_audit_only_after_successful_atomic_consumption(client):

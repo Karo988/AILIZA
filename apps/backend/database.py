@@ -726,6 +726,43 @@ def _get_latest_audit_hash(connection: Any) -> str:
     return row[0]
 
 
+def _insert_audit_entry_on_connection(
+    connection: Any, action: str, metadata: dict[str, Any] | None, tenant_id: str,
+) -> dict[str, Any]:
+    """Fuegt einen Audit-Eintrag inkl. Hash-Chain auf einer BEREITS
+    GEOEFFNETEN Connection/Transaktion ein -- kein eigenes engine.begin().
+    Wird sowohl von write_audit_entry() (eigene Transaktion) als auch von
+    consume_compliance_consent() (gemeinsame Transaktion mit der
+    Statusaenderung) verwendet, damit Verbrauch und Audit-Eintrag
+    entweder GEMEINSAM committen oder GEMEINSAM zurueckgerollt werden."""
+    ts = datetime.now(timezone.utc)
+    entry: dict[str, Any] = {
+        "timestamp": ts,
+        "action": action,
+        "metadata": metadata or {},
+        "tenant_id": tenant_id,
+    }
+    previous_hash = _get_latest_audit_hash(connection)
+    entry["previous_hash"] = previous_hash
+    # Temporärer Hash ohne ID — wird nach Insert mit echter ID berechnet
+    result = connection.execute(
+        insert(audit_logs).values(**entry, entry_hash="pending")
+    )
+    entry_id = result.inserted_primary_key[0]
+    entry["id"] = entry_id
+    # Hash mit echter ID berechnen und zurückschreiben
+    ts_str = ts.isoformat()
+    entry_hash = _compute_audit_hash(entry_id, ts_str, action, tenant_id, previous_hash)
+    entry["entry_hash"] = entry_hash
+    from sqlalchemy import update as _update
+    connection.execute(
+        _update(audit_logs)
+        .where(audit_logs.c.id == entry_id)
+        .values(entry_hash=entry_hash)
+    )
+    return entry
+
+
 def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
                       tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
     """Lesen des vorherigen Hash-Chain-Werts und Insert muessen als EINE
@@ -737,35 +774,8 @@ def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
     Sperren wuerden sich zwar jeweils selbst korrekt serialisieren, aber
     NICHT gegenseitig, und die geteilte SQLite-Verbindung koennte trotzdem
     von zwei Threads gleichzeitig angesprochen werden."""
-    ts = datetime.now(timezone.utc)
-    entry: dict[str, Any] = {
-        "timestamp": ts,
-        "action": action,
-        "metadata": metadata or {},
-        "tenant_id": tenant_id,
-    }
-
     with _sql_write_lock, engine.begin() as connection:
-        previous_hash = _get_latest_audit_hash(connection)
-        entry["previous_hash"] = previous_hash
-        # Temporärer Hash ohne ID — wird nach Insert mit echter ID berechnet
-        result = connection.execute(
-            insert(audit_logs).values(**entry, entry_hash="pending")
-        )
-        entry_id = result.inserted_primary_key[0]
-        entry["id"] = entry_id
-        # Hash mit echter ID berechnen und zurückschreiben
-        ts_str = ts.isoformat()
-        entry_hash = _compute_audit_hash(entry_id, ts_str, action, tenant_id, previous_hash)
-        entry["entry_hash"] = entry_hash
-        from sqlalchemy import update as _update
-        connection.execute(
-            _update(audit_logs)
-            .where(audit_logs.c.id == entry_id)
-            .values(entry_hash=entry_hash)
-        )
-
-    return entry
+        return _insert_audit_entry_on_connection(connection, action, metadata, tenant_id)
 
 
 def list_audit_entries(limit: int = 100, tenant_id: str | None = None) -> list[dict[str, Any]]:
@@ -1453,31 +1463,54 @@ def get_accessible_approval(approval_id: int, tenant_id: str, user_id: str) -> d
 
 def consume_compliance_consent(
     *, approval_id: int, task: str, user_id: str, tenant_id: str,
+    audit_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Nutzer- und tenantgebundene, EINMALIGE Verwendung einer erteilten
     compliance_consent (B2 Drei-Stufen-Modell). Ersetzt den fruehren
     main._valid_compliance_consent(), der weder Owner noch Tenant pruefte
     und beliebig oft wiederverwendbar war.
 
-    Autorisierung UND Statusaenderung (approved -> consumed) sind EIN
-    atomares UPDATE -- kein globaler get_approval_request(approval_id)-
-    Lookup, kein separates Lesen vor dem Schreiben. Die WHERE-Klausel
+    Autorisierung, Statusaenderung (approved -> consumed) UND der
+    zugehoerige Audit-Eintrag (compliance.consent_used) sind EINE
+    gemeinsame Transaktion -- kein globaler get_approval_request(
+    approval_id)-Lookup, kein separates Lesen vor dem Schreiben, und der
+    Audit-Eintrag kann niemals fehlen, ohne dass auch der Verbrauch
+    zurueckgerollt wird (und umgekehrt). Die WHERE-Klausel des UPDATE
     prueft in genau diesem Statement:
       - approval_id UND tenant_id (Tenant-Bindung),
       - owner_user_id == user_id (nur die einwilligende Person selbst),
       - tool == 'compliance_consent',
       - status == 'approved' (noch nicht verbraucht/abgelehnt/pending),
       - task_sha256 (im JSON-Feld input_params) entspricht EXAKT der
-        aktuellen Anfrage (task_sha256-Bindung, siehe main._consent_task_hash).
+        aktuellen Anfrage (task_sha256-Bindung, siehe main._consent_task_hash),
+      - EXISTS ein aktueller, aktiver, nicht gesperrter users-Datensatz
+        (user_id + tenant_id, active=1, locked_until IS NULL ODER
+        locked_until <= jetzt) -- das gueltige JWT allein reicht fuer diese
+        sicherheitskritische Aktion NICHT aus; ein zwischenzeitlich
+        gesperrter/deaktivierter Nutzer kann seine eigene, bereits
+        genehmigte Einwilligung nicht mehr verwenden. Fehlt der
+        users-Datensatz komplett, gilt ebenfalls Default Deny.
+
+    resolved_at wird NICHT ueberschrieben -- es bleibt der Zeitpunkt der
+    urspruenglichen Genehmigung (approved). Der Verbrauchszeitpunkt ergibt
+    sich aus dem Zeitstempel des compliance.consent_used-Audit-Eintrags.
 
     Nur rowcount == 1 gilt als erfolgreiche, einmalige Nutzung -- eine
     zweite Verwendung derselben Einwilligung (status ist dann bereits
-    'consumed') schlaegt fehl, ebenso ein fremder Nutzer/Tenant oder ein
-    abweichender Text. Gibt den aktualisierten Datensatz zurueck (fuer die
-    Audit-Metadaten) oder None bei Ablehnung."""
+    'consumed') schlaegt fehl, ebenso ein fremder Nutzer/Tenant, ein
+    abweichender Text oder ein gesperrter/fehlender Nutzer. Gibt den
+    aktualisierten Datensatz zurueck oder None bei Ablehnung."""
     import hashlib
     task_sha256 = hashlib.sha256(task.encode("utf-8")).hexdigest()
     now = datetime.now(timezone.utc)
+
+    active_user_exists = exists(
+        select(users.c.user_id)
+        .where(users.c.user_id == user_id)
+        .where(users.c.tenant_id == tenant_id)
+        .where(users.c.active == 1)
+        .where(or_(users.c.locked_until.is_(None), users.c.locked_until <= now))
+    )
 
     query = (
         update(approval_requests)
@@ -1487,13 +1520,35 @@ def consume_compliance_consent(
         .where(approval_requests.c.tool == "compliance_consent")
         .where(approval_requests.c.status == "approved")
         .where(approval_requests.c.input_params["task_sha256"].as_string() == task_sha256)
-        .values(status="consumed", resolved_at=now)
+        .where(active_user_exists)
+        .values(status="consumed")
     )
 
     with _sql_write_lock, engine.begin() as connection:
         result = connection.execute(query)
         if result.rowcount != 1:
+            # Explizit KEIN Audit-Eintrag bei Ablehnung -- die Transaktion
+            # wird beim Verlassen des `with engine.begin()`-Blocks ohne
+            # Aenderungen committet (nichts wurde geschrieben).
             return None
+
+        # Audit-Eintrag in DERSELBEN Transaktion wie der Verbrauch -- schlaegt
+        # der Insert fehl, wirft SQLAlchemy und die gesamte Transaktion
+        # (inkl. des bereits ausgefuehrten UPDATE) wird zurueckgerollt, der
+        # Status bleibt 'approved'. Minimale Metadaten, keine Rohtexte.
+        base_metadata = {
+            "approval_id": approval_id,
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+        }
+        if audit_metadata:
+            base_metadata.update({
+                k: v for k, v in audit_metadata.items() if k in ("audit_id",)
+            })
+        _insert_audit_entry_on_connection(
+            connection, "compliance.consent_used", base_metadata, tenant_id,
+        )
+
         row = connection.execute(
             select(approval_requests)
             .where(approval_requests.c.id == approval_id)
