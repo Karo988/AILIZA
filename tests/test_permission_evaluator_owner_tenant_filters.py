@@ -594,6 +594,146 @@ def test_audit_does_not_contain_full_note_text(client):
     assert matching[0]["metadata"].get("note_present") is True
 
 
+# ── Weitere Pflicht-Tests (3. Korrekturrunde) ───────────────────────────────
+
+# Vier-Augen-Prinzip vollstaendig: der Owner erhaelt eine aktive Zuweisung
+# UND besitzt die passende Rolle -- darf die EIGENE normale Genehmigung
+# trotzdem nicht entscheiden (nur die compliance_consent-Ausnahme darf das).
+def test_owner_with_assignment_and_matching_role_still_cannot_self_decide(client):
+    approval = _make_approval(owner_user_id="managerin1", required_approver_roles=["manager"])
+    _assign_approval(approval["id"], "managerin1", role="manager")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Nutzer wird unmittelbar vor dem UPDATE deaktiviert -> keine Entscheidung
+# (Nutzerstatus ist Teil derselben atomaren SQL-Pruefung).
+def test_user_deactivated_just_before_decide_blocks_decision(client):
+    from apps.backend.database import users, engine
+    from sqlalchemy import update as sa_update
+    approval = _make_approval(owner_user_id="bob")
+    _assign_approval(approval["id"], "managerin1", role="manager")
+    with engine.begin() as connection:
+        connection.execute(sa_update(users).where(users.c.user_id == "managerin1").values(active=0))
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Nutzer wird unmittelbar vor dem UPDATE gesperrt (locked_until in der
+# Zukunft) -> keine Entscheidung.
+def test_user_locked_just_before_decide_blocks_decision(client):
+    from apps.backend.database import users, engine
+    from sqlalchemy import update as sa_update
+    approval = _make_approval(owner_user_id="bob")
+    _assign_approval(approval["id"], "managerin1", role="manager")
+    with engine.begin() as connection:
+        connection.execute(
+            sa_update(users).where(users.c.user_id == "managerin1")
+            .values(locked_until=datetime.now(timezone.utc) + timedelta(hours=1))
+        )
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Token enthaelt "manager", die Datenbank enthaelt "user" -- die
+# Datenbankrolle ist massgeblich (kein Token-Rollen-Fallback).
+def test_database_role_overrides_token_role(client):
+    approval = _make_approval(owner_user_id="bob", required_approver_roles=["manager"])
+    _assign_approval(approval["id"], "person1", role="user")  # DB-Rolle: user
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("person1", role="manager"),  # Token: manager
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Kein Datenbanknutzer (mehr) vorhanden -> keine Entscheidung, selbst mit
+# vormals gueltiger Zuweisung (z.B. nach Kontoloeschung).
+def test_no_database_user_row_blocks_decision(client):
+    from apps.backend.database import users, engine
+    from sqlalchemy import delete as sa_delete
+    approval = _make_approval(owner_user_id="bob")
+    _assign_approval(approval["id"], "geloescht1", role="manager")
+    with engine.begin() as connection:
+        connection.execute(sa_delete(users).where(users.c.user_id == "geloescht1"))
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("geloescht1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Fachrolle beginnt erst in der Zukunft (valid_from > jetzt) -> keine
+# Entscheidung.
+def test_specialist_role_not_yet_valid_blocks_decision(client):
+    from apps.backend.database import create_specialist_role_assignment, user_specialist_roles, engine
+    from sqlalchemy import update as sa_update
+    approval = _make_approval(owner_user_id="bob", required_approver_roles=["privacy"])
+    _assign_approval(approval["id"], "dsb_fach2", role="user")
+    assignment = create_specialist_role_assignment(
+        user_id="dsb_fach2", tenant_id="default", specialist_role="DATENSCHUTZBEAUFTRAGTER",
+        assigned_by_user_id="assignerin", assignment_reason="Test-Fachrolle-zukuenftig",
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            sa_update(user_specialist_roles).where(user_specialist_roles.c.id == assignment["id"])
+            .values(valid_from=datetime.now(timezone.utc) + timedelta(days=1))
+        )
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("dsb_fach2", role="user"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# required_approver_roles mit mindestens einem unbekannten Eintrag fuehrt zu
+# Default Deny fuer die GESAMTE Entscheidung -- auch wenn "admin" (bekannt)
+# ebenfalls in der Liste steht und die zugewiesene Person Admin ist.
+def test_required_roles_with_one_unknown_entry_defaults_to_deny(client):
+    approval = _make_approval(owner_user_id="bob", required_approver_roles=["admin", "unbekannte_rolle"])
+    _assign_approval(approval["id"], "adminin2", role="admin")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("adminin2", role="admin"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Ablehnung darf einen Agent-Run in einem FREMDEN Tenant nicht veraendern,
+# selbst wenn die Genehmigung (fehlerhaft) auf dessen run_id verweist.
+def test_rejection_does_not_modify_run_in_foreign_tenant(client):
+    from apps.backend.database import create_approval_request, get_agent_run
+    _make_run("run-foreign-tenant-1", tenant_id="tenant-y", owner_user_id="mallory")
+    approval = create_approval_request(
+        tool="llm_call", input_params={"task_length": 5}, risk_level="high",
+        risk_reason="Test", run_id="run-foreign-tenant-1", tenant_id="default",
+        owner_user_id="bob", required_approver_roles=["manager"],
+    )
+    _assign_approval(approval["id"], "managerin1", role="manager")
+    resp = client.post(
+        f"/approvals/{approval['id']}/reject", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 200
+
+    foreign_run = get_agent_run("run-foreign-tenant-1")
+    assert foreign_run is not None
+    assert foreign_run["status"] != "rejected"
+
+    from apps.backend.database import query_audit_events
+    entries = query_audit_events(tenant_id="default", action="agent_run.update_blocked_tenant_mismatch")
+    matching = [e for e in entries if e["metadata"].get("run_id") == "run-foreign-tenant-1"]
+    assert len(matching) == 1
+
+
 # 20. Bestandstestsuite bleibt vollstaendig gruen (Marker-Test; die eigentliche
 #     Vollpruefung erfolgt separat ueber "pytest tests/").
 def test_existing_suite_marker_placeholder():

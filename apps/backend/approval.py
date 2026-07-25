@@ -1,22 +1,36 @@
 """
 AILIZA Approval-System
 ======================
-Risikoabschätzung und Approval-Gate mit Rollenprüfung.
+Risikoabschätzung (RiskResult) und die vorgesehene Rollenmatrix je
+Risikolevel (APPROVAL_ROLES). Diese Matrix wird als required_approver_roles
+in jeder Genehmigungsanfrage gespeichert (siehe database.create_approval_request).
+
+⚠️ WICHTIG (seit PR 2, Vier-Augen-Prinzip): Der Eintrag "owner" in dieser
+Matrix wird von der tatsaechlichen Freigabepruefung
+(permissions.decide_approval / decide_approval_atomic) IMMER ignoriert.
+Eine Person darf ihre EIGENE Genehmigung nicht selbst entscheiden -- die
+einzige Ausnahme ist die separat streng geprüfte compliance_consent (B2:
+Einwilligung zum Versand der eigenen, vorher geflaggten Nachricht, keine
+Freigabe einer fremden Entscheidung). can_approve() unten ist eine reine,
+von der eigentlichen Autorisierung UNABHAENGIGE Hilfsfunktion auf dieser
+Rohmatrix (u.a. fuer Altlasten-Tests) -- sie wird von der produktiven
+Freigabepruefung NICHT mehr aufgerufen und darf nicht dafuer verwendet
+werden, "owner" als gueltigen Freigabepfad zu behandeln.
 
 Risikolevel:
   low             — Auto-Approve (kein menschliches Eingreifen nötig)
   medium          — require_approval (jeder authorisierte Nutzer)
   high            — require_approval (erhöhte Rollen)
-  safety_critical — require_approval (nur security_lead / operations_lead / owner)
-  person_decision — require_approval (nur privacy / legal / owner) — DSGVO Art. 22
+  safety_critical — require_approval (nur security_lead / operations_lead)
+  person_decision — require_approval (nur privacy / legal) — DSGVO Art. 22
 
-Rollenmatrix für Approval-Freigaben:
-  safety_critical : security_lead, operations_lead, owner
-  person_decision : privacy, legal, owner
-  provider_avv    : admin, privacy, legal, owner
-  memory_write    : admin, owner
-  default/high    : admin, owner
-  medium/low      : admin, manager, owner
+Rollenmatrix für Approval-Freigaben (roh, siehe Warnung oben zu "owner"):
+  safety_critical : security_lead, operations_lead, (owner -- ignoriert)
+  person_decision : privacy, legal, (owner -- ignoriert)
+  provider_avv    : admin, privacy, legal, (owner -- ignoriert)
+  memory_write    : admin, (owner -- ignoriert)
+  default/high    : admin, (owner -- ignoriert)
+  medium/low      : admin, manager, (owner -- ignoriert)
 """
 from __future__ import annotations
 
@@ -82,7 +96,15 @@ class RiskResult:
 
 
 def can_approve(risk_level: str, approver_role: str) -> bool:
-    """Prueft ob eine Rolle einen Approval für das gegebene Risikolevel freigeben darf."""
+    """LEGACY/Hilfsfunktion auf der rohen Rollenmatrix -- prueft NUR, ob eine
+    Rollen-BEZEICHNUNG in APPROVAL_ROLES fuer das Risikolevel vorkommt.
+    KEINE tatsaechliche Autorisierungspruefung und wird von der produktiven
+    Freigabepruefung (permissions.decide_approval) NICHT verwendet.
+    Insbesondere behandelt diese Funktion "owner" weiterhin als Treffer,
+    obwohl decide_approval() eine Selbstfreigabe (ausser der streng
+    geprüften compliance_consent-Ausnahme) grundsaetzlich verweigert -- das
+    ist bewusst so belassen, um bestehende Altlasten-Tests dieser reinen
+    Matrix-Hilfsfunktion nicht zu veraendern."""
     allowed = APPROVAL_ROLES.get(risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
     return approver_role in allowed
 

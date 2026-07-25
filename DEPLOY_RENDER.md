@@ -33,6 +33,21 @@ Render liest `render.yaml` automatisch aus dem Repository.
 
 > **Wichtig:** `$PORT` wird von Render automatisch gesetzt — nicht hart kodieren!
 
+> ⚠️ **Betriebsgrenze (PR 2, Genehmigungs-Nebenläufigkeit):** Die atomare
+> Freigabeprüfung für Genehmigungsentscheidungen (`decide_approval_lock` in
+> `apps/backend/database.py`) sowie die Audit-Hash-Chain
+> (`_audit_write_lock`) sind ausschließlich **prozessinterne** Python-Sperren.
+> Sie serialisieren gleichzeitige Anfragen korrekt **nur innerhalb EINES
+> Uvicorn-Prozesses**. Solange keine datenbankseitige Sperre (z. B.
+> `SELECT ... FOR UPDATE` bzw. ein Advisory Lock unter PostgreSQL/Neon)
+> existiert, **darf AILIZA nicht mit mehreren Worker-Prozessen
+> (`--workers N`, N > 1) und nicht mit mehreren parallel laufenden
+> Instanzen/Render-Services betrieben werden** — sonst ist die
+> Atomaritätsgarantie für Genehmigungsentscheidungen nicht mehr gegeben.
+> Der Start Command oben startet bewusst genau einen Prozess ohne
+> `--workers`-Flag; das MUSS so bleiben, bis eine DB-seitige Sperre
+> nachgerüstet ist.
+
 ### 4. Environment Variables setzen
 
 Unter **Environment → Add Environment Variable** folgende Keys eintragen:

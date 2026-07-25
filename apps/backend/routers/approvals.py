@@ -9,7 +9,7 @@ from ..auth.rbac import Role, TokenData, require_role
 from ..database import (
     get_accessible_approval,
     list_own_or_assigned_approvals,
-    update_agent_run,
+    update_agent_run_for_tenant,
     write_audit_entry,
 )
 from ..permissions import APPROVAL_LIST, GENERIC_DENIED_MESSAGE, decide_approval, evaluate_permission
@@ -136,8 +136,13 @@ def resolve_approval(approval_id: int, status: str, note: str, token: TokenData)
     )
 
     if status == "rejected" and entry["run_id"]:
-        update_agent_run(
-            entry["run_id"],
+        # PR 2 Nachbesserung: nur den Run desselben Tenants veraendern --
+        # eine fehlerhafte oder tenant-fremde Verknuepfung darf niemals
+        # einen fremden Run beeinflussen (update_agent_run_for_tenant
+        # schreibt bei tenant-fremder Verknuepfung selbst ein Audit-
+        # Diagnoseereignis und aendert nichts).
+        update_agent_run_for_tenant(
+            entry["run_id"], token.tenant_id,
             status="rejected",
             result={"approval_id": approval_id, "status": "rejected", "note_present": bool(note)},
         )

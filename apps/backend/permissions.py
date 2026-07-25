@@ -34,14 +34,14 @@ try:
     from .auth.jwt_handler import TokenData
     from .auth.rbac import Role
     from .database import (
-        decide_approval_atomic, decide_approval_lock, get_approval_request_for_tenant, get_user,
+        decide_approval_atomic, decide_approval_lock, get_approval_request_for_tenant,
         has_active_case_assignment, write_audit_entry,
     )
 except ImportError:
     from apps.backend.auth.jwt_handler import TokenData
     from apps.backend.auth.rbac import Role
     from apps.backend.database import (
-        decide_approval_atomic, decide_approval_lock, get_approval_request_for_tenant, get_user,
+        decide_approval_atomic, decide_approval_lock, get_approval_request_for_tenant,
         has_active_case_assignment, write_audit_entry,
     )
 
@@ -81,12 +81,16 @@ _REQUIRED_ROLE_TO_SPECIALIST_DOMAIN = {
 }
 
 
-def _resolve_required_roles(required_approver_roles: list[str] | None) -> tuple[set[str], set[str]]:
-    """(literale RBAC-Rollennamen, Fachrollen-Domaenen) aus
-    required_approver_roles. 'owner' und unbekannte Eintraege tragen nichts
-    zur Freigabe bei."""
+def _resolve_required_roles(required_approver_roles: list[str] | None) -> tuple[set[str], set[str], bool]:
+    """(literale RBAC-Rollennamen, Fachrollen-Domaenen, hat_unbekannten_eintrag)
+    aus required_approver_roles. 'owner' wird ignoriert (Vier-Augen-Prinzip).
+    Enthaelt die Liste MINDESTENS EINEN unbekannten/nicht sicher abbildbaren
+    Eintrag, muss die GESAMTE Entscheidung (nicht nur dieser Eintrag) mit
+    Default Deny enden -- eine unvollstaendig abgebildete Anforderung darf
+    nie durch die uebrigen, bekannten Eintraege "umgangen" werden."""
     literal_roles: set[str] = set()
     specialist_domains: set[str] = set()
+    has_unknown = False
     for entry in required_approver_roles or []:
         if entry == "owner":
             continue
@@ -94,8 +98,9 @@ def _resolve_required_roles(required_approver_roles: list[str] | None) -> tuple[
             literal_roles.add(entry)
         elif entry in _REQUIRED_ROLE_TO_SPECIALIST_DOMAIN:
             specialist_domains.add(_REQUIRED_ROLE_TO_SPECIALIST_DOMAIN[entry])
-        # sonst: unbekannt/nicht sicher abbildbar -> ignoriert (Default Deny)
-    return literal_roles, specialist_domains
+        else:
+            has_unknown = True
+    return literal_roles, specialist_domains, has_unknown
 
 
 @dataclass(frozen=True)
@@ -137,13 +142,6 @@ def _resolve_role_strict(role_str: str | None) -> Role | None:
 
 def _as_aware_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
-def _is_locked(db_user: dict[str, Any]) -> bool:
-    locked_until = db_user.get("locked_until")
-    if locked_until is None:
-        return False
-    return _as_aware_utc(locked_until) > datetime.now(timezone.utc)
 
 
 def is_valid_own_compliance_consent(approval: dict[str, Any], actor: TokenData) -> bool:
@@ -240,21 +238,14 @@ def decide_approval(
     # gehalten (Lesen + atomare Aenderung), nicht nur um das UPDATE. Grund:
     # die aktuelle SQLite-:memory:-Anbindung teilt sich ueber StaticPool
     # eine einzige rohe Verbindung zwischen allen Threads: nebenlaeufige
-    # Lesezugriffe (get_user/get_approval_request_for_tenant) EINES anderen
+    # Lesezugriffe (get_approval_request_for_tenant) EINES anderen
     # Threads koennen die Cursor-/Verbindungszustaende sonst waehrend des
     # kritischen Abschnitts stoeren, selbst wenn nur das abschliessende
     # UPDATE separat gesperrt waere (siehe database.decide_approval_lock).
     with decide_approval_lock:
-        # Aktuellen Nutzerstatus serverseitig aus der DB lesen, SOWEIT ein
-        # Datensatz existiert -- ein zwischenzeitlich gesperrter/deaktivierter
-        # Nutzer darf mit einem noch gueltigen alten Token keine Entscheidung
-        # ausfuehren. Existiert (noch) kein users-Datensatz, wird das aktuelle,
-        # rein tokenbasierte Architekturmodell beibehalten (kein neues Login-
-        # Pflichtfeld in PR 2); die vollstaendige tenant_memberships-basierte
-        # Session-Invalidierung folgt in PR 3.
-        db_user = get_user(actor.user_id, tenant_id=actor.tenant_id)
-        if db_user is not None and (not db_user.get("active") or _is_locked(db_user)):
-            return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
+        # Nutzerstatus (aktiv/gesperrt) ist jetzt Teil der atomaren SQL-
+        # Pruefung in decide_approval_atomic (kein separater, potenziell
+        # veralteter Vorab-Check mehr) -- kein Token-Rollen-Fallback.
 
         # Tenant-gebundener Lookup NUR um required_approver_roles und die
         # compliance_consent-Ausnahme zu bestimmen -- das Ergebnis dieses
@@ -268,18 +259,30 @@ def decide_approval(
             return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
 
         allow_consent_owner = is_valid_own_compliance_consent(approval, actor)
-        literal_roles, specialist_domains = _resolve_required_roles(approval.get("required_approver_roles"))
-        token_role_matches_literal = bool(actor.role) and actor.role.lower() in literal_roles
+        literal_roles, specialist_domains, has_unknown_required_role = _resolve_required_roles(
+            approval.get("required_approver_roles"),
+        )
 
-        # EINE atomare Operation: Zuweisung (nicht widerrufen/abgelaufen),
-        # passende Fachrolle/Rolle, Tenant, Status=pending und Ablauf werden
-        # alle im selben UPDATE-Statement geprueft.
+        # Mindestens ein unbekannter/nicht sicher abbildbarer Eintrag in
+        # required_approver_roles blockiert die GESAMTE Entscheidung ueber
+        # den Zuweisungs-/Rollen-Pfad -- bekannte Eintraege in derselben
+        # Liste duerfen das nicht "umgehen". Die separat gepruefte eigene
+        # compliance_consent bleibt davon unberuehrt (sie haengt nicht von
+        # required_approver_roles ab).
+        if has_unknown_required_role and not allow_consent_owner:
+            return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
+        if has_unknown_required_role:
+            literal_roles, specialist_domains = set(), set()
+
+        # EINE atomare Operation: aktueller Nutzerstatus, Zuweisung (nicht
+        # widerrufen/abgelaufen), passende Fachrolle/Rolle, Vier-Augen-
+        # Prinzip, Tenant, Status=pending und Ablauf werden alle im selben
+        # UPDATE-Statement geprueft.
         outcome, entry = decide_approval_atomic(
             approval_id=approval_id, tenant_id=tenant_id, actor_user_id=actor.user_id,
             new_status=new_status, note=note,
             allow_consent_owner=allow_consent_owner,
             literal_roles=literal_roles, specialist_domains=specialist_domains,
-            token_role_matches_literal=token_role_matches_literal,
         )
 
     if outcome == "OK":

@@ -16,6 +16,23 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
+# Prozessweite Sperre fuer ALLE Schreib-/kritischen Lesevorgaenge, die
+# nicht nebenlaeufig gegeneinander laufen duerfen. Grund: die aktuelle
+# SQLite-:memory:-Anbindung teilt sich ueber StaticPool EINE rohe
+# sqlite3-Verbindung zwischen allen Threads (noetig, damit alle Threads
+# dieselben In-Memory-Daten sehen). Nebenlaeufige execute()-Aufrufe auf
+# DERSELBEN rohen sqlite3-Verbindung aus mehreren Threads sind NICHT sicher
+# serialisiert. Es darf daher NUR EINE einzige Sperre fuer alle
+# betroffenen Operationen verwendet werden -- mehrere unabhaengige Sperren
+# (z.B. je eine fuer Audit-Schreibzugriffe und eine fuer
+# Genehmigungsentscheidungen) verhindern die Kollision zwischen sich
+# selbst, aber NICHT gegeneinander, und die Verbindung kann trotzdem
+# nebenlaeufig aus zwei Threads angesprochen werden. Siehe
+# write_audit_entry() und decide_approval_atomic() weiter unten sowie
+# DEPLOY_RENDER.md (Betriebsgrenze: nur ein Uvicorn-Prozess, keine
+# --workers > 1, solange keine DB-seitige Sperre existiert).
+_sql_write_lock = threading.RLock()
+
 try:
     from .governance.field_crypto import encrypt_field, decrypt_field, encrypt_json, decrypt_json
 except ImportError:
@@ -709,18 +726,17 @@ def _get_latest_audit_hash(connection: Any) -> str:
     return row[0]
 
 
-_audit_write_lock = threading.Lock()
-
-
 def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
                       tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
     """Lesen des vorherigen Hash-Chain-Werts und Insert muessen als EINE
     Einheit ablaufen -- ohne Sperre koennen zwei gleichzeitige Aufrufe
     (z.B. zwei parallele Genehmigungsentscheidungen) denselben previous_hash
     lesen, wodurch ein Audit-Eintrag verloren gehen bzw. die Hash-Chain
-    inkonsistent werden kann. Prozessweite Sperre reicht fuer das aktuelle
-    Single-Prozess-SQLite-Setup; bei mehreren Worker-Prozessen bräuchte es
-    zusaetzlich eine DB-seitige Sperre (out of scope hier)."""
+    inkonsistent werden kann. Verwendet dieselbe _sql_write_lock wie
+    decide_approval_atomic() (siehe deren Docstring) -- ZWEI unabhaengige
+    Sperren wuerden sich zwar jeweils selbst korrekt serialisieren, aber
+    NICHT gegenseitig, und die geteilte SQLite-Verbindung koennte trotzdem
+    von zwei Threads gleichzeitig angesprochen werden."""
     ts = datetime.now(timezone.utc)
     entry: dict[str, Any] = {
         "timestamp": ts,
@@ -729,7 +745,7 @@ def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
         "tenant_id": tenant_id,
     }
 
-    with _audit_write_lock, engine.begin() as connection:
+    with _sql_write_lock, engine.begin() as connection:
         previous_hash = _get_latest_audit_hash(connection)
         entry["previous_hash"] = previous_hash
         # Temporärer Hash ohne ID — wird nach Insert mit echter ID berechnet
@@ -941,6 +957,54 @@ def update_agent_run(
         return None
 
     return get_agent_run(run_id)
+
+
+def update_agent_run_for_tenant(
+    run_id: str,
+    tenant_id: str,
+    *,
+    status: str | None = None,
+    pending_approval_id: int | None | object = _UNSET,
+    result: dict[str, Any] | None | object = _UNSET,
+    run_metadata: dict[str, Any] | None | object = _UNSET,
+) -> dict[str, Any] | None:
+    """Tenant-gebundene Variante von update_agent_run() -- fuer Aenderungen,
+    die aus einer Genehmigungsentscheidung folgen (z.B. Ablehnung). Der
+    verknuepfte Run wird NUR veraendert, wenn run_id UND tenant_id
+    uebereinstimmen; eine fehlerhafte oder tenant-fremde Verknuepfung darf
+    niemals einen Run in einem fremden Tenant veraendern."""
+    values: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+    if status is not None:
+        values["status"] = status
+    if pending_approval_id is not _UNSET:
+        values["pending_approval_id"] = pending_approval_id
+    if result is not _UNSET:
+        values["result"] = result
+    if run_metadata is not _UNSET:
+        values["run_metadata"] = run_metadata or {}
+
+    query = (
+        update(agent_runs)
+        .where(agent_runs.c.id == run_id)
+        .where(agent_runs.c.tenant_id == tenant_id)
+        .values(**values)
+    )
+    with engine.begin() as connection:
+        result_row = connection.execute(query)
+
+    if result_row.rowcount == 0:
+        write_audit_entry(
+            action="agent_run.update_blocked_tenant_mismatch",
+            tenant_id=tenant_id,
+            metadata={"run_id": run_id},
+        )
+        return None
+
+    with engine.begin() as connection:
+        row = connection.execute(
+            select(agent_runs).where(agent_runs.c.id == run_id).where(agent_runs.c.tenant_id == tenant_id)
+        ).mappings().first()
+    return dict(row) if row else None
 
 
 def link_approval_to_run(approval_id: int, run_id: str) -> dict[str, Any] | None:
@@ -1387,24 +1451,35 @@ def get_accessible_approval(approval_id: int, tenant_id: str, user_id: str) -> d
     return dict(row) if row else None
 
 
-# Oeffentlich (kein Unterstrich-Praefix), da der Aufrufer (permissions.py)
-# den GESAMTEN Entscheidungsvorgang serialisieren muss, nicht nur das
-# abschliessende UPDATE -- siehe Docstring unten.
-decide_approval_lock = threading.RLock()
+# Oeffentlicher Alias auf DIESELBE Sperre wie write_audit_entry (siehe
+# _sql_write_lock oben im Modul) -- der Aufrufer (permissions.py) haelt
+# diese Sperre ueber den GESAMTEN Entscheidungsvorgang, nicht nur das
+# abschliessende UPDATE. Bewusst dieselbe Sperreninstanz wie fuer Audit-
+# Schreibzugriffe, damit sich eine Genehmigungsentscheidung und ein
+# Audit-Schreibzugriff niemals gegenseitig auf der geteilten SQLite-
+# Verbindung ueberlappen koennen -- siehe Docstring unten.
+decide_approval_lock = _sql_write_lock
 
 
 def decide_approval_atomic(
     *, approval_id: int, tenant_id: str, actor_user_id: str, new_status: str, note: str,
     allow_consent_owner: bool, literal_roles: set[str], specialist_domains: set[str],
-    token_role_matches_literal: bool,
 ) -> tuple[str, dict[str, Any] | None]:
-    """Autorisierung (Zuweisung + passende Rolle/Fachzustaendigkeit) UND
-    Statusaenderung als EINE atomare SQL-Operation. Die WHERE-Klausel des
-    UPDATE prueft Zuweisung, Fachrolle/Rolle, Tenant, Status und Ablauf alle
-    im selben Statement -- ein Widerruf der Zuweisung (oder der Fachrolle)
-    genau zwischen einer vorgelagerten Pruefung und dem UPDATE kann die
-    Entscheidung damit nicht mehr durchrutschen lassen, weil es keine
-    vorgelagerte Pruefung mehr gibt: die Bedingung IST das UPDATE.
+    """Autorisierung (aktiver, nicht gesperrter Nutzer + Zuweisung + passende
+    Rolle/Fachzustaendigkeit + Vier-Augen-Prinzip) UND Statusaenderung als
+    EINE atomare SQL-Operation. Die WHERE-Klausel des UPDATE prueft
+    Nutzerstatus, Zuweisung, Fachrolle/Rolle, Vier-Augen-Prinzip, Tenant,
+    Status und Ablauf alle im selben Statement -- ein Widerruf der Zuweisung,
+    eine Sperrung des Nutzers oder der Entzug der Fachrolle genau zwischen
+    einer vorgelagerten Pruefung und dem UPDATE kann die Entscheidung damit
+    nicht mehr durchrutschen lassen, weil es keine vorgelagerte Pruefung
+    mehr gibt: die Bedingung IST das UPDATE.
+
+    KEIN Token-Rollen-Fallback: fehlt ein aktueller users-Datensatz fuer
+    actor_user_id/tenant_id, gilt fuer den Zuweisungs-/Rollen-Pfad Default
+    Deny (nur die separat geprüfte compliance_consent-Ausnahme ist davon
+    unabhaengig, da sie ausschliesslich auf Owner-Identitaet und
+    Task-Bindung beruht, nicht auf einer organisatorischen Rolle).
 
     Rueckgabe (outcome, entry):
       OK               -- Entscheidung gespeichert (rowcount == 1).
@@ -1434,6 +1509,18 @@ def decide_approval_atomic(
     now = datetime.now(timezone.utc)
     case_id_str = str(approval_id)
 
+    # Aktueller Nutzerstatus MUSS Teil derselben atomaren Pruefung sein:
+    # aktiv und nicht gesperrt, zum Zeitpunkt des UPDATE. Kein Fallback auf
+    # die Rolle aus dem Token -- fehlt der Datensatz, ist der Zuweisungs-/
+    # Rollen-Pfad grundsaetzlich versperrt (Default Deny).
+    active_user_exists = exists(
+        select(users.c.user_id)
+        .where(users.c.user_id == actor_user_id)
+        .where(users.c.tenant_id == tenant_id)
+        .where(users.c.active == 1)
+        .where(or_(users.c.locked_until.is_(None), users.c.locked_until <= now))
+    )
+
     assignment_exists = _active_assignment_exists_clause(
         "APPROVAL", literal(case_id_str), tenant_id, actor_user_id,
     )
@@ -1445,6 +1532,7 @@ def decide_approval_atomic(
             .where(user_specialist_roles.c.tenant_id == tenant_id)
             .where(user_specialist_roles.c.is_active == 1)
             .where(user_specialist_roles.c.revoked_at.is_(None))
+            .where(user_specialist_roles.c.valid_from <= now)
             .where(or_(
                 user_specialist_roles.c.valid_until.is_(None),
                 user_specialist_roles.c.valid_until > now,
@@ -1462,24 +1550,19 @@ def decide_approval_atomic(
         ) if literal_roles else literal(False)
     )
 
-    no_user_row_exists = ~exists(
-        select(users.c.user_id)
-        .where(users.c.user_id == actor_user_id)
-        .where(users.c.tenant_id == tenant_id)
-    )
+    role_match = or_(specialist_exists, literal_role_exists)
 
-    # Fallback nur fuer das aktuell rein tokenbasierte Architekturmodell
-    # (kein users-Datensatz vorhanden): dann zaehlt die Rolle aus dem Token.
-    # Existiert ein users-Datensatz, ist NUR dessen aktuelle Rolle massgeblich.
-    role_match = or_(
-        specialist_exists,
-        literal_role_exists,
-        and_(no_user_row_exists, literal(bool(token_role_matches_literal))),
+    # Vier-Augen-Prinzip: eine aktive Zuweisung PLUS passende Rolle darf
+    # NIEMALS die eigene Anfrage freigeben -- nur die separat streng
+    # geprüfte compliance_consent-Ausnahme darf die eigene Anfrage betreffen.
+    not_self_owned = or_(
+        approval_requests.c.owner_user_id.is_(None),
+        approval_requests.c.owner_user_id != actor_user_id,
     )
 
     zustaendig = or_(
-        and_(assignment_exists, role_match),
-        and_(literal(bool(allow_consent_owner)), approval_requests.c.owner_user_id == actor_user_id),
+        and_(active_user_exists, assignment_exists, role_match, not_self_owned),
+        and_(literal(bool(allow_consent_owner)), active_user_exists, approval_requests.c.owner_user_id == actor_user_id),
     )
 
     update_query = (
