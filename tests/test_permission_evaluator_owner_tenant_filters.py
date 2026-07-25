@@ -21,6 +21,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from apps.backend.permissions import GENERIC_DENIED_MESSAGE
+
 
 @pytest.fixture(autouse=True)
 def fresh_db():
@@ -58,6 +60,17 @@ def _ensure_user(user_id: str, tenant_id: str = "default", role: str = "user"):
     from apps.backend.database import create_user, get_user
     if get_user(user_id, tenant_id=tenant_id) is None:
         create_user(user_id, tenant_id, role, hashed_password="x")
+
+
+def _assign_approval(approval_id, user_id: str, tenant_id: str = "default", **kw):
+    from apps.backend.database import create_case_assignment
+    _ensure_user(user_id, tenant_id, kw.pop("role", "user"))
+    _ensure_user("assignerin", tenant_id, "manager")
+    return create_case_assignment(
+        case_type="APPROVAL", case_id=str(approval_id), tenant_id=tenant_id,
+        assigned_to_user_id=user_id, assigned_by_user_id="assignerin",
+        assignment_reason="Test-Zustaendigkeit", **kw,
+    )
 
 
 def _make_approval(tenant_id: str = "default", owner_user_id: str | None = None, run_id: str | None = None):
@@ -149,34 +162,34 @@ def test_historical_ownerless_run_invisible(client):
 # 8. Neue Runs erhalten Owner+Tenant aus dem Server-Kontext
 def test_new_run_gets_server_side_owner_and_tenant(client):
     resp = client.post(
-        "/agent/run", json={"task": "Schreibe einen kurzen freundlichen Gruss."},
+        "/agent/run", json={"task": "Fasse zusammen: Der Himmel ist blau."},
         headers=_headers("alice"),
     )
     assert resp.status_code == 200
-    run_id = resp.json().get("run_id") or resp.json().get("id")
-    if run_id:
-        from apps.backend.database import get_agent_run
-        entry = get_agent_run(run_id)
-        assert entry is not None
-        assert entry["owner_user_id"] == "alice"
-        assert entry["tenant_id"] == "default"
+    run_id = resp.json().get("run_id")
+    assert run_id, "Antwort muss eine run_id enthalten"
+    from apps.backend.database import get_agent_run
+    entry = get_agent_run(run_id)
+    assert entry is not None
+    assert entry["owner_user_id"] == "alice"
+    assert entry["tenant_id"] == "default"
 
 
 # 9. Vom Browser mitgegebener fremder Owner wird ignoriert
 def test_client_supplied_owner_is_ignored(client):
     resp = client.post(
         "/agent/run",
-        json={"task": "Schreibe einen kurzen freundlichen Gruss.", "owner_user_id": "mallory"},
+        json={"task": "Fasse zusammen: Der Himmel ist blau.", "owner_user_id": "mallory"},
         headers=_headers("alice"),
     )
     assert resp.status_code == 200
-    run_id = resp.json().get("run_id") or resp.json().get("id")
-    if run_id:
-        from apps.backend.database import get_agent_run
-        entry = get_agent_run(run_id)
-        assert entry is not None
-        assert entry["owner_user_id"] == "alice"
-        assert entry["owner_user_id"] != "mallory"
+    run_id = resp.json().get("run_id")
+    assert run_id, "Antwort muss eine run_id enthalten"
+    from apps.backend.database import get_agent_run
+    entry = get_agent_run(run_id)
+    assert entry is not None
+    assert entry["owner_user_id"] == "alice"
+    assert entry["owner_user_id"] != "mallory"
 
 
 # 10. Listen enthalten keine fremden Datensaetze
@@ -210,13 +223,22 @@ def test_counters_and_lists_leak_no_foreign_data(client):
     assert entries[0]["id"] == "run-count-mine"
 
 
-# 13. Genehmigungsanfrage erbt den korrekten Owner
+# 13. Genehmigungsanfrage erbt den korrekten Owner ueber den echten Laufweg
+# (nicht durch direktes Setzen von owner_user_id im Test).
 def test_approval_inherits_owner_from_run(client):
     from apps.backend.database import get_approval_request
-    _make_run("run-for-approval-13", owner_user_id="alice")
-    approval = _make_approval(owner_user_id="alice", run_id="run-for-approval-13")
-    stored = get_approval_request(approval["id"])
+    nonkonform = (
+        "Formuliere eine Antwort an den Kunden: Wir gehen davon aus, dass Ihr "
+        "Einverstaendnis vorliegt, und verarbeiten Ihre Daten ohne Einwilligung weiter."
+    )
+    resp = client.post("/agent/run", json={"task": nonkonform}, headers=_headers("alice"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "consent_required"
+    approval_id = body["approval_id"]
+    stored = get_approval_request(approval_id)
     assert stored["owner_user_id"] == "alice"
+    assert stored["tenant_id"] == "default"
 
 
 # 14. Fremde Genehmigung kann nicht entschieden werden
@@ -226,11 +248,13 @@ def test_foreign_approval_cannot_be_decided(client):
     assert resp.status_code == 404
 
 
-# 15. Abgelaufene Genehmigung kann nicht entschieden werden
+# 15. Abgelaufene Genehmigung kann nicht entschieden werden (durch eine
+# ZUSTAENDIGE Person -- erst dann darf ueberhaupt EXPIRED unterschieden werden).
 def test_expired_approval_cannot_be_decided(client):
     from apps.backend.database import approval_requests, engine
     from sqlalchemy import update
     approval = _make_approval(owner_user_id="bob")
+    _assign_approval(approval["id"], "managerin1", role="manager")
     with engine.begin() as connection:
         connection.execute(
             update(approval_requests)
@@ -273,10 +297,14 @@ def test_cross_tenant_assignment_stays_ineffective(client):
 
 
 # 19. Die Berechtigungspruefung laeuft unmittelbar vor der Schreibaktion erneut
+# -- eine zwischenzeitliche Statusaenderung (z.B. durch eine parallele
+# Anfrage) muss beim eigentlichen UPDATE noch einmal wirksam werden, nicht
+# nur bei der anfaenglichen Pruefung.
 def test_permission_rechecked_immediately_before_decide(client):
     from apps.backend.database import approval_requests, engine
     from sqlalchemy import update
     approval = _make_approval(owner_user_id=None)
+    _assign_approval(approval["id"], "managerin1", role="manager")
     headers = _headers("managerin1", role="manager")
     with engine.begin() as connection:
         connection.execute(
@@ -286,6 +314,171 @@ def test_permission_rechecked_immediately_before_decide(client):
         )
     resp = client.post(f"/approvals/{approval['id']}/approve", headers=headers)
     assert resp.status_code == 409
+
+
+# ── Zusaetzliche Pflicht-Tests aus dem Korrekturauftrag ─────────────────────
+
+# Manager ohne Zuweisung darf fremde Genehmigung nicht entscheiden.
+def test_manager_without_assignment_cannot_decide(client):
+    approval = _make_approval(owner_user_id="bob")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Admin ohne Zuweisung darf fremde Genehmigung nicht entscheiden.
+def test_admin_without_assignment_cannot_decide(client):
+    approval = _make_approval(owner_user_id="bob")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("chefin1", role="admin"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# DSB ohne passende Fachzustaendigkeit/Zuweisung darf nicht entscheiden.
+def test_dsb_without_assignment_cannot_decide(client):
+    approval = _make_approval(owner_user_id="bob")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("dsb1", role="dsb"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Ownerlose historische Genehmigung ist nicht ueber eine Rolle freigebbar.
+def test_ownerless_historical_approval_not_decidable_via_role(client):
+    approval = _make_approval(owner_user_id=None)
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("chefin1", role="admin"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Normaler Nutzer erhaelt fuer fremde ABGELAUFENE Genehmigung die neutrale 404
+# (nicht 409) -- die Zustaendigkeit fehlt, also darf EXPIRED nicht sichtbar werden.
+def test_unzustaendiger_user_gets_neutral_404_for_expired_approval(client):
+    from apps.backend.database import approval_requests, engine
+    from sqlalchemy import update
+    approval = _make_approval(owner_user_id="bob")
+    with engine.begin() as connection:
+        connection.execute(
+            update(approval_requests)
+            .where(approval_requests.c.id == approval["id"])
+            .values(expires_at=datetime.now(timezone.utc) - timedelta(hours=1))
+        )
+    resp = client.post(f"/approvals/{approval['id']}/approve", headers=_headers("alice"))
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Normaler Nutzer erhaelt fuer fremde BEREITS ENTSCHIEDENE Genehmigung die
+# neutrale 404 (nicht 409).
+def test_unzustaendiger_user_gets_neutral_404_for_already_decided_approval(client):
+    from apps.backend.database import approval_requests, engine
+    from sqlalchemy import update
+    approval = _make_approval(owner_user_id="bob")
+    with engine.begin() as connection:
+        connection.execute(
+            update(approval_requests)
+            .where(approval_requests.c.id == approval["id"])
+            .values(status="approved")
+        )
+    resp = client.post(f"/approvals/{approval['id']}/approve", headers=_headers("alice"))
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Nach serverseitiger Sperrung ist eine noch gueltige alte Session (Token)
+# fuer eine Genehmigungsentscheidung wirkungslos, obwohl das JWT selbst
+# noch nicht abgelaufen ist.
+def test_locked_user_session_rejected_for_decide(client):
+    from apps.backend.database import create_user, users, engine
+    from sqlalchemy import update as sa_update
+
+    create_user("gesperrt1", "default", "manager", hashed_password="x")
+    with engine.begin() as connection:
+        connection.execute(
+            sa_update(users).where(users.c.user_id == "gesperrt1").values(active=0)
+        )
+    approval = _make_approval(owner_user_id="bob")
+    _assign_approval(approval["id"], "gesperrt1", role="manager")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("gesperrt1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Zwei gleichzeitige Entscheidungen fuehren zu genau einem Erfolg; der
+# unterlegene Request erzeugt keinen Erfolg und kein Erfolgs-Audit.
+def test_concurrent_decisions_only_one_succeeds(client):
+    approval = _make_approval(owner_user_id="bob")
+    _assign_approval(approval["id"], "managerin1", role="manager")
+    headers = _headers("managerin1", role="manager")
+
+    first = client.post(f"/approvals/{approval['id']}/approve", headers=headers)
+    second = client.post(f"/approvals/{approval['id']}/approve", headers=headers)
+
+    statuses = sorted([first.status_code, second.status_code])
+    assert statuses == [200, 409]
+
+    from apps.backend.database import query_audit_events
+    entries = query_audit_events(tenant_id="default", action="approval.approved")
+    matching = [e for e in entries if e["metadata"].get("approval_id") == approval["id"]]
+    assert len(matching) == 1
+
+
+# Eine manipulierte compliance_consent ohne gueltige Task-Bindung (fehlendes
+# task_sha256) wird trotz identischem Tool-Namen NICHT als Selbstkonsens
+# akzeptiert.
+def test_manipulated_compliance_consent_without_task_binding_is_rejected(client):
+    from apps.backend.database import create_approval_request
+    approval = create_approval_request(
+        tool="compliance_consent",
+        input_params={"kein_task_sha256": True},
+        risk_level="high", risk_reason="Test",
+        tenant_id="default", owner_user_id="alice",
+    )
+    resp = client.post(f"/approvals/{approval['id']}/approve", headers=_headers("alice"))
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Fremde Detaildatensaetze werden bereits durch die DB-Abfrage ausgeschlossen
+# (get_accessible_agent_run / get_accessible_approval), nicht erst nach dem
+# Laden verworfen.
+def test_foreign_detail_records_excluded_at_db_query_level(client):
+    from apps.backend.database import get_accessible_agent_run, get_accessible_approval
+    _make_run("run-dbfilter-1", owner_user_id="bob")
+    assert get_accessible_agent_run("run-dbfilter-1", "default", "alice") is None
+
+    approval = _make_approval(owner_user_id="bob")
+    assert get_accessible_approval(approval["id"], "default", "alice") is None
+
+
+# Audit enthaelt keine vollstaendige Freitextnotiz.
+def test_audit_does_not_contain_full_note_text(client):
+    approval = _make_approval(owner_user_id="bob")
+    _assign_approval(approval["id"], "managerin1", role="manager")
+    secret_note = "Vertraulich: Kundendaten Max Mustermann IBAN DE1234567890"
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve",
+        json={"note": secret_note},
+        headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 200
+
+    from apps.backend.database import query_audit_events
+    entries = query_audit_events(tenant_id="default", action="approval.approved")
+    matching = [e for e in entries if e["metadata"].get("approval_id") == approval["id"]]
+    assert len(matching) == 1
+    metadata_str = str(matching[0]["metadata"])
+    assert secret_note not in metadata_str
+    assert matching[0]["metadata"].get("note_present") is True
 
 
 # 20. Bestandstestsuite bleibt vollstaendig gruen (Marker-Test; die eigentliche

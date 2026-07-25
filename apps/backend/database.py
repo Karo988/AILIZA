@@ -1313,6 +1313,87 @@ def list_own_or_assigned_approvals(
     return [dict(row) for row in rows]
 
 
+def _assigned_case_ids(case_type: str, tenant_id: str, user_id: str) -> set[str]:
+    return {
+        a["case_id"] for a in list_active_case_assignments(user_id, tenant_id)
+        if a["case_type"] == case_type
+    }
+
+
+def get_accessible_agent_run(run_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    """PR 2 Nachbesserung: Detail-Lookup mit Tenant-/Owner-/Zuweisungsfilter
+    DIREKT in der Datenbankabfrage -- ein fremder Datensatz wird nie erst
+    geladen und danach verworfen, er wird schon von der Query ausgeschlossen."""
+    assigned_ids = _assigned_case_ids("AGENT_RUN", tenant_id, user_id)
+    conditions = [agent_runs.c.owner_user_id == user_id]
+    if assigned_ids:
+        conditions.append(agent_runs.c.id.in_(assigned_ids))
+    query = (
+        select(agent_runs)
+        .where(agent_runs.c.id == run_id)
+        .where(agent_runs.c.tenant_id == tenant_id)
+        .where(or_(*conditions))
+    )
+    with engine.begin() as connection:
+        row = connection.execute(query).mappings().first()
+    return dict(row) if row else None
+
+
+def get_approval_request_for_tenant(approval_id: int, tenant_id: str) -> dict[str, Any] | None:
+    """Tenant-gebundener Lookup -- ein Datensatz eines fremden Tenants wird
+    von der Abfrage selbst ausgeschlossen, nicht erst nach dem Laden verworfen."""
+    query = (
+        select(approval_requests)
+        .where(approval_requests.c.id == approval_id)
+        .where(approval_requests.c.tenant_id == tenant_id)
+    )
+    with engine.begin() as connection:
+        row = connection.execute(query).mappings().first()
+    return dict(row) if row else None
+
+
+def get_accessible_approval(approval_id: int, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    assigned_ids = _assigned_case_ids("APPROVAL", tenant_id, user_id)
+    conditions = [approval_requests.c.owner_user_id == user_id]
+    if assigned_ids:
+        conditions.append(approval_requests.c.id.in_(assigned_ids))
+    query = (
+        select(approval_requests)
+        .where(approval_requests.c.id == approval_id)
+        .where(approval_requests.c.tenant_id == tenant_id)
+        .where(or_(*conditions))
+    )
+    with engine.begin() as connection:
+        row = connection.execute(query).mappings().first()
+    return dict(row) if row else None
+
+
+def decide_approval_atomic(
+    approval_id: int, tenant_id: str, new_status: str, note: str = "",
+) -> tuple[int, dict[str, Any] | None]:
+    """Atomare Entscheidung: Autorisierung wurde bereits vom Aufrufer
+    geprueft, aber die eigentliche Statusaenderung MUSS ihre eigene
+    Bedingung (Tenant + weiterhin 'pending') in genau derselben Transaktion
+    erneut durchsetzen. Nur rowcount == 1 ist ein tatsaechlicher Erfolg --
+    bei rowcount == 0 hat eine parallele Anfrage die Entscheidung bereits
+    getroffen, und der Aufrufer darf KEINEN Erfolg melden/protokollieren."""
+    resolved_at = datetime.now(timezone.utc)
+    query = (
+        update(approval_requests)
+        .where(approval_requests.c.id == approval_id)
+        .where(approval_requests.c.tenant_id == tenant_id)
+        .where(approval_requests.c.status == "pending")
+        .values(status=new_status, resolved_at=resolved_at, note=note)
+    )
+    with engine.begin() as connection:
+        result = connection.execute(query)
+        rowcount = result.rowcount
+        row = connection.execute(
+            select(approval_requests).where(approval_requests.c.id == approval_id)
+        ).mappings().first()
+    return rowcount, (dict(row) if row else None)
+
+
 # ── Reflection Facts ─────────────────────────────────────────────────────────
 def insert_reflection_fact(values: dict[str, Any]) -> None:
     with engine.begin() as connection:

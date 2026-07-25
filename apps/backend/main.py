@@ -30,8 +30,9 @@ try:
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_approval_request, get_approval_request,
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
+        get_accessible_agent_run,
     )
-    from .permissions import evaluate_permission, AGENT_RUN_LIST, AGENT_RUN_READ, GENERIC_DENIED_MESSAGE
+    from .permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
     from .errors import AILIZAError, MESSAGES
@@ -81,8 +82,9 @@ except ImportError:
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
         export_user_data, delete_own_account_data,
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
+        get_accessible_agent_run,
     )
-    from apps.backend.permissions import evaluate_permission, AGENT_RUN_LIST, AGENT_RUN_READ, GENERIC_DENIED_MESSAGE
+    from apps.backend.permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from apps.backend.gateway import guarded_tool_call
     from apps.backend.routers.approvals import router as approvals_router
     from apps.backend.errors import AILIZAError, MESSAGES
@@ -2182,15 +2184,11 @@ def get_agent_runs(
 def get_agent_run_status(
     run_id: str, token: TokenData = Depends(require_role(Role.USER)),
 ) -> dict[str, Any]:
-    entry = get_agent_run(run_id)
+    # PR 2 Nachbesserung: Tenant-/Owner-/Zuweisungsfilter direkt in der
+    # Datenbankabfrage -- ein fremder Run wird nie erst global per ID
+    # geladen und danach verworfen.
+    entry = get_accessible_agent_run(run_id, token.tenant_id, token.user_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
-    decision = evaluate_permission(
-        action=AGENT_RUN_READ, actor=token, tenant_id=entry["tenant_id"],
-        resource_type="agent_run", resource_id=run_id,
-        resource_owner_user_id=entry.get("owner_user_id"),
-    )
-    if not decision.allowed:
         raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
     return serialize_agent_run(entry)
 

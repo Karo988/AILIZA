@@ -66,13 +66,22 @@ def test_reject_without_login_rejected(client):
 
 
 def test_approve_with_login_succeeds(client):
-    # PR 2: eine einfache Login-Session (Role.USER) ohne Owner-Bezug und
-    # ohne case_assignments-Eintrag reicht seit PR 2 bewusst NICHT mehr aus,
-    # um eine fremde Freigabe zu entscheiden -- genau das war die Luecke,
-    # die PR 2 schliesst. Fuer den Erfolgsfall braucht es hier daher eine
-    # Rolle ab Role.MANAGER (Uebergangsloesung bis zur vollstaendigen
-    # Fachzustaendigkeits-Matrix).
+    # PR 2 (Nachbesserung): eine einfache Login-Session -- auch mit
+    # Role.MANAGER -- reicht seit der Korrektur bewusst NICHT mehr aus, um
+    # eine fremde Freigabe zu entscheiden. Es gibt kein pauschales
+    # role >= MANAGER mehr; nur eine aktive case_assignment oder eine
+    # gepruefte eigene compliance_consent begruenden eine Zustaendigkeit.
+    # Fuer den Erfolgsfall wird hier daher eine explizite Zuweisung angelegt.
+    from apps.backend.database import create_case_assignment, create_user, get_user
+
     approval_id = _make_pending_approval()
+    if get_user("managerin1", tenant_id="default") is None:
+        create_user("managerin1", "default", "manager", hashed_password="x")
+    create_case_assignment(
+        case_type="APPROVAL", case_id=str(approval_id), tenant_id="default",
+        assigned_to_user_id="managerin1", assigned_by_user_id="managerin1",
+        assignment_reason="Test-Zustaendigkeit",
+    )
     resp = client.post(
         f"/approvals/{approval_id}/approve",
         headers={"Authorization": f"Bearer {_manager_token()}"},

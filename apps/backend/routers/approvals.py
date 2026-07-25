@@ -7,13 +7,12 @@ from pydantic import BaseModel
 
 from ..auth.rbac import Role, TokenData, require_role
 from ..database import (
-    get_approval_request,
+    get_accessible_approval,
     list_own_or_assigned_approvals,
-    resolve_approval_request,
     update_agent_run,
     write_audit_entry,
 )
-from ..permissions import APPROVAL_DECIDE, APPROVAL_LIST, APPROVAL_READ, GENERIC_DENIED_MESSAGE, evaluate_permission
+from ..permissions import APPROVAL_LIST, GENERIC_DENIED_MESSAGE, decide_approval, evaluate_permission
 
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -58,16 +57,11 @@ def list_approvals(
 def get_approval(
     approval_id: int, token: TokenData = Depends(require_role(Role.USER)),
 ) -> dict[str, Any]:
-    entry = get_approval_request(approval_id)
+    # PR 2 Nachbesserung: Tenant-/Owner-/Zuweisungsfilter direkt in der
+    # Datenbankabfrage -- eine fremde Anfrage wird nie erst geladen und dann
+    # verworfen, sie ist fuer die Abfrage schlicht nicht vorhanden.
+    entry = get_accessible_approval(approval_id, token.tenant_id, token.user_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
-
-    decision = evaluate_permission(
-        action=APPROVAL_READ, actor=token, tenant_id=entry["tenant_id"],
-        resource_type="approval", resource_id=str(approval_id),
-        resource_owner_user_id=entry.get("owner_user_id"),
-    )
-    if not decision.allowed:
         raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
 
     return serialize_approval(entry)
@@ -92,33 +86,40 @@ def reject_approval(
 
 
 def resolve_approval(approval_id: int, status: str, note: str, token: TokenData) -> dict[str, Any]:
-    existing = get_approval_request(approval_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
-
-    # PR 2: zentrale, unmittelbar vor der Aenderung erneut ausgefuehrte
-    # Pruefung -- Tenant, Status, Ablauf, Selbstfreigabe, Rolle/Zuweisung.
-    # Ersetzt die bisherige reine require_role(USER)-Pruefung, die jede
-    # eingeloggte Person unabhaengig von Tenant/Zustaendigkeit freigeben liess.
-    decision = evaluate_permission(
-        action=APPROVAL_DECIDE, actor=token, tenant_id=existing["tenant_id"],
-        resource_type="approval", resource_id=str(approval_id),
-        resource_owner_user_id=existing.get("owner_user_id"),
+    # PR 2 Nachbesserung: Zustaendigkeit, Statuspruefung und Aenderung laufen
+    # jetzt als EINE atomare Entscheidungsoperation (decide_approval). Kein
+    # pauschales role >= MANAGER mehr -- nur aktive Zuweisung oder gepruefte
+    # eigene compliance_consent begruenden eine Zustaendigkeit. Eine nicht
+    # zustaendige Person erhaelt immer dieselbe neutrale 404-Antwort, egal ob
+    # die Anfrage nicht existiert, fremd, bereits entschieden oder abgelaufen
+    # ist -- kein Existenzleck ueber unterschiedliche Statuscodes.
+    result = decide_approval(
+        actor=token, tenant_id=token.tenant_id, approval_id=approval_id,
+        new_status=status, note=note,
     )
-    if not decision.allowed:
-        status_code = 409 if decision.reason_code in ("ALREADY_DECIDED", "EXPIRED") else 404
-        detail = decision.reason_de if status_code == 409 else GENERIC_DENIED_MESSAGE
+
+    if not result.committed:
+        if not result.allowed or result.reason_code == "NOT_FOUND_OR_FORBIDDEN":
+            write_audit_entry(
+                action="permission.denied",
+                tenant_id=token.tenant_id,
+                metadata={"action": "APPROVAL_DECIDE", "approval_id": approval_id, "reason_code": result.reason_code},
+            )
+            raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
+        # Person war zustaendig, aber die Anfrage war bereits entschieden,
+        # abgelaufen, oder eine parallele Anfrage war schneller (CONFLICT).
         write_audit_entry(
-            action="permission.denied",
+            action="approval.decide_conflict",
             tenant_id=token.tenant_id,
-            metadata={"action": "APPROVAL_DECIDE", "approval_id": approval_id, "reason_code": decision.reason_code},
+            metadata={"approval_id": approval_id, "reason_code": result.reason_code},
         )
-        raise HTTPException(status_code=status_code, detail=detail)
+        raise HTTPException(status_code=409, detail=result.reason_de)
 
-    entry = resolve_approval_request(approval_id, status=status, note=note)
-    if entry is None:
-        raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
+    entry = result.entry
+    assert entry is not None
 
+    # Audit-Minimierung: keine vollstaendige Freitextnotiz protokollieren,
+    # sie kann personenbezogene/vertrauliche Inhalte enthalten.
     write_audit_entry(
         action=f"approval.{status}",
         tenant_id=token.tenant_id,
@@ -127,9 +128,10 @@ def resolve_approval(approval_id: int, status: str, note: str, token: TokenData)
             "run_id": entry["run_id"],
             "tool": entry["tool"],
             "status": status,
-            "note": note,
+            "note_present": bool(note),
+            "note_length": len(note or ""),
             "approved_by_user_id": token.user_id,
-            "reason_code": decision.reason_code,
+            "reason_code": result.reason_code,
         },
     )
 
@@ -137,7 +139,7 @@ def resolve_approval(approval_id: int, status: str, note: str, token: TokenData)
         update_agent_run(
             entry["run_id"],
             status="rejected",
-            result={"approval_id": approval_id, "status": "rejected", "note": note},
+            result={"approval_id": approval_id, "status": "rejected", "note_present": bool(note)},
         )
 
     return {"id": approval_id, "run_id": entry["run_id"], "status": status}
