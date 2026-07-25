@@ -1451,6 +1451,57 @@ def get_accessible_approval(approval_id: int, tenant_id: str, user_id: str) -> d
     return dict(row) if row else None
 
 
+def consume_compliance_consent(
+    *, approval_id: int, task: str, user_id: str, tenant_id: str,
+) -> dict[str, Any] | None:
+    """Nutzer- und tenantgebundene, EINMALIGE Verwendung einer erteilten
+    compliance_consent (B2 Drei-Stufen-Modell). Ersetzt den fruehren
+    main._valid_compliance_consent(), der weder Owner noch Tenant pruefte
+    und beliebig oft wiederverwendbar war.
+
+    Autorisierung UND Statusaenderung (approved -> consumed) sind EIN
+    atomares UPDATE -- kein globaler get_approval_request(approval_id)-
+    Lookup, kein separates Lesen vor dem Schreiben. Die WHERE-Klausel
+    prueft in genau diesem Statement:
+      - approval_id UND tenant_id (Tenant-Bindung),
+      - owner_user_id == user_id (nur die einwilligende Person selbst),
+      - tool == 'compliance_consent',
+      - status == 'approved' (noch nicht verbraucht/abgelehnt/pending),
+      - task_sha256 (im JSON-Feld input_params) entspricht EXAKT der
+        aktuellen Anfrage (task_sha256-Bindung, siehe main._consent_task_hash).
+
+    Nur rowcount == 1 gilt als erfolgreiche, einmalige Nutzung -- eine
+    zweite Verwendung derselben Einwilligung (status ist dann bereits
+    'consumed') schlaegt fehl, ebenso ein fremder Nutzer/Tenant oder ein
+    abweichender Text. Gibt den aktualisierten Datensatz zurueck (fuer die
+    Audit-Metadaten) oder None bei Ablehnung."""
+    import hashlib
+    task_sha256 = hashlib.sha256(task.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    query = (
+        update(approval_requests)
+        .where(approval_requests.c.id == approval_id)
+        .where(approval_requests.c.tenant_id == tenant_id)
+        .where(approval_requests.c.owner_user_id == user_id)
+        .where(approval_requests.c.tool == "compliance_consent")
+        .where(approval_requests.c.status == "approved")
+        .where(approval_requests.c.input_params["task_sha256"].as_string() == task_sha256)
+        .values(status="consumed", resolved_at=now)
+    )
+
+    with _sql_write_lock, engine.begin() as connection:
+        result = connection.execute(query)
+        if result.rowcount != 1:
+            return None
+        row = connection.execute(
+            select(approval_requests)
+            .where(approval_requests.c.id == approval_id)
+            .where(approval_requests.c.tenant_id == tenant_id)
+        ).mappings().first()
+        return dict(row) if row else None
+
+
 # Oeffentlicher Alias auf DIESELBE Sperre wie write_audit_entry (siehe
 # _sql_write_lock oben im Modul) -- der Aufrufer (permissions.py) haelt
 # diese Sperre ueber den GESAMTEN Entscheidungsvorgang, nicht nur das
@@ -1476,10 +1527,16 @@ def decide_approval_atomic(
     mehr gibt: die Bedingung IST das UPDATE.
 
     KEIN Token-Rollen-Fallback: fehlt ein aktueller users-Datensatz fuer
-    actor_user_id/tenant_id, gilt fuer den Zuweisungs-/Rollen-Pfad Default
-    Deny (nur die separat geprüfte compliance_consent-Ausnahme ist davon
-    unabhaengig, da sie ausschliesslich auf Owner-Identitaet und
-    Task-Bindung beruht, nicht auf einer organisatorischen Rolle).
+    actor_user_id/tenant_id, gilt Default Deny -- fuer BEIDE Pfade (siehe
+    active_user_exists unten). Die compliance_consent-Ausnahme prueft
+    zusaetzlich Owner-Identitaet und Task-Bindung, ist aber vom aktiven,
+    nicht gesperrten users-Datensatz NICHT befreit: ein zwischenzeitlich
+    deaktivierter/gesperrter Nutzer kann auch seine eigene Einwilligung
+    nicht mehr wirksam nutzen. (Diese eigentliche Verwendung der
+    compliance_consent zum Versand der zugehoerigen Anfrage laeuft separat
+    ueber database.consume_compliance_consent() -- der Consent-Zweig hier
+    in decide_approval_atomic betrifft nur das FREIGEBEN/ABLEHNEN der
+    Einwilligungs-Anfrage selbst, siehe routers/approvals.py.)
 
     Rueckgabe (outcome, entry):
       OK               -- Entscheidung gespeichert (rowcount == 1).

@@ -28,7 +28,7 @@ try:
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
-        create_approval_request, get_approval_request,
+        create_approval_request, consume_compliance_consent,
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
         get_accessible_agent_run,
     )
@@ -74,7 +74,7 @@ except ImportError:
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
-        create_approval_request, get_approval_request,
+        create_approval_request, consume_compliance_consent,
         save_user_project, list_user_projects, delete_user_project,
         save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
         get_user_settings, upsert_user_settings,
@@ -1125,22 +1125,6 @@ def _consent_task_hash(task: str) -> str:
     return hashlib.sha256(task.encode("utf-8")).hexdigest()
 
 
-def _valid_compliance_consent(approval_id: int, task: str) -> bool:
-    """
-    Prueft eine vom Nutzer erteilte Compliance-Einwilligung (Fall 3):
-    Freigabe existiert, wurde ueber /approvals/{id}/approve bestaetigt
-    (Login-Pflicht dort erzwungen) und gehoert zu GENAU dieser Anfrage.
-    """
-    try:
-        entry = get_approval_request(approval_id)
-    except Exception:
-        return False
-    if not entry or entry.get("status") != "approved":
-        return False
-    if entry.get("tool") != "compliance_consent":
-        return False
-    params = entry.get("input_params") or {}
-    return params.get("task_sha256") == _consent_task_hash(task)
 
 
 def _compliance_pre_check(
@@ -1877,11 +1861,21 @@ def _run_agent_core(
                 "results": [],
             }
 
-        if payload.consent_approval_id and _valid_compliance_consent(
-            payload.consent_approval_id, payload.task
-        ):
-            # Einwilligung liegt vor → dokumentieren, dann mit der
-            # geschwaerzten Fassung normal weiterlaufen.
+        _consumed_consent = None
+        if payload.consent_approval_id:
+            # PR 2 Nachbesserung: nutzer- und tenantgebundene, EINMALIGE
+            # Verwendung -- Autorisierung (Owner/Tenant/Tool/Status/Hash)
+            # und die Statusaenderung approved->consumed sind EIN atomares
+            # UPDATE, kein separater globaler Lookup nach approval_id.
+            _consumed_consent = consume_compliance_consent(
+                approval_id=payload.consent_approval_id, task=payload.task,
+                user_id=token.user_id, tenant_id=tenant,
+            )
+
+        if _consumed_consent is not None:
+            # Einwilligung wurde soeben (und nur genau jetzt) verbraucht →
+            # dokumentieren, dann mit der geschwaerzten Fassung weiterlaufen.
+            # Audit erfolgt ERST nach erfolgreichem atomarem Verbrauch.
             write_audit_entry(
                 action="compliance.consent_used",
                 tenant_id=tenant,

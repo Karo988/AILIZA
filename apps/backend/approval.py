@@ -46,6 +46,10 @@ class ApprovalStatus(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     AUTO = "auto"
+    # PR 2 Nachbesserung: Endzustand fuer eine bereits genutzte
+    # compliance_consent -- eine Einwilligung darf nur EINMAL zum Versand
+    # der zugehoerigen Anfrage fuehren (siehe database.consume_compliance_consent).
+    CONSUMED = "consumed"
 
 
 class RiskLevel(str, Enum):

@@ -734,6 +734,116 @@ def test_rejection_does_not_modify_run_in_foreign_tenant(client):
     assert len(matching) == 1
 
 
+# ── consume_compliance_consent() -- nutzer-/tenantgebundene Einmalnutzung ───
+
+_CONSENT_TASK = (
+    "Formuliere eine Antwort an den Kunden: Wir gehen davon aus, dass Ihr "
+    "Einverstaendnis vorliegt, und verarbeiten Ihre Daten ohne Einwilligung weiter."
+)
+
+
+def _make_approved_consent(owner_user_id: str = "alice", tenant_id: str = "default", task: str = _CONSENT_TASK):
+    import hashlib
+    from apps.backend.database import create_approval_request, resolve_approval_request
+    approval = create_approval_request(
+        tool="compliance_consent",
+        input_params={"task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest()},
+        risk_level="high", risk_reason="Test", tenant_id=tenant_id, owner_user_id=owner_user_id,
+    )
+    resolve_approval_request(approval["id"], status="approved")
+    return approval["id"]
+
+
+def test_own_user_can_consume_own_approved_consent_once():
+    from apps.backend.database import consume_compliance_consent
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert result is not None
+    assert result["status"] == "consumed"
+
+
+def test_second_use_of_same_consent_is_rejected():
+    from apps.backend.database import consume_compliance_consent
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    first = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert first is not None
+    second = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert second is None
+
+
+def test_foreign_user_cannot_consume_consent_despite_identical_text():
+    from apps.backend.database import consume_compliance_consent
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="mallory", tenant_id="default",
+    )
+    assert result is None
+
+
+def test_foreign_tenant_cannot_consume_consent():
+    from apps.backend.database import consume_compliance_consent
+    approval_id = _make_approved_consent(owner_user_id="alice", tenant_id="default")
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK, user_id="alice", tenant_id="tenant-x",
+    )
+    assert result is None
+
+
+def test_wrong_text_hash_is_rejected():
+    from apps.backend.database import consume_compliance_consent
+    approval_id = _make_approved_consent(owner_user_id="alice")
+    result = consume_compliance_consent(
+        approval_id=approval_id, task=_CONSENT_TASK + " zusaetzlicher Text", user_id="alice", tenant_id="default",
+    )
+    assert result is None
+
+
+def test_unapproved_consent_is_rejected():
+    import hashlib
+    from apps.backend.database import consume_compliance_consent, create_approval_request
+    approval = create_approval_request(
+        tool="compliance_consent",
+        input_params={"task_sha256": hashlib.sha256(_CONSENT_TASK.encode("utf-8")).hexdigest()},
+        risk_level="high", risk_reason="Test", tenant_id="default", owner_user_id="alice",
+    )  # bleibt "pending" -- nicht ueber /approve bestaetigt
+    result = consume_compliance_consent(
+        approval_id=approval["id"], task=_CONSENT_TASK, user_id="alice", tenant_id="default",
+    )
+    assert result is None
+
+
+def test_consent_used_audit_only_after_successful_atomic_consumption(client):
+    """Endpunkt-Ebene: erst nach erfolgreichem atomarem Verbrauch wird
+    compliance.consent_used auditiert -- ein zweiter Versuch mit derselben
+    Einwilligung (bereits 'consumed') erzeugt KEINEN weiteren Audit-Eintrag."""
+    _ensure_user("nutzer_consent1")
+    approval_id = _make_approved_consent(owner_user_id="nutzer_consent1")
+
+    resp1 = client.post(
+        "/agent/run",
+        json={"task": _CONSENT_TASK, "consent_approval_id": approval_id},
+        headers=_headers("nutzer_consent1"),
+    )
+    resp2 = client.post(
+        "/agent/run",
+        json={"task": _CONSENT_TASK, "consent_approval_id": approval_id},
+        headers=_headers("nutzer_consent1"),
+    )
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+
+    from apps.backend.database import query_audit_events
+    entries = query_audit_events(tenant_id="default", action="compliance.consent_used")
+    matching = [e for e in entries if e["metadata"].get("approval_id") == approval_id]
+    assert len(matching) == 1
+
+
 # 20. Bestandstestsuite bleibt vollstaendig gruen (Marker-Test; die eigentliche
 #     Vollpruefung erfolgt separat ueber "pytest tests/").
 def test_existing_suite_marker_placeholder():
