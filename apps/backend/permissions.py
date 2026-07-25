@@ -23,22 +23,25 @@ fremden gefundenen Datensatzes).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 try:
     from .auth.jwt_handler import TokenData
     from .auth.rbac import Role
     from .database import (
-        decide_approval_atomic, get_approval_request_for_tenant, get_user,
+        decide_approval_atomic, decide_approval_lock, get_approval_request_for_tenant, get_user,
         has_active_case_assignment, write_audit_entry,
     )
 except ImportError:
     from apps.backend.auth.jwt_handler import TokenData
     from apps.backend.auth.rbac import Role
     from apps.backend.database import (
-        decide_approval_atomic, get_approval_request_for_tenant, get_user,
+        decide_approval_atomic, decide_approval_lock, get_approval_request_for_tenant, get_user,
         has_active_case_assignment, write_audit_entry,
     )
 
@@ -60,6 +63,39 @@ _ROLE_MAPPING = {
     "admin": Role.ADMIN,
     "dsb": Role.DSB,
 }
+
+# required_approver_roles (siehe approval.py: APPROVAL_ROLES) verwendet
+# teils literale RBAC-Rollennamen ("admin", "manager", "user"), teils
+# fachliche Freigabe-Domaenen ("privacy", "security_lead", "legal",
+# "operations_lead"). Nur diese vier Domaenen werden auf eine bestehende
+# Fachrolle (PR 1, user_specialist_roles) abgebildet -- alles andere
+# Unbekannte traegt NICHT zur Freigabe bei (Default Deny). "owner" wird
+# IMMER ignoriert: das Vier-Augen-Prinzip erlaubt keine Selbstfreigabe
+# ausser der separat streng geprueften compliance_consent-Ausnahme.
+_LITERAL_ROLE_NAMES = {"user", "audit_viewer", "manager", "admin", "dsb"}
+_REQUIRED_ROLE_TO_SPECIALIST_DOMAIN = {
+    "privacy": "DATENSCHUTZBEAUFTRAGTER",
+    "security_lead": "INFORMATIONSSICHERHEITSBEAUFTRAGTER",
+    "legal": "RECHTSVERANTWORTLICHER",
+    "operations_lead": "BETRIEBSVERANTWORTLICHER",
+}
+
+
+def _resolve_required_roles(required_approver_roles: list[str] | None) -> tuple[set[str], set[str]]:
+    """(literale RBAC-Rollennamen, Fachrollen-Domaenen) aus
+    required_approver_roles. 'owner' und unbekannte Eintraege tragen nichts
+    zur Freigabe bei."""
+    literal_roles: set[str] = set()
+    specialist_domains: set[str] = set()
+    for entry in required_approver_roles or []:
+        if entry == "owner":
+            continue
+        if entry in _LITERAL_ROLE_NAMES:
+            literal_roles.add(entry)
+        elif entry in _REQUIRED_ROLE_TO_SPECIALIST_DOMAIN:
+            specialist_domains.add(_REQUIRED_ROLE_TO_SPECIALIST_DOMAIN[entry])
+        # sonst: unbekannt/nicht sicher abbildbar -> ignoriert (Default Deny)
+    return literal_roles, specialist_domains
 
 
 @dataclass(frozen=True)
@@ -123,7 +159,7 @@ def is_valid_own_compliance_consent(approval: dict[str, Any], actor: TokenData) 
         return False
     params = approval.get("input_params") or {}
     task_sha256 = params.get("task_sha256")
-    if not isinstance(task_sha256, str) or len(task_sha256) != 64:
+    if not isinstance(task_sha256, str) or not _SHA256_HEX_RE.match(task_sha256):
         return False
     return True
 
@@ -180,14 +216,14 @@ def evaluate_permission(
 def decide_approval(
     *, actor: TokenData, tenant_id: str, approval_id: int, new_status: str, note: str = "",
 ) -> ApprovalDecisionResult:
-    """Fuehrt Autorisierung, Statuspruefung und Aenderung als eine
-    zusammenhaengende, atomare Entscheidungsoperation aus.
-
-    Reihenfolge ist sicherheitsrelevant: ZUSTAENDIGKEIT wird IMMER zuerst
-    geprueft, bevor irgendetwas ueber Status oder Ablauf preisgegeben wird.
-    Eine nicht zustaendige Person erhaelt in JEDEM Fall (egal ob die Anfrage
-    nicht existiert, einem fremden Tenant gehoert, bereits entschieden oder
-    abgelaufen ist) exakt dieselbe neutrale Antwort -- kein Existenzleck."""
+    """Fuehrt Autorisierung (Zuweisung + passende Rolle/Fachzustaendigkeit
+    ODER geprueften Selbstkonsens) UND die Statusaenderung als EINE
+    atomare Datenbankoperation aus (decide_approval_atomic). Es gibt
+    KEINE separate vorgelagerte Zuweisungs-/Rollenpruefung mehr -- die
+    Bedingung ist Teil desselben UPDATE-Statements, damit ein Widerruf der
+    Zuweisung (oder der Fachrolle) genau zwischen einer fruehen Pruefung
+    und der Aenderung die Entscheidung nicht mehr durchrutschen lassen
+    kann."""
     if actor is None:
         return ApprovalDecisionResult(False, False, "NO_SESSION", "Bitte melden Sie sich an.")
 
@@ -200,53 +236,62 @@ def decide_approval(
         )
         return ApprovalDecisionResult(False, False, "UNKNOWN_ROLE", "Ihre Berechtigung konnte nicht ermittelt werden.")
 
-    # Aktuellen Nutzerstatus serverseitig aus der DB lesen, SOWEIT ein
-    # Datensatz existiert -- ein zwischenzeitlich gesperrter/deaktivierter
-    # Nutzer darf mit einem noch gueltigen alten Token keine Entscheidung
-    # ausfuehren. Existiert (noch) kein users-Datensatz, wird das aktuelle,
-    # rein tokenbasierte Architekturmodell beibehalten (kein neues Login-
-    # Pflichtfeld in PR 2); die vollstaendige tenant_memberships-basierte
-    # Session-Invalidierung folgt in PR 3.
-    db_user = get_user(actor.user_id, tenant_id=actor.tenant_id)
-    if db_user is not None and (not db_user.get("active") or _is_locked(db_user)):
+    # decide_approval_lock wird ueber den GESAMTEN restlichen Vorgang
+    # gehalten (Lesen + atomare Aenderung), nicht nur um das UPDATE. Grund:
+    # die aktuelle SQLite-:memory:-Anbindung teilt sich ueber StaticPool
+    # eine einzige rohe Verbindung zwischen allen Threads: nebenlaeufige
+    # Lesezugriffe (get_user/get_approval_request_for_tenant) EINES anderen
+    # Threads koennen die Cursor-/Verbindungszustaende sonst waehrend des
+    # kritischen Abschnitts stoeren, selbst wenn nur das abschliessende
+    # UPDATE separat gesperrt waere (siehe database.decide_approval_lock).
+    with decide_approval_lock:
+        # Aktuellen Nutzerstatus serverseitig aus der DB lesen, SOWEIT ein
+        # Datensatz existiert -- ein zwischenzeitlich gesperrter/deaktivierter
+        # Nutzer darf mit einem noch gueltigen alten Token keine Entscheidung
+        # ausfuehren. Existiert (noch) kein users-Datensatz, wird das aktuelle,
+        # rein tokenbasierte Architekturmodell beibehalten (kein neues Login-
+        # Pflichtfeld in PR 2); die vollstaendige tenant_memberships-basierte
+        # Session-Invalidierung folgt in PR 3.
+        db_user = get_user(actor.user_id, tenant_id=actor.tenant_id)
+        if db_user is not None and (not db_user.get("active") or _is_locked(db_user)):
+            return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
+
+        # Tenant-gebundener Lookup NUR um required_approver_roles und die
+        # compliance_consent-Ausnahme zu bestimmen -- das Ergebnis dieses
+        # Lesens wird NICHT als Autorisierung verwendet (siehe unten),
+        # sondern ausschliesslich zur Herleitung statischer, waehrend der
+        # Laufzeit einer Anfrage nicht mehr aenderbarer Werte (Tool-Name,
+        # Owner, geforderte Rollen -- diese Felder haben nach dem Erstellen
+        # keinen Aenderungspfad).
+        approval = get_approval_request_for_tenant(approval_id, tenant_id)
+        if approval is None:
+            return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
+
+        allow_consent_owner = is_valid_own_compliance_consent(approval, actor)
+        literal_roles, specialist_domains = _resolve_required_roles(approval.get("required_approver_roles"))
+        token_role_matches_literal = bool(actor.role) and actor.role.lower() in literal_roles
+
+        # EINE atomare Operation: Zuweisung (nicht widerrufen/abgelaufen),
+        # passende Fachrolle/Rolle, Tenant, Status=pending und Ablauf werden
+        # alle im selben UPDATE-Statement geprueft.
+        outcome, entry = decide_approval_atomic(
+            approval_id=approval_id, tenant_id=tenant_id, actor_user_id=actor.user_id,
+            new_status=new_status, note=note,
+            allow_consent_owner=allow_consent_owner,
+            literal_roles=literal_roles, specialist_domains=specialist_domains,
+            token_role_matches_literal=token_role_matches_literal,
+        )
+
+    if outcome == "OK":
+        return ApprovalDecisionResult(True, True, "OK", "Entscheidung gespeichert.", entry)
+    if outcome == "NOT_ZUSTAENDIG":
+        # Dieselbe neutrale Antwort wie bei Nichtexistenz/fremdem Tenant --
+        # kein Existenzleck ueber unterschiedliche Antworten.
         return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
-
-    # Tenant-gebundener Lookup: eine Anfrage eines fremden Tenants existiert
-    # aus Sicht dieser Abfrage schlicht nicht.
-    approval = get_approval_request_for_tenant(approval_id, tenant_id)
-    if approval is None:
-        return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
-
-    # ZUSTAENDIGKEIT ZUERST -- unabhaengig von Status/Ablauf. Kein pauschales
-    # role >= MANAGER mehr. Nur aktive Zuweisung oder gepruefte eigene
-    # compliance_consent begruenden ueberhaupt eine Zustaendigkeit.
-    zustaendig = has_active_case_assignment(
-        "APPROVAL", str(approval_id), tenant_id, actor.user_id,
-    ) or is_valid_own_compliance_consent(approval, actor)
-
-    if not zustaendig:
-        # Absichtlich dieselbe neutrale Antwort wie bei Nichtexistenz --
-        # sonst koennte eine nicht zustaendige Person ueber den HTTP-Status
-        # erraten, ob eine Anfrage existiert/entschieden/abgelaufen ist.
-        return ApprovalDecisionResult(False, False, "NOT_FOUND_OR_FORBIDDEN", GENERIC_DENIED_MESSAGE)
-
-    # Erst NACH festgestellter Zustaendigkeit duerfen ALREADY_DECIDED/EXPIRED
-    # ueberhaupt unterschieden werden.
-    if approval["status"] != "pending":
-        return ApprovalDecisionResult(True, False, "ALREADY_DECIDED", "Diese Anfrage wurde bereits entschieden.", approval)
-
-    expires_at = approval.get("expires_at")
-    if expires_at is not None and _as_aware_utc(expires_at) < datetime.now(timezone.utc):
-        return ApprovalDecisionResult(True, False, "EXPIRED", "Diese Anfrage ist abgelaufen.", approval)
-
-    # Atomare Aenderung: Autorisierung/Statuspruefung oben, die eigentliche
-    # UPDATE-Bedingung (Tenant + weiterhin 'pending') wird in derselben
-    # Transaktion erneut durchgesetzt, um ein Race zwischen zwei
-    # gleichzeitigen Entscheidungen auszuschliessen.
-    rowcount, entry = decide_approval_atomic(approval_id, tenant_id, new_status, note)
-    if rowcount != 1:
-        # Eine parallele Anfrage war schneller -- kein Erfolg, kein
-        # Erfolgs-Audit, kontrollierter Konflikt statt stillem "OK".
-        return ApprovalDecisionResult(True, False, "CONFLICT", "Diese Anfrage wurde soeben bereits entschieden.", entry)
-
-    return ApprovalDecisionResult(True, True, "OK", "Entscheidung gespeichert.", entry)
+    if outcome == "ALREADY_DECIDED":
+        return ApprovalDecisionResult(True, False, "ALREADY_DECIDED", "Diese Anfrage wurde bereits entschieden.", entry)
+    if outcome == "EXPIRED":
+        return ApprovalDecisionResult(True, False, "EXPIRED", "Diese Anfrage ist abgelaufen.", entry)
+    # CONFLICT: zustaendig, aber eine parallele Anfrage war zwischen
+    # Pruefung und UPDATE schneller -- kein Erfolg, kein Erfolgs-Audit.
+    return ApprovalDecisionResult(True, False, "CONFLICT", "Diese Anfrage wurde soeben bereits entschieden.", entry)

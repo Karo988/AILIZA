@@ -75,16 +75,21 @@ def test_approve_with_login_succeeds(client):
     from apps.backend.database import create_case_assignment, create_user, get_user
 
     approval_id = _make_pending_approval()
-    if get_user("managerin1", tenant_id="default") is None:
-        create_user("managerin1", "default", "manager", hashed_password="x")
+    # required_approver_roles fuer risk_level="high" ist per Voreinstellung
+    # ["admin", "owner"] -- die zugewiesene Testperson braucht daher
+    # tatsaechlich die Rolle "admin" (nicht nur irgendeine Zuweisung), seit
+    # required_approver_roles verbindlich ausgewertet wird.
+    if get_user("adminin1", tenant_id="default") is None:
+        create_user("adminin1", "default", "admin", hashed_password="x")
     create_case_assignment(
         case_type="APPROVAL", case_id=str(approval_id), tenant_id="default",
-        assigned_to_user_id="managerin1", assigned_by_user_id="managerin1",
+        assigned_to_user_id="adminin1", assigned_by_user_id="adminin1",
         assignment_reason="Test-Zustaendigkeit",
     )
+    from apps.backend.auth.jwt_handler import create_token
     resp = client.post(
         f"/approvals/{approval_id}/approve",
-        headers={"Authorization": f"Bearer {_manager_token()}"},
+        headers={"Authorization": f"Bearer {create_token('adminin1', 'default', 'admin')}"},
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"

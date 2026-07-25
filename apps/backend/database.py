@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, or_, select, text, update
+from sqlalchemy import (
+    Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text,
+    and_, create_engine, delete, exists, insert, literal, or_, select, text, update,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
@@ -705,8 +709,18 @@ def _get_latest_audit_hash(connection: Any) -> str:
     return row[0]
 
 
+_audit_write_lock = threading.Lock()
+
+
 def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
                       tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
+    """Lesen des vorherigen Hash-Chain-Werts und Insert muessen als EINE
+    Einheit ablaufen -- ohne Sperre koennen zwei gleichzeitige Aufrufe
+    (z.B. zwei parallele Genehmigungsentscheidungen) denselben previous_hash
+    lesen, wodurch ein Audit-Eintrag verloren gehen bzw. die Hash-Chain
+    inkonsistent werden kann. Prozessweite Sperre reicht fuer das aktuelle
+    Single-Prozess-SQLite-Setup; bei mehreren Worker-Prozessen bräuchte es
+    zusaetzlich eine DB-seitige Sperre (out of scope hier)."""
     ts = datetime.now(timezone.utc)
     entry: dict[str, Any] = {
         "timestamp": ts,
@@ -715,7 +729,7 @@ def write_audit_entry(action: str, metadata: dict[str, Any] | None = None,
         "tenant_id": tenant_id,
     }
 
-    with engine.begin() as connection:
+    with _audit_write_lock, engine.begin() as connection:
         previous_hash = _get_latest_audit_hash(connection)
         entry["previous_hash"] = previous_hash
         # Temporärer Hash ohne ID — wird nach Insert mit echter ID berechnet
@@ -1262,17 +1276,13 @@ def list_own_or_assigned_agent_runs(
     """PR 2: ersetzt die zuvor ungefilterte list_agent_runs() fuer den
     Self-Service-Endpunkt -- nur eigene ODER ausdruecklich zugewiesene Runs,
     niemals tenant-weit ungefiltert."""
-    assigned_ids = {
-        a["case_id"] for a in list_active_case_assignments(user_id, tenant_id)
-        if a["case_type"] == "AGENT_RUN"
-    }
-    conditions = [agent_runs.c.owner_user_id == user_id]
-    if assigned_ids:
-        conditions.append(agent_runs.c.id.in_(assigned_ids))
     query = (
         select(agent_runs)
         .where(agent_runs.c.tenant_id == tenant_id)
-        .where(or_(*conditions))
+        .where(or_(
+            agent_runs.c.owner_user_id == user_id,
+            _active_assignment_exists_clause("AGENT_RUN", agent_runs.c.id, tenant_id, user_id),
+        ))
         .order_by(agent_runs.c.updated_at.desc())
         .limit(limit)
     )
@@ -1289,21 +1299,16 @@ def list_own_or_assigned_approvals(
     """PR 2: ersetzt die zuvor ungefilterte list_approval_requests() fuer den
     Self-Service-Endpunkt -- nur eigene ODER ausdruecklich zugewiesene
     Genehmigungsanfragen."""
-    assigned_ids: set[int] = set()
-    for a in list_active_case_assignments(user_id, tenant_id):
-        if a["case_type"] != "APPROVAL":
-            continue
-        try:
-            assigned_ids.add(int(a["case_id"]))
-        except (TypeError, ValueError):
-            continue
-    conditions = [approval_requests.c.owner_user_id == user_id]
-    if assigned_ids:
-        conditions.append(approval_requests.c.id.in_(assigned_ids))
+    from sqlalchemy import cast
     query = (
         select(approval_requests)
         .where(approval_requests.c.tenant_id == tenant_id)
-        .where(or_(*conditions))
+        .where(or_(
+            approval_requests.c.owner_user_id == user_id,
+            _active_assignment_exists_clause(
+                "APPROVAL", cast(approval_requests.c.id, String), tenant_id, user_id,
+            ),
+        ))
         .order_by(approval_requests.c.created_at.desc())
     )
     if status:
@@ -1313,26 +1318,38 @@ def list_own_or_assigned_approvals(
     return [dict(row) for row in rows]
 
 
-def _assigned_case_ids(case_type: str, tenant_id: str, user_id: str) -> set[str]:
-    return {
-        a["case_id"] for a in list_active_case_assignments(user_id, tenant_id)
-        if a["case_type"] == case_type
-    }
+def _active_assignment_exists_clause(case_type: str, case_id_expr, tenant_id: str, user_id: str):
+    """Korrelierte EXISTS-Bedingung fuer eine aktive (nicht widerrufene, nicht
+    abgelaufene) Vorgangszuteilung -- wird DIREKT in die jeweilige
+    Ressourcenabfrage bzw. das UPDATE eingebettet, statt Zuweisungs-IDs in
+    einer separaten Abfrage vorzuladen. Damit gibt es keinen Zeitraum
+    zwischen zwei getrennten Abfragen, in dem ein zwischenzeitlicher
+    Widerruf wirkungslos bliebe."""
+    now = datetime.now(timezone.utc)
+    return exists(
+        select(case_assignments.c.id)
+        .where(case_assignments.c.case_type == case_type)
+        .where(case_assignments.c.case_id == case_id_expr)
+        .where(case_assignments.c.tenant_id == tenant_id)
+        .where(case_assignments.c.assigned_to_user_id == user_id)
+        .where(case_assignments.c.revoked_at.is_(None))
+        .where(or_(case_assignments.c.valid_until.is_(None), case_assignments.c.valid_until > now))
+    )
 
 
 def get_accessible_agent_run(run_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
-    """PR 2 Nachbesserung: Detail-Lookup mit Tenant-/Owner-/Zuweisungsfilter
-    DIREKT in der Datenbankabfrage -- ein fremder Datensatz wird nie erst
-    geladen und danach verworfen, er wird schon von der Query ausgeschlossen."""
-    assigned_ids = _assigned_case_ids("AGENT_RUN", tenant_id, user_id)
-    conditions = [agent_runs.c.owner_user_id == user_id]
-    if assigned_ids:
-        conditions.append(agent_runs.c.id.in_(assigned_ids))
+    """PR 2 Nachbesserung: Tenant-/Owner-/Zuweisungsfilter als EINE
+    korrelierte Abfrage (EXISTS) -- kein Vorladen von Zuweisungs-IDs in
+    einem separaten Schritt, kein Zeitfenster fuer einen wirkungslosen
+    zwischenzeitlichen Widerruf."""
     query = (
         select(agent_runs)
         .where(agent_runs.c.id == run_id)
         .where(agent_runs.c.tenant_id == tenant_id)
-        .where(or_(*conditions))
+        .where(or_(
+            agent_runs.c.owner_user_id == user_id,
+            _active_assignment_exists_clause("AGENT_RUN", agent_runs.c.id, tenant_id, user_id),
+        ))
     )
     with engine.begin() as connection:
         row = connection.execute(query).mappings().first()
@@ -1353,45 +1370,162 @@ def get_approval_request_for_tenant(approval_id: int, tenant_id: str) -> dict[st
 
 
 def get_accessible_approval(approval_id: int, tenant_id: str, user_id: str) -> dict[str, Any] | None:
-    assigned_ids = _assigned_case_ids("APPROVAL", tenant_id, user_id)
-    conditions = [approval_requests.c.owner_user_id == user_id]
-    if assigned_ids:
-        conditions.append(approval_requests.c.id.in_(assigned_ids))
+    from sqlalchemy import cast
     query = (
         select(approval_requests)
         .where(approval_requests.c.id == approval_id)
         .where(approval_requests.c.tenant_id == tenant_id)
-        .where(or_(*conditions))
+        .where(or_(
+            approval_requests.c.owner_user_id == user_id,
+            _active_assignment_exists_clause(
+                "APPROVAL", cast(approval_requests.c.id, String), tenant_id, user_id,
+            ),
+        ))
     )
     with engine.begin() as connection:
         row = connection.execute(query).mappings().first()
     return dict(row) if row else None
 
 
+# Oeffentlich (kein Unterstrich-Praefix), da der Aufrufer (permissions.py)
+# den GESAMTEN Entscheidungsvorgang serialisieren muss, nicht nur das
+# abschliessende UPDATE -- siehe Docstring unten.
+decide_approval_lock = threading.RLock()
+
+
 def decide_approval_atomic(
-    approval_id: int, tenant_id: str, new_status: str, note: str = "",
-) -> tuple[int, dict[str, Any] | None]:
-    """Atomare Entscheidung: Autorisierung wurde bereits vom Aufrufer
-    geprueft, aber die eigentliche Statusaenderung MUSS ihre eigene
-    Bedingung (Tenant + weiterhin 'pending') in genau derselben Transaktion
-    erneut durchsetzen. Nur rowcount == 1 ist ein tatsaechlicher Erfolg --
-    bei rowcount == 0 hat eine parallele Anfrage die Entscheidung bereits
-    getroffen, und der Aufrufer darf KEINEN Erfolg melden/protokollieren."""
-    resolved_at = datetime.now(timezone.utc)
-    query = (
+    *, approval_id: int, tenant_id: str, actor_user_id: str, new_status: str, note: str,
+    allow_consent_owner: bool, literal_roles: set[str], specialist_domains: set[str],
+    token_role_matches_literal: bool,
+) -> tuple[str, dict[str, Any] | None]:
+    """Autorisierung (Zuweisung + passende Rolle/Fachzustaendigkeit) UND
+    Statusaenderung als EINE atomare SQL-Operation. Die WHERE-Klausel des
+    UPDATE prueft Zuweisung, Fachrolle/Rolle, Tenant, Status und Ablauf alle
+    im selben Statement -- ein Widerruf der Zuweisung (oder der Fachrolle)
+    genau zwischen einer vorgelagerten Pruefung und dem UPDATE kann die
+    Entscheidung damit nicht mehr durchrutschen lassen, weil es keine
+    vorgelagerte Pruefung mehr gibt: die Bedingung IST das UPDATE.
+
+    Rueckgabe (outcome, entry):
+      OK               -- Entscheidung gespeichert (rowcount == 1).
+      NOT_ZUSTAENDIG   -- Person ist nicht zustaendig (Default-Antwort fuer
+                           nicht existent/fremder Tenant/keine Zuweisung o.
+                           passende Rolle -- absichtlich nicht unterscheidbar).
+      ALREADY_DECIDED  -- zustaendig, aber Status bereits != pending.
+      EXPIRED          -- zustaendig, aber abgelaufen.
+      CONFLICT         -- zustaendig und (noch) gueltig, aber eine parallele
+                           Anfrage war zwischen Pruefung und UPDATE schneller.
+
+    Prozess-Sperre (decide_approval_lock): die aktuelle SQLite-Anbindung fuer
+    :memory:-Datenbanken teilt sich ueber StaticPool EINE rohe sqlite3-
+    Verbindung zwischen allen Threads (das ist bei In-Memory-SQLite noetig,
+    damit alle Threads dieselben Daten sehen). Nebenlaeufige execute()-
+    Aufrufe auf DERSELBEN rohen sqlite3-Verbindung aus mehreren Threads sind
+    NICHT sicher serialisiert -- das betrifft nicht nur dieses UPDATE,
+    sondern JEDE Abfrage waehrend des Entscheidungsvorgangs (auch die
+    vorgelagerten Lesezugriffe in permissions.decide_approval()). Der
+    Aufrufer haelt decide_approval_lock daher ueber den GESAMTEN
+    Entscheidungsvorgang, nicht nur ueber diese Funktion. Fuer eine
+    produktive Mehrprozess-/Mehrverbindungs-Datenbank (z.B. Postgres) waere
+    stattdessen eine DB-seitige Sperre (SELECT ... FOR UPDATE oder ein
+    Advisory Lock) der naechste Schritt -- das bleibt aus SQLite-Sicht
+    bewusst ausserhalb dieses PRs.
+    """
+    now = datetime.now(timezone.utc)
+    case_id_str = str(approval_id)
+
+    assignment_exists = _active_assignment_exists_clause(
+        "APPROVAL", literal(case_id_str), tenant_id, actor_user_id,
+    )
+
+    specialist_exists = (
+        exists(
+            select(user_specialist_roles.c.id)
+            .where(user_specialist_roles.c.user_id == actor_user_id)
+            .where(user_specialist_roles.c.tenant_id == tenant_id)
+            .where(user_specialist_roles.c.is_active == 1)
+            .where(user_specialist_roles.c.revoked_at.is_(None))
+            .where(or_(
+                user_specialist_roles.c.valid_until.is_(None),
+                user_specialist_roles.c.valid_until > now,
+            ))
+            .where(user_specialist_roles.c.specialist_role.in_(specialist_domains))
+        ) if specialist_domains else literal(False)
+    )
+
+    literal_role_exists = (
+        exists(
+            select(users.c.user_id)
+            .where(users.c.user_id == actor_user_id)
+            .where(users.c.tenant_id == tenant_id)
+            .where(users.c.role.in_(literal_roles))
+        ) if literal_roles else literal(False)
+    )
+
+    no_user_row_exists = ~exists(
+        select(users.c.user_id)
+        .where(users.c.user_id == actor_user_id)
+        .where(users.c.tenant_id == tenant_id)
+    )
+
+    # Fallback nur fuer das aktuell rein tokenbasierte Architekturmodell
+    # (kein users-Datensatz vorhanden): dann zaehlt die Rolle aus dem Token.
+    # Existiert ein users-Datensatz, ist NUR dessen aktuelle Rolle massgeblich.
+    role_match = or_(
+        specialist_exists,
+        literal_role_exists,
+        and_(no_user_row_exists, literal(bool(token_role_matches_literal))),
+    )
+
+    zustaendig = or_(
+        and_(assignment_exists, role_match),
+        and_(literal(bool(allow_consent_owner)), approval_requests.c.owner_user_id == actor_user_id),
+    )
+
+    update_query = (
         update(approval_requests)
         .where(approval_requests.c.id == approval_id)
         .where(approval_requests.c.tenant_id == tenant_id)
         .where(approval_requests.c.status == "pending")
-        .values(status=new_status, resolved_at=resolved_at, note=note)
+        .where(or_(approval_requests.c.expires_at.is_(None), approval_requests.c.expires_at > now))
+        .where(zustaendig)
+        .values(status=new_status, resolved_at=now, note=note)
     )
-    with engine.begin() as connection:
-        result = connection.execute(query)
+
+    with decide_approval_lock, engine.begin() as connection:
+        result = connection.execute(update_query)
         rowcount = result.rowcount
-        row = connection.execute(
-            select(approval_requests).where(approval_requests.c.id == approval_id)
+        entry_row = connection.execute(
+            select(approval_requests)
+            .where(approval_requests.c.id == approval_id)
+            .where(approval_requests.c.tenant_id == tenant_id)
         ).mappings().first()
-    return rowcount, (dict(row) if row else None)
+        entry = dict(entry_row) if entry_row else None
+
+        if rowcount == 1:
+            return "OK", entry
+
+        if entry is None:
+            return "NOT_ZUSTAENDIG", None
+
+        # Differenzierung NUR fuer die Fehlermeldung, in derselben
+        # Transaktion/Verbindung wie das gescheiterte UPDATE -- kein neues
+        # Zeitfenster, da hier keine weitere Zustandsaenderung stattfindet.
+        zustaendig_row = connection.execute(
+            select(literal(True))
+            .select_from(approval_requests)
+            .where(approval_requests.c.id == approval_id)
+            .where(approval_requests.c.tenant_id == tenant_id)
+            .where(zustaendig)
+        ).first()
+        if not zustaendig_row:
+            return "NOT_ZUSTAENDIG", None
+        if entry["status"] != "pending":
+            return "ALREADY_DECIDED", entry
+        expires_at = entry.get("expires_at")
+        if expires_at is not None and _as_aware_utc(expires_at) < now:
+            return "EXPIRED", entry
+        return "CONFLICT", entry
 
 
 # ── Reflection Facts ─────────────────────────────────────────────────────────

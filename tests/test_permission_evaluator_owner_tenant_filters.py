@@ -73,11 +73,19 @@ def _assign_approval(approval_id, user_id: str, tenant_id: str = "default", **kw
     )
 
 
-def _make_approval(tenant_id: str = "default", owner_user_id: str | None = None, run_id: str | None = None):
+def _make_approval(
+    tenant_id: str = "default", owner_user_id: str | None = None, run_id: str | None = None,
+    required_approver_roles: list[str] | None = None,
+):
     from apps.backend.database import create_approval_request
     return create_approval_request(
         tool="llm_call", input_params={"task_length": 10}, risk_level="high",
         risk_reason="Test", run_id=run_id, tenant_id=tenant_id, owner_user_id=owner_user_id,
+        # Default in Tests: "manager" statt der Produktions-Voreinstellung
+        # ["admin", "owner"] fuer HIGH, damit die Manager-Testnutzer in
+        # diesem Modul eine tatsaechlich zutreffende erforderliche Rolle
+        # haben (required_approver_roles wird jetzt verbindlich ausgewertet).
+        required_approver_roles=required_approver_roles or ["manager"],
     )
 
 
@@ -413,18 +421,34 @@ def test_locked_user_session_rejected_for_decide(client):
     assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
 
 
-# Zwei gleichzeitige Entscheidungen fuehren zu genau einem Erfolg; der
-# unterlegene Request erzeugt keinen Erfolg und kein Erfolgs-Audit.
-def test_concurrent_decisions_only_one_succeeds(client):
+# Zwei ECHT gleichzeitig gestartete Entscheidungen (zwei Threads, per
+# Barrier synchronisiert) fuehren zu genau einem Erfolg; der unterlegene
+# Request erzeugt keinen Erfolg und kein Erfolgs-Audit. In-memory SQLite
+# laeuft hier ueber StaticPool + check_same_thread=False, daher teilen sich
+# beide Threads dieselbe Datenbank.
+def test_concurrent_decisions_only_one_succeeds_real_threads(client):
+    import threading
+
     approval = _make_approval(owner_user_id="bob")
     _assign_approval(approval["id"], "managerin1", role="manager")
     headers = _headers("managerin1", role="manager")
 
-    first = client.post(f"/approvals/{approval['id']}/approve", headers=headers)
-    second = client.post(f"/approvals/{approval['id']}/approve", headers=headers)
+    barrier = threading.Barrier(2)
+    results: list[int] = [0, 0]
 
-    statuses = sorted([first.status_code, second.status_code])
-    assert statuses == [200, 409]
+    def _decide(idx: int) -> None:
+        barrier.wait(timeout=5)
+        resp = client.post(f"/approvals/{approval['id']}/approve", headers=headers)
+        results[idx] = resp.status_code
+
+    t1 = threading.Thread(target=_decide, args=(0,))
+    t2 = threading.Thread(target=_decide, args=(1,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert sorted(results) == [200, 409]
 
     from apps.backend.database import query_audit_events
     entries = query_audit_events(tenant_id="default", action="approval.approved")
@@ -444,6 +468,95 @@ def test_manipulated_compliance_consent_without_task_binding_is_rejected(client)
         tenant_id="default", owner_user_id="alice",
     )
     resp = client.post(f"/approvals/{approval['id']}/approve", headers=_headers("alice"))
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# compliance_consent.task_sha256 muss exakt 64 Hexzeichen enthalten -- ein
+# Wert mit korrekter Laenge, aber ungueltigen Zeichen (kein SHA-256-Hex),
+# wird ebenfalls abgelehnt.
+def test_compliance_consent_task_sha256_must_be_valid_hex(client):
+    from apps.backend.database import create_approval_request
+    fake_hash_wrong_chars = "z" * 64  # 64 Zeichen, aber kein Hex-Alphabet
+    approval = create_approval_request(
+        tool="compliance_consent",
+        input_params={"task_sha256": fake_hash_wrong_chars},
+        risk_level="high", risk_reason="Test",
+        tenant_id="default", owner_user_id="alice",
+    )
+    resp = client.post(f"/approvals/{approval['id']}/approve", headers=_headers("alice"))
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Zuweisung ohne zur Genehmigung passende required_approver_roles reicht
+# NICHT aus -- eine aktive Zuweisung allein begruendet keine Entscheidungs-
+# berechtigung mehr.
+def test_assignment_without_matching_required_role_cannot_decide(client):
+    approval = _make_approval(owner_user_id="bob", required_approver_roles=["admin"])
+    _assign_approval(approval["id"], "managerin1", role="manager")  # nur "manager", nicht "admin"
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Passende Zuweisung PLUS passende Fachzustaendigkeit (user_specialist_roles,
+# PR 1) fuehrt zur erfolgreichen Entscheidung.
+def test_assignment_with_matching_specialist_domain_can_decide(client):
+    from apps.backend.database import create_specialist_role_assignment
+    approval = _make_approval(owner_user_id="bob", required_approver_roles=["privacy"])
+    _assign_approval(approval["id"], "dsb_fach1", role="user")
+    create_specialist_role_assignment(
+        user_id="dsb_fach1", tenant_id="default", specialist_role="DATENSCHUTZBEAUFTRAGTER",
+        assigned_by_user_id="assignerin", assignment_reason="Test-Fachrolle",
+    )
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("dsb_fach1", role="user"),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+
+
+# Eine unbekannte/nicht abbildbare erforderliche Rolle fuehrt zu Default
+# Deny -- selbst mit aktiver Zuweisung kann niemand entscheiden.
+def test_unknown_required_role_defaults_to_deny(client):
+    approval = _make_approval(owner_user_id="bob", required_approver_roles=["voellig_unbekannte_fachrolle"])
+    _assign_approval(approval["id"], "managerin1", role="manager")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Eine Zuweisung, die unmittelbar vor dem Entscheiden widerrufen wird, macht
+# die Entscheidung wirkungslos -- die Autorisierung ist Teil desselben
+# atomaren UPDATE, es gibt kein Zeitfenster fuer einen "durchrutschenden"
+# Widerruf.
+def test_assignment_revoked_just_before_decide_blocks_decision(client):
+    from apps.backend.database import revoke_case_assignment
+    approval = _make_approval(owner_user_id="bob")
+    assignment = _assign_approval(approval["id"], "managerin1", role="manager")
+    revoke_case_assignment(assignment["id"], tenant_id="default", revoked_by_user_id="assignerin")
+    resp = client.post(
+        f"/approvals/{approval['id']}/approve", headers=_headers("managerin1", role="manager"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
+
+
+# Eine widerrufene Zuweisung kann auch beim Detailzugriff (GET) kein kurzes
+# Race erzeugen -- die Zuweisungspruefung ist eine korrelierte EXISTS-
+# Bedingung direkt in derselben Abfrage wie der Ressourcen-Lookup, nicht
+# zwei getrennte Abfragen.
+def test_revoked_approval_assignment_denies_detail_access(client):
+    from apps.backend.database import revoke_case_assignment
+    approval = _make_approval(owner_user_id="bob")
+    assignment = _assign_approval(approval["id"], "managerin1", role="manager")
+    revoke_case_assignment(assignment["id"], tenant_id="default", revoked_by_user_id="assignerin")
+    resp = client.get(f"/approvals/{approval['id']}", headers=_headers("managerin1", role="manager"))
     assert resp.status_code == 404
     assert resp.json()["detail"] == GENERIC_DENIED_MESSAGE
 
