@@ -2376,10 +2376,16 @@ async function deleteMyData(){
 }
 // ── Auth (Login deaktiviert — kommt später) ──
 function authHeaders(){return{"Content-Type":"application/json"};}
-// App direkt starten
-if(localStorage.getItem("ailiza_consent")==="1"){init();}
-
-// else: Consent-Screen bleibt sichtbar
+// App direkt starten. Frueher hier ein Bootstrap-Gate auf
+// localStorage["ailiza_consent"] === "1" -- dieser Schluessel wurde von
+// KEINER Stelle im Code je gesetzt (kein Consent-Screen existiert), init()
+// lief dadurch bei jedem frischen Browser NIE: Verbindungsstatus blieb
+// dauerhaft beim statischen "Verbinde…"-Platzhalter haengen, Health-Check/
+// Auth-Status/Chat-Laden fanden nie statt. Zu unterscheiden von
+// "ailiza_pii_consent" (Zeile ~1894) -- das ist die WEITERHIN aktive,
+// funktionierende Datenschutz-Bestaetigung fuer das Senden sensibler Daten
+// im Chat und bleibt unveraendert. init() startet jetzt immer.
+init();
 </script>
 </body>
 </html>
