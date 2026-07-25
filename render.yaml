@@ -3,6 +3,11 @@ services:
     name: ailiza-backend
     runtime: python
     buildCommand: pip install -r apps/backend/requirements-core.txt
+    # WICHTIG (PR 2): NICHT mit --workers > 1 starten und NICHT als mehrere
+    # parallele Instanzen betreiben -- die Genehmigungs-Atomaritaet
+    # (decide_approval_lock) und die Audit-Hash-Chain (_audit_write_lock)
+    # sind aktuell nur prozessinterne Python-Sperren, keine DB-seitige
+    # Sperre. Siehe DEPLOY_RENDER.md.
     startCommand: uvicorn apps.backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: AILIZA_EXTERNAL_LLM_ENABLED

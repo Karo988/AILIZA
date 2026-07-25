@@ -57,6 +57,15 @@ def client():
 
 def _auth():
     from apps.backend.auth.jwt_handler import create_token
+    from apps.backend.database import create_user, get_user
+    # PR 2 Nachbesserung: eine Genehmigungsentscheidung (auch die eigene
+    # compliance_consent) verlangt seit der Haertung IMMER einen aktuellen,
+    # aktiven users-Datensatz (kein Token-Rollen-Fallback mehr, Default Deny
+    # ohne Datensatz) -- in einer echten Session existiert dieser Datensatz
+    # durch die Registrierung, hier muss er fuer den Test explizit angelegt
+    # werden.
+    if get_user("nutzer1", tenant_id="default") is None:
+        create_user("nutzer1", "default", "user", hashed_password="x")
     return {"Authorization": f"Bearer {create_token('nutzer1', 'default', 'user')}"}
 
 

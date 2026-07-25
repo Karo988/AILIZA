@@ -36,6 +36,11 @@ def _user_token():
     return create_token("betroffene1", "default", "user")
 
 
+def _manager_token():
+    from apps.backend.auth.jwt_handler import create_token
+    return create_token("managerin1", "default", "manager")
+
+
 def _make_pending_approval() -> int:
     from apps.backend.database import create_approval_request
     entry = create_approval_request(
@@ -61,10 +66,30 @@ def test_reject_without_login_rejected(client):
 
 
 def test_approve_with_login_succeeds(client):
+    # PR 2 (Nachbesserung): eine einfache Login-Session -- auch mit
+    # Role.MANAGER -- reicht seit der Korrektur bewusst NICHT mehr aus, um
+    # eine fremde Freigabe zu entscheiden. Es gibt kein pauschales
+    # role >= MANAGER mehr; nur eine aktive case_assignment oder eine
+    # gepruefte eigene compliance_consent begruenden eine Zustaendigkeit.
+    # Fuer den Erfolgsfall wird hier daher eine explizite Zuweisung angelegt.
+    from apps.backend.database import create_case_assignment, create_user, get_user
+
     approval_id = _make_pending_approval()
+    # required_approver_roles fuer risk_level="high" ist per Voreinstellung
+    # ["admin", "owner"] -- die zugewiesene Testperson braucht daher
+    # tatsaechlich die Rolle "admin" (nicht nur irgendeine Zuweisung), seit
+    # required_approver_roles verbindlich ausgewertet wird.
+    if get_user("adminin1", tenant_id="default") is None:
+        create_user("adminin1", "default", "admin", hashed_password="x")
+    create_case_assignment(
+        case_type="APPROVAL", case_id=str(approval_id), tenant_id="default",
+        assigned_to_user_id="adminin1", assigned_by_user_id="adminin1",
+        assignment_reason="Test-Zustaendigkeit",
+    )
+    from apps.backend.auth.jwt_handler import create_token
     resp = client.post(
         f"/approvals/{approval_id}/approve",
-        headers={"Authorization": f"Bearer {_user_token()}"},
+        headers={"Authorization": f"Bearer {create_token('adminin1', 'default', 'admin')}"},
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"

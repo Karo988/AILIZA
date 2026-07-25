@@ -28,8 +28,11 @@ try:
         get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
-        create_approval_request, get_approval_request,
+        create_approval_request, consume_compliance_consent,
+        list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
+        get_accessible_agent_run,
     )
+    from .permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
     from .errors import AILIZAError, MESSAGES
@@ -71,14 +74,17 @@ except ImportError:
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
-        create_approval_request, get_approval_request,
+        create_approval_request, consume_compliance_consent,
         save_user_project, list_user_projects, delete_user_project,
         save_user_chat, list_user_chats, get_user_chat, delete_user_chat,
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
         export_user_data, delete_own_account_data,
+        list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
+        get_accessible_agent_run,
     )
+    from apps.backend.permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from apps.backend.gateway import guarded_tool_call
     from apps.backend.routers.approvals import router as approvals_router
     from apps.backend.errors import AILIZAError, MESSAGES
@@ -1119,22 +1125,6 @@ def _consent_task_hash(task: str) -> str:
     return hashlib.sha256(task.encode("utf-8")).hexdigest()
 
 
-def _valid_compliance_consent(approval_id: int, task: str) -> bool:
-    """
-    Prueft eine vom Nutzer erteilte Compliance-Einwilligung (Fall 3):
-    Freigabe existiert, wurde ueber /approvals/{id}/approve bestaetigt
-    (Login-Pflicht dort erzwungen) und gehoert zu GENAU dieser Anfrage.
-    """
-    try:
-        entry = get_approval_request(approval_id)
-    except Exception:
-        return False
-    if not entry or entry.get("status") != "approved":
-        return False
-    if entry.get("tool") != "compliance_consent":
-        return False
-    params = entry.get("input_params") or {}
-    return params.get("task_sha256") == _consent_task_hash(task)
 
 
 def _compliance_pre_check(
@@ -1871,21 +1861,23 @@ def _run_agent_core(
                 "results": [],
             }
 
-        if payload.consent_approval_id and _valid_compliance_consent(
-            payload.consent_approval_id, payload.task
-        ):
-            # Einwilligung liegt vor → dokumentieren, dann mit der
-            # geschwaerzten Fassung normal weiterlaufen.
-            write_audit_entry(
-                action="compliance.consent_used",
-                tenant_id=tenant,
-                metadata={
-                    "approval_id": payload.consent_approval_id,
-                    "user_id": token.user_id,
-                    "audit_id": compliance_check.get("audit_id"),
-                    "violations_summary": _violations[:5],
-                },
+        _consumed_consent = None
+        if payload.consent_approval_id:
+            # PR 2 Nachbesserung: nutzer- und tenantgebundene, EINMALIGE
+            # Verwendung -- Autorisierung (Owner/Tenant/Tool/Status/Hash/
+            # aktiver-nicht-gesperrter-Nutzer), die Statusaenderung
+            # approved->consumed UND der compliance.consent_used-Audit-
+            # Eintrag laufen als EINE gemeinsame Transaktion (kein
+            # separater write_audit_entry()-Aufruf mehr hier -- schlaegt
+            # der Audit-Insert fehl, wird auch der Verbrauch zurueckgerollt).
+            _consumed_consent = consume_compliance_consent(
+                approval_id=payload.consent_approval_id, task=payload.task,
+                user_id=token.user_id, tenant_id=tenant,
+                audit_metadata={"audit_id": compliance_check.get("audit_id")},
             )
+
+        if _consumed_consent is not None:
+            pass  # Einwilligung + Audit sind bereits atomar verbraucht/dokumentiert.
         else:
             approval = create_approval_request(
                 tool="compliance_consent",
@@ -1896,6 +1888,7 @@ def _run_agent_core(
                 risk_level="high",
                 risk_reason="Anfrage auch nach Schwärzung nicht DSGVO-/EU-AI-Act-konform — Nutzer-Einwilligung erforderlich.",
                 tenant_id=tenant,
+                owner_user_id=token.user_id,
             )
             _msg = (
                 "Diese Anfrage entspricht nicht den DSGVO-/EU-AI-Act-Richtlinien. "
@@ -2025,7 +2018,7 @@ def _run_agent_core(
         return _failed_resp
     # ── Ende Schreibaufgaben-Pfad ─────────────────────────────────────────────
 
-    runtime = AgentRuntime()
+    runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=tenant)
     result = runtime.run(effective_task)
 
     # ── Entscheidungs-Diagnose je Request (kein Inhalt, kein PII) ────────────
@@ -2156,15 +2149,33 @@ def _run_agent_core(
 def get_agent_runs(
     status: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
+    token: TokenData = Depends(require_role(Role.USER)),
 ) -> list[dict[str, Any]]:
-    return [serialize_agent_run(entry) for entry in list_agent_runs(status=status, limit=limit)]
+    # PR 2: nicht mehr tenant-weit ungefiltert -- nur eigene oder ausdruecklich
+    # zugewiesene Runs. Grobe Aktionsfreigabe ueber den Evaluator, die
+    # eigentliche Filterung erfolgt direkt in der Datenbankabfrage.
+    decision = evaluate_permission(
+        action=AGENT_RUN_LIST, actor=token, tenant_id=token.tenant_id,
+        resource_type="agent_run", resource_id="*",
+    )
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail=decision.reason_de)
+    entries = list_own_or_assigned_agent_runs(
+        tenant_id=token.tenant_id, user_id=token.user_id, status=status, limit=limit,
+    )
+    return [serialize_agent_run(entry) for entry in entries]
 
 
 @app.get("/agent/runs/{run_id}")
-def get_agent_run_status(run_id: str) -> dict[str, Any]:
-    entry = get_agent_run(run_id)
+def get_agent_run_status(
+    run_id: str, token: TokenData = Depends(require_role(Role.USER)),
+) -> dict[str, Any]:
+    # PR 2 Nachbesserung: Tenant-/Owner-/Zuweisungsfilter direkt in der
+    # Datenbankabfrage -- ein fremder Run wird nie erst global per ID
+    # geladen und danach verworfen.
+    entry = get_accessible_agent_run(run_id, token.tenant_id, token.user_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail="Agent run not found")
+        raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
     return serialize_agent_run(entry)
 
 
@@ -2180,7 +2191,7 @@ def stream_agent_run(
     task = task.strip()
     if not task:
         raise HTTPException(status_code=422, detail="task is required")
-    runtime = AgentRuntime()
+    runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=_tenant_id(token))
     return sse_response(
         runtime.stream(
             task,
@@ -2199,7 +2210,7 @@ def stream_agent_run_post(
     approval_timeout: float = Query(default=300.0, ge=1.0, le=3600.0),
     token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
-    runtime = AgentRuntime()
+    runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=_tenant_id(token))
     return sse_response(
         runtime.stream(
             payload.task,
@@ -2215,7 +2226,7 @@ def continue_agent_after_approval(
     approval_id: int,
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
-    runtime = AgentRuntime()
+    runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=_tenant_id(token))
     return runtime.continue_after_approval(approval_id)
 
 
@@ -2224,7 +2235,7 @@ def stream_agent_after_approval(
     approval_id: int,
     token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
-    runtime = AgentRuntime()
+    runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=_tenant_id(token))
     return sse_response(runtime.stream_after_approval(approval_id))
 
 
@@ -2233,7 +2244,7 @@ def stream_agent_after_approval_post(
     approval_id: int,
     token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
-    runtime = AgentRuntime()
+    runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=_tenant_id(token))
     return sse_response(runtime.stream_after_approval(approval_id))
 
 
