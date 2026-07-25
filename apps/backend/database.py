@@ -7,8 +7,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, update
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, text, update
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 try:
@@ -142,6 +143,9 @@ approval_requests = Table(
     Column("note", Text, nullable=True),
     Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
     Column("expires_at", DateTime(timezone=True), nullable=True),
+    # PR 1 (Identitaets-/RBAC-Grundlage): Besitzer des zugrundeliegenden Runs.
+    # NULL fuer historische Datensaetze -- niemals rueckwirkend geraten/befuellt.
+    Column("owner_user_id", String(64), nullable=True),
 )
 
 agent_runs = Table(
@@ -156,6 +160,54 @@ agent_runs = Table(
     Column("result", JSON, nullable=True),
     Column("run_metadata", JSON, nullable=False, default=dict),
     Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    # PR 1: NULL fuer anonyme Runs UND fuer historische Datensaetze ohne Owner.
+    # Kein Backfill, keine Vermutung.
+    Column("owner_user_id", String(64), nullable=True),
+)
+
+# ── PR 1 (Identitaets-/RBAC-Grundlage): Fachzustaendigkeiten und gezielte
+# Vorgangszuteilung. Reines Schema -- noch keine Permission-Evaluator-Logik,
+# noch keine Endpunkt-Anbindung (folgt in spaeteren PRs). ────────────────────
+user_specialist_roles = Table(
+    "user_specialist_roles",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(64), nullable=False),
+    Column("tenant_id", String(64), nullable=False),
+    Column("specialist_role", String(64), nullable=False),
+    Column("assigned_by_user_id", String(64), nullable=False),
+    Column("assignment_reason", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("valid_from", DateTime(timezone=True), nullable=False),
+    Column("valid_until", DateTime(timezone=True), nullable=True),
+    Column("review_required_at", DateTime(timezone=True), nullable=True),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+    Column("revoked_by_user_id", String(64), nullable=True),
+    Column("is_active", Integer, nullable=False, default=1),
+    Index(
+        "ux_active_specialist_role", "user_id", "tenant_id", "specialist_role",
+        unique=True, sqlite_where=text("is_active = 1 AND revoked_at IS NULL"),
+    ),
+)
+
+case_assignments = Table(
+    "case_assignments",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("case_type", String(32), nullable=False),
+    Column("case_id", String(64), nullable=False),
+    Column("tenant_id", String(64), nullable=False),
+    Column("assigned_to_user_id", String(64), nullable=False),
+    Column("assigned_by_user_id", String(64), nullable=False),
+    Column("assignment_reason", Text, nullable=False),
+    Column("assigned_at", DateTime(timezone=True), nullable=False),
+    Column("valid_until", DateTime(timezone=True), nullable=True),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+    Column("revoked_by_user_id", String(64), nullable=True),
+    Index(
+        "ux_active_case_assignment", "tenant_id", "case_type", "case_id", "assigned_to_user_id",
+        unique=True, sqlite_where=text("revoked_at IS NULL"),
+    ),
 )
 
 # ── Getrennte Logs (KEINE Inhalte, keine Prompts, keine Secrets) ─────────────
@@ -577,6 +629,10 @@ def ensure_sqlite_schema() -> None:
         _add_column_if_missing(connection, "user_projects", "version", "INTEGER DEFAULT 1")
         _add_column_if_missing(connection, "user_chats", "version", "INTEGER DEFAULT 1")
         # TOTP-Felder (Tabellen werden durch metadata_obj.create_all angelegt)
+        # PR 1 (Identitaets-/RBAC-Grundlage): owner_user_id additiv, NULL fuer
+        # alle Bestandsdatensaetze -- kein Backfill, keine Vermutung.
+        _add_column_if_missing(connection, "agent_runs", "owner_user_id", "VARCHAR(64)")
+        _add_column_if_missing(connection, "approval_requests", "owner_user_id", "VARCHAR(64)")
 
 
 def get_kill_switch_flag() -> bool | None:
@@ -910,6 +966,266 @@ def resolve_approval_request(approval_id: int, status: str, note: str = "") -> d
         return get_approval_request(approval_id)
 
     return get_approval_request(approval_id)
+
+
+# ── PR 1 (Identitaets-/RBAC-Grundlage): Fachzustaendigkeiten ────────────────
+# Reine Datenschicht. Keine Permission-Evaluator-Logik, keine Endpunkte --
+# folgt in spaeteren, separaten PRs.
+
+class SpecialistRoleValidationError(ValueError):
+    """Eine Fachrollen-Zuweisung verletzt eine Pflichtregel oder ist bereits aktiv vergeben."""
+
+
+_VALID_SPECIALIST_ROLES = {
+    "DATENSCHUTZBEAUFTRAGTER",
+    "INFORMATIONSSICHERHEITSBEAUFTRAGTER",
+    "RECHTSVERANTWORTLICHER",
+    "BETRIEBSVERANTWORTLICHER",
+    "KI_GOVERNANCE_VERANTWORTLICHER",
+}
+
+
+def _is_unique_violation(exc: IntegrityError, table: str, columns: tuple[str, ...]) -> bool:
+    """Grenzt den erwarteten Unique-Konflikt des aktiven Zuweisungs-Index von
+    anderen Integritaetsfehlern ab, die nicht verschluckt werden duerfen.
+    SQLite meldet bei UNIQUE-Verletzungen die beteiligten Spalten, nicht den
+    Indexnamen (z. B. "UNIQUE constraint failed: t.a, t.b, t.c")."""
+    message = str(exc.orig)
+    if "UNIQUE constraint failed" not in message:
+        return False
+    return all(f"{table}.{col}" in message for col in columns)
+
+
+def create_specialist_role_assignment(
+    *, user_id: str, tenant_id: str, specialist_role: str,
+    assigned_by_user_id: str, assignment_reason: str,
+    valid_until: datetime | None = None, review_required_at: datetime | None = None,
+) -> dict[str, Any]:
+    if not user_id or not tenant_id:
+        raise SpecialistRoleValidationError("user_id und tenant_id sind Pflicht.")
+    if specialist_role not in _VALID_SPECIALIST_ROLES:
+        raise SpecialistRoleValidationError(
+            f"Ungueltige Fachrolle: {specialist_role!r}. Erlaubt: {_VALID_SPECIALIST_ROLES}"
+        )
+    if not assigned_by_user_id:
+        raise SpecialistRoleValidationError("assigned_by_user_id ist Pflicht.")
+    if not assignment_reason or not assignment_reason.strip():
+        raise SpecialistRoleValidationError("assignment_reason ist Pflicht.")
+
+    if get_user(user_id, tenant_id=tenant_id) is None:
+        raise SpecialistRoleValidationError(
+            "Zielnutzer gehoert nicht zum angegebenen Tenant."
+        )
+    if get_user(assigned_by_user_id, tenant_id=tenant_id) is None:
+        raise SpecialistRoleValidationError(
+            "Zuweisende Person gehoert nicht zum angegebenen Tenant."
+        )
+
+    now = datetime.now(timezone.utc)
+    entry = {
+        "user_id": user_id,
+        "tenant_id": tenant_id,
+        "specialist_role": specialist_role,
+        "assigned_by_user_id": assigned_by_user_id,
+        "assignment_reason": assignment_reason,
+        "created_at": now,
+        "valid_from": now,
+        "valid_until": valid_until,
+        "review_required_at": review_required_at,
+        "revoked_at": None,
+        "revoked_by_user_id": None,
+        "is_active": 1,
+    }
+    try:
+        with engine.begin() as connection:
+            result = connection.execute(insert(user_specialist_roles).values(**entry))
+            entry["id"] = result.inserted_primary_key[0]
+    except IntegrityError as exc:
+        if not _is_unique_violation(
+            exc, "user_specialist_roles", ("user_id", "tenant_id", "specialist_role")
+        ):
+            raise
+        raise SpecialistRoleValidationError(
+            f"{user_id} besitzt die Fachrolle {specialist_role} in diesem Tenant bereits aktiv."
+        ) from exc
+
+    return entry
+
+
+def revoke_specialist_role_assignment(
+    assignment_id: int, tenant_id: str, revoked_by_user_id: str,
+) -> dict[str, Any] | None:
+    if not tenant_id:
+        raise SpecialistRoleValidationError("tenant_id ist Pflicht.")
+    if not revoked_by_user_id:
+        raise SpecialistRoleValidationError("revoked_by_user_id ist Pflicht.")
+    now = datetime.now(timezone.utc)
+    query = (
+        update(user_specialist_roles)
+        .where(user_specialist_roles.c.id == assignment_id)
+        .where(user_specialist_roles.c.tenant_id == tenant_id)
+        .where(user_specialist_roles.c.revoked_at.is_(None))
+        .values(revoked_at=now, revoked_by_user_id=revoked_by_user_id, is_active=0)
+    )
+    with engine.begin() as connection:
+        connection.execute(query)
+        row = connection.execute(
+            select(user_specialist_roles)
+            .where(user_specialist_roles.c.id == assignment_id)
+            .where(user_specialist_roles.c.tenant_id == tenant_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def list_active_specialist_roles(user_id: str, tenant_id: str) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    query = (
+        select(user_specialist_roles)
+        .where(user_specialist_roles.c.user_id == user_id)
+        .where(user_specialist_roles.c.tenant_id == tenant_id)
+        .where(user_specialist_roles.c.is_active == 1)
+        .where(user_specialist_roles.c.revoked_at.is_(None))
+    )
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+    return [
+        dict(row) for row in rows
+        if row["valid_until"] is None or _as_aware_utc(row["valid_until"]) > now
+    ]
+
+
+def _as_aware_utc(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+# ── PR 1 (Identitaets-/RBAC-Grundlage): Gezielte Vorgangszuteilung ──────────
+class CaseAssignmentValidationError(ValueError):
+    """Eine Vorgangszuteilung verletzt eine Pflichtregel oder ist bereits aktiv vergeben."""
+
+
+_VALID_CASE_TYPES = {"AGENT_RUN", "APPROVAL"}
+
+
+def _case_exists_in_tenant(case_type: str, case_id: str, tenant_id: str) -> bool:
+    with engine.begin() as connection:
+        if case_type == "AGENT_RUN":
+            row = connection.execute(
+                select(agent_runs.c.id)
+                .where(agent_runs.c.id == case_id)
+                .where(agent_runs.c.tenant_id == tenant_id)
+            ).first()
+        else:  # APPROVAL
+            try:
+                approval_id = int(case_id)
+            except (TypeError, ValueError):
+                return False
+            row = connection.execute(
+                select(approval_requests.c.id)
+                .where(approval_requests.c.id == approval_id)
+                .where(approval_requests.c.tenant_id == tenant_id)
+            ).first()
+    return row is not None
+
+
+def create_case_assignment(
+    *, case_type: str, case_id: str, tenant_id: str,
+    assigned_to_user_id: str, assigned_by_user_id: str, assignment_reason: str,
+    valid_until: datetime | None = None,
+) -> dict[str, Any]:
+    if case_type not in _VALID_CASE_TYPES:
+        raise CaseAssignmentValidationError(
+            f"Ungueltiger case_type: {case_type!r}. Erlaubt: {_VALID_CASE_TYPES}"
+        )
+    if not case_id or not tenant_id:
+        raise CaseAssignmentValidationError("case_id und tenant_id sind Pflicht.")
+    if not assigned_to_user_id or not assigned_by_user_id:
+        raise CaseAssignmentValidationError("assigned_to_user_id und assigned_by_user_id sind Pflicht.")
+    if not assignment_reason or not assignment_reason.strip():
+        raise CaseAssignmentValidationError("assignment_reason ist Pflicht.")
+
+    assigner = get_user(assigned_by_user_id, tenant_id=tenant_id)
+    if assigner is None:
+        raise CaseAssignmentValidationError(
+            "Zuweisende Person gehoert nicht zum angegebenen Tenant."
+        )
+    assignee = get_user(assigned_to_user_id, tenant_id=tenant_id)
+    if assignee is None:
+        raise CaseAssignmentValidationError(
+            "Zugewiesene Person gehoert nicht zum angegebenen Tenant."
+        )
+    if not _case_exists_in_tenant(case_type, case_id, tenant_id):
+        raise CaseAssignmentValidationError(
+            f"{case_type} {case_id} existiert nicht oder gehoert nicht zum angegebenen Tenant."
+        )
+
+    now = datetime.now(timezone.utc)
+    entry = {
+        "case_type": case_type,
+        "case_id": case_id,
+        "tenant_id": tenant_id,
+        "assigned_to_user_id": assigned_to_user_id,
+        "assigned_by_user_id": assigned_by_user_id,
+        "assignment_reason": assignment_reason,
+        "assigned_at": now,
+        "valid_until": valid_until,
+        "revoked_at": None,
+        "revoked_by_user_id": None,
+    }
+    try:
+        with engine.begin() as connection:
+            result = connection.execute(insert(case_assignments).values(**entry))
+            entry["id"] = result.inserted_primary_key[0]
+    except IntegrityError as exc:
+        if not _is_unique_violation(
+            exc, "case_assignments", ("tenant_id", "case_type", "case_id", "assigned_to_user_id")
+        ):
+            raise
+        raise CaseAssignmentValidationError(
+            f"{assigned_to_user_id} ist fuer {case_type} {case_id} bereits aktiv zugewiesen."
+        ) from exc
+
+    return entry
+
+
+def revoke_case_assignment(
+    assignment_id: int, tenant_id: str, revoked_by_user_id: str,
+) -> dict[str, Any] | None:
+    if not tenant_id:
+        raise CaseAssignmentValidationError("tenant_id ist Pflicht.")
+    if not revoked_by_user_id:
+        raise CaseAssignmentValidationError("revoked_by_user_id ist Pflicht.")
+    now = datetime.now(timezone.utc)
+    query = (
+        update(case_assignments)
+        .where(case_assignments.c.id == assignment_id)
+        .where(case_assignments.c.tenant_id == tenant_id)
+        .where(case_assignments.c.revoked_at.is_(None))
+        .values(revoked_at=now, revoked_by_user_id=revoked_by_user_id)
+    )
+    with engine.begin() as connection:
+        connection.execute(query)
+        row = connection.execute(
+            select(case_assignments)
+            .where(case_assignments.c.id == assignment_id)
+            .where(case_assignments.c.tenant_id == tenant_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def list_active_case_assignments(assigned_to_user_id: str, tenant_id: str) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    query = (
+        select(case_assignments)
+        .where(case_assignments.c.assigned_to_user_id == assigned_to_user_id)
+        .where(case_assignments.c.tenant_id == tenant_id)
+        .where(case_assignments.c.revoked_at.is_(None))
+    )
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+    return [
+        dict(row) for row in rows
+        if row["valid_until"] is None or _as_aware_utc(row["valid_until"]) > now
+    ]
 
 
 # ── Reflection Facts ─────────────────────────────────────────────────────────
