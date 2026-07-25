@@ -14,6 +14,7 @@ try:
     from .classifier import classify, InputRiskLevel
     from .redactor import redact
     from .database import (
+        DEFAULT_TENANT_ID,
         create_agent_run,
         create_approval_request,
         get_approval_request,
@@ -26,6 +27,7 @@ except ImportError:
     from apps.backend.classifier import classify, InputRiskLevel
     from apps.backend.redactor import redact
     from apps.backend.database import (
+        DEFAULT_TENANT_ID,
         create_agent_run,
         create_approval_request,
         get_approval_request,
@@ -114,15 +116,26 @@ class AgentRuntime:
         approved_tool_executor: ApprovedToolExecutor = execute_approved_tool,
         audit_writer: AuditWriter = write_audit_entry,
         persist_runs: bool = True,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> None:
         self.tool_executor = tool_executor
         self.approved_tool_executor = approved_tool_executor
         self.audit_writer = audit_writer
         self.persist_runs = persist_runs
+        # PR 2: Identitaet des aufrufenden Nutzers -- ausschliesslich vom
+        # Aufrufer (main.py, aus dem geprueften Session-Token) gesetzt, nie
+        # aus Client-Daten. None = anonyme Nutzung (kein Login), bleibt
+        # dann bewusst ohne Owner (kein Backfill, kein Raten).
+        self.owner_user_id = owner_user_id
+        self.tenant_id = tenant_id or DEFAULT_TENANT_ID
 
     def create_run_record(self, run_id: str, task: str, streaming: bool = False) -> None:
         if self.persist_runs:
-            create_agent_run(run_id, task, run_metadata={"streaming": streaming})
+            create_agent_run(
+                run_id, task, run_metadata={"streaming": streaming},
+                tenant_id=self.tenant_id, owner_user_id=self.owner_user_id,
+            )
 
     def update_run_record(
         self,
@@ -200,6 +213,8 @@ class AgentRuntime:
                     input_params={"task": task[:500], "risk_categories": classification.detected_categories},
                     risk_level=classification.risk_level.value,
                     risk_reason=classification.reason,
+                    tenant_id=self.tenant_id,
+                    owner_user_id=self.owner_user_id,
                 )
                 self._draft_approval_id = approval["id"]
             self.link_approval_record(self._draft_approval_id, run_id)

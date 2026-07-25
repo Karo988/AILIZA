@@ -36,6 +36,11 @@ def _user_token():
     return create_token("betroffene1", "default", "user")
 
 
+def _manager_token():
+    from apps.backend.auth.jwt_handler import create_token
+    return create_token("managerin1", "default", "manager")
+
+
 def _make_pending_approval() -> int:
     from apps.backend.database import create_approval_request
     entry = create_approval_request(
@@ -61,10 +66,16 @@ def test_reject_without_login_rejected(client):
 
 
 def test_approve_with_login_succeeds(client):
+    # PR 2: eine einfache Login-Session (Role.USER) ohne Owner-Bezug und
+    # ohne case_assignments-Eintrag reicht seit PR 2 bewusst NICHT mehr aus,
+    # um eine fremde Freigabe zu entscheiden -- genau das war die Luecke,
+    # die PR 2 schliesst. Fuer den Erfolgsfall braucht es hier daher eine
+    # Rolle ab Role.MANAGER (Uebergangsloesung bis zur vollstaendigen
+    # Fachzustaendigkeits-Matrix).
     approval_id = _make_pending_approval()
     resp = client.post(
         f"/approvals/{approval_id}/approve",
-        headers={"Authorization": f"Bearer {_user_token()}"},
+        headers={"Authorization": f"Bearer {_manager_token()}"},
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"

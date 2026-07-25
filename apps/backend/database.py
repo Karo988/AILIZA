@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, select, text, update
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text, create_engine, delete, insert, or_, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
@@ -814,6 +814,7 @@ def create_approval_request(
     run_id: str | None = None,
     tenant_id: str = DEFAULT_TENANT_ID,
     required_approver_roles: list[str] | None = None,
+    owner_user_id: str | None = None,
 ) -> dict[str, Any]:
     from .approval import APPROVAL_TIMEOUT_SECONDS, APPROVAL_ROLES  # type: ignore[attr-defined]
     now = datetime.now(timezone.utc)
@@ -833,6 +834,10 @@ def create_approval_request(
         "note": None,
         "tenant_id": tenant_id,
         "expires_at": expires,
+        # PR 2: Owner wird ausschliesslich serverseitig gesetzt (aus dem
+        # geprueften Session-Kontext bzw. dem zugrundeliegenden Agent-Run),
+        # niemals aus einem Client-Wert uebernommen.
+        "owner_user_id": owner_user_id,
     }
 
     with engine.begin() as connection:
@@ -848,6 +853,7 @@ def create_agent_run(
     status: str = "running",
     run_metadata: dict[str, Any] | None = None,
     tenant_id: str = DEFAULT_TENANT_ID,
+    owner_user_id: str | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     entry = {
@@ -860,6 +866,10 @@ def create_agent_run(
         "result": None,
         "run_metadata": run_metadata or {},
         "tenant_id": tenant_id,
+        # PR 2: NULL fuer anonyme Runs (kein Login) und fuer historische
+        # Datensaetze vor diesem PR. Ausschliesslich aus dem geprueften
+        # Session-Kontext gesetzt, nie aus dem Client uebernommen.
+        "owner_user_id": owner_user_id,
     }
 
     with engine.begin() as connection:
@@ -1226,6 +1236,81 @@ def list_active_case_assignments(assigned_to_user_id: str, tenant_id: str) -> li
         dict(row) for row in rows
         if row["valid_until"] is None or _as_aware_utc(row["valid_until"]) > now
     ]
+
+
+def has_active_case_assignment(case_type: str, case_id: str, tenant_id: str, user_id: str) -> bool:
+    """PR 2: gezielte Pruefung fuer den Permission-Evaluator -- besteht fuer
+    GENAU diesen Vorgang eine gueltige (nicht widerrufene, nicht abgelaufene)
+    Zuweisung an user_id?"""
+    query = (
+        select(case_assignments.c.valid_until)
+        .where(case_assignments.c.case_type == case_type)
+        .where(case_assignments.c.case_id == case_id)
+        .where(case_assignments.c.tenant_id == tenant_id)
+        .where(case_assignments.c.assigned_to_user_id == user_id)
+        .where(case_assignments.c.revoked_at.is_(None))
+    )
+    with engine.begin() as connection:
+        rows = connection.execute(query).all()
+    now = datetime.now(timezone.utc)
+    return any(r[0] is None or _as_aware_utc(r[0]) > now for r in rows)
+
+
+def list_own_or_assigned_agent_runs(
+    *, tenant_id: str, user_id: str, status: str | None = None, limit: int = 100,
+) -> list[dict[str, Any]]:
+    """PR 2: ersetzt die zuvor ungefilterte list_agent_runs() fuer den
+    Self-Service-Endpunkt -- nur eigene ODER ausdruecklich zugewiesene Runs,
+    niemals tenant-weit ungefiltert."""
+    assigned_ids = {
+        a["case_id"] for a in list_active_case_assignments(user_id, tenant_id)
+        if a["case_type"] == "AGENT_RUN"
+    }
+    conditions = [agent_runs.c.owner_user_id == user_id]
+    if assigned_ids:
+        conditions.append(agent_runs.c.id.in_(assigned_ids))
+    query = (
+        select(agent_runs)
+        .where(agent_runs.c.tenant_id == tenant_id)
+        .where(or_(*conditions))
+        .order_by(agent_runs.c.updated_at.desc())
+        .limit(limit)
+    )
+    if status:
+        query = query.where(agent_runs.c.status == status)
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def list_own_or_assigned_approvals(
+    *, tenant_id: str, user_id: str, status: str | None = None,
+) -> list[dict[str, Any]]:
+    """PR 2: ersetzt die zuvor ungefilterte list_approval_requests() fuer den
+    Self-Service-Endpunkt -- nur eigene ODER ausdruecklich zugewiesene
+    Genehmigungsanfragen."""
+    assigned_ids: set[int] = set()
+    for a in list_active_case_assignments(user_id, tenant_id):
+        if a["case_type"] != "APPROVAL":
+            continue
+        try:
+            assigned_ids.add(int(a["case_id"]))
+        except (TypeError, ValueError):
+            continue
+    conditions = [approval_requests.c.owner_user_id == user_id]
+    if assigned_ids:
+        conditions.append(approval_requests.c.id.in_(assigned_ids))
+    query = (
+        select(approval_requests)
+        .where(approval_requests.c.tenant_id == tenant_id)
+        .where(or_(*conditions))
+        .order_by(approval_requests.c.created_at.desc())
+    )
+    if status:
+        query = query.where(approval_requests.c.status == status)
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+    return [dict(row) for row in rows]
 
 
 # ── Reflection Facts ─────────────────────────────────────────────────────────
