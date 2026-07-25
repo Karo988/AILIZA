@@ -1,10 +1,12 @@
 """PR 1 (Identitaets-/RBAC-Grundlage): Grundlagenschema und kontrollierte
 Legacy-Migration.
 
-Reines Schema: owner_user_id auf agent_runs/approval_requests, plus die
-neuen Tabellen user_specialist_roles und case_assignments. KEINE
-Permission-Evaluator-Logik, KEINE Endpunkt-Anbindung, KEINE automatische
-Zuordnung historischer Datensaetze -- das folgt in spaeteren, separaten PRs.
+Additives Schema plus interne Datenschicht-Hilfsfunktionen -- noch keine
+Endpunkte und keine produktive Berechtigungswirkung. owner_user_id auf
+agent_runs/approval_requests, plus die neuen Tabellen user_specialist_roles
+und case_assignments. KEINE Permission-Evaluator-Logik, KEINE Endpunkt-
+Anbindung, KEINE automatische Zuordnung historischer Datensaetze -- das
+folgt in spaeteren, separaten PRs.
 """
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ from apps.backend.database import (
     engine,
     get_agent_run,
     get_approval_request,
+    get_user,
     init_db,
     list_active_case_assignments,
     list_active_specialist_roles,
@@ -45,6 +48,18 @@ def fresh_db():
 
 def _make_user(user_id: str, tenant_id: str = "default") -> None:
     create_user(user_id=user_id, tenant_id=tenant_id, role="user", hashed_password="hash")
+
+
+def _make_approval(tenant_id: str = "default") -> int:
+    entry = create_approval_request(
+        tool="llm_call", input_params={}, risk_level="high", risk_reason="Test",
+        tenant_id=tenant_id,
+    )
+    return entry["id"]
+
+
+def _make_agent_run(run_id: str, tenant_id: str = "default") -> None:
+    create_agent_run(run_id=run_id, task="Testaufgabe", tenant_id=tenant_id)
 
 
 # ── Testgruppe 1: Migration (Schema-Ebene) ──────────────────────────────────
@@ -77,10 +92,8 @@ def test_agent_run_without_explicit_owner_stays_null():
 
 
 def test_approval_request_without_explicit_owner_stays_null():
-    entry = create_approval_request(
-        tool="llm_call", input_params={}, risk_level="high", risk_reason="Test",
-    )
-    assert get_approval_request(entry["id"])["owner_user_id"] is None
+    approval_id = _make_approval()
+    assert get_approval_request(approval_id)["owner_user_id"] is None
 
 
 def test_no_user_receives_historical_records_automatically():
@@ -120,6 +133,31 @@ def test_duplicate_active_specialist_role_is_rejected():
         )
 
 
+def test_specialist_role_assignment_across_tenants_is_rejected():
+    """Zielnutzer muss zum angegebenen Tenant gehoeren."""
+    _make_user("alice", tenant_id="tenant-a")
+    _make_user("admin_b", tenant_id="tenant-b")
+    with pytest.raises(SpecialistRoleValidationError):
+        create_specialist_role_assignment(
+            user_id="alice", tenant_id="tenant-b",  # alice gehoert zu tenant-a
+            specialist_role="RECHTSVERANTWORTLICHER",
+            assigned_by_user_id="admin_b", assignment_reason="Fehlversuch",
+        )
+
+
+def test_specialist_role_assignment_by_foreign_assigner_is_rejected():
+    """Zuweisender Nutzer muss zum selben Tenant gehoeren."""
+    _make_user("alice", tenant_id="tenant-a")
+    _make_user("admin_b", tenant_id="tenant-b")
+    with pytest.raises(SpecialistRoleValidationError):
+        create_specialist_role_assignment(
+            user_id="alice", tenant_id="tenant-a",
+            specialist_role="RECHTSVERANTWORTLICHER",
+            assigned_by_user_id="admin_b",  # gehoert zu tenant-b, nicht tenant-a
+            assignment_reason="Fehlversuch",
+        )
+
+
 def test_specialist_role_can_be_revoked_without_deleting_record():
     _make_user("alice")
     _make_user("admin1")
@@ -127,13 +165,26 @@ def test_specialist_role_can_be_revoked_without_deleting_record():
         user_id="alice", tenant_id="default", specialist_role="BETRIEBSVERANTWORTLICHER",
         assigned_by_user_id="admin1", assignment_reason="Bestellung",
     )
-    revoked = revoke_specialist_role_assignment(entry["id"], revoked_by_user_id="admin1")
+    revoked = revoke_specialist_role_assignment(entry["id"], tenant_id="default", revoked_by_user_id="admin1")
     assert revoked is not None
     assert revoked["revoked_at"] is not None
     assert revoked["revoked_by_user_id"] == "admin1"
     assert revoked["is_active"] == 0
     # Datensatz existiert weiterhin (kein DELETE):
     assert list_active_specialist_roles("alice", "default") == []
+
+
+def test_specialist_role_of_foreign_tenant_cannot_be_revoked():
+    _make_user("alice", tenant_id="tenant-a")
+    _make_user("admin_a", tenant_id="tenant-a")
+    entry = create_specialist_role_assignment(
+        user_id="alice", tenant_id="tenant-a", specialist_role="RECHTSVERANTWORTLICHER",
+        assigned_by_user_id="admin_a", assignment_reason="Bestellung",
+    )
+    result = revoke_specialist_role_assignment(entry["id"], tenant_id="tenant-b", revoked_by_user_id="jemand")
+    assert result is None
+    # Zuweisung bleibt in tenant-a unveraendert aktiv:
+    assert len(list_active_specialist_roles("alice", "tenant-a")) == 1
 
 
 def test_revoked_specialist_role_frees_up_reassignment():
@@ -145,7 +196,7 @@ def test_revoked_specialist_role_frees_up_reassignment():
         user_id="alice", tenant_id="default", specialist_role="INFORMATIONSSICHERHEITSBEAUFTRAGTER",
         assigned_by_user_id="admin1", assignment_reason="Erstbestellung",
     )
-    revoke_specialist_role_assignment(entry["id"], revoked_by_user_id="admin1")
+    revoke_specialist_role_assignment(entry["id"], tenant_id="default", revoked_by_user_id="admin1")
     second = create_specialist_role_assignment(
         user_id="alice", tenant_id="default", specialist_role="INFORMATIONSSICHERHEITSBEAUFTRAGTER",
         assigned_by_user_id="admin1", assignment_reason="Neubestellung nach Widerruf",
@@ -174,13 +225,26 @@ def test_specialist_role_rejects_unknown_role_value():
         )
 
 
+def test_expired_specialist_role_is_not_returned_as_active():
+    _make_user("alice")
+    _make_user("admin1")
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    create_specialist_role_assignment(
+        user_id="alice", tenant_id="default", specialist_role="KI_GOVERNANCE_VERANTWORTLICHER",
+        assigned_by_user_id="admin1", assignment_reason="Befristete Bestellung",
+        valid_until=past,
+    )
+    assert list_active_specialist_roles("alice", "default") == []
+
+
 # ── Testgruppe 4: Gezielte Vorgangszuteilung ─────────────────────────────────
 
 def test_case_can_be_assigned():
     _make_user("teamlead1")
     _make_user("admin1")
+    approval_id = _make_approval()
     entry = create_case_assignment(
-        case_type="APPROVAL", case_id="42", tenant_id="default",
+        case_type="APPROVAL", case_id=str(approval_id), tenant_id="default",
         assigned_to_user_id="teamlead1", assigned_by_user_id="admin1",
         assignment_reason="Zustaendigkeit Projekt AILIZA",
     )
@@ -191,14 +255,15 @@ def test_case_can_be_assigned():
 def test_duplicate_active_case_assignment_is_rejected():
     _make_user("teamlead1")
     _make_user("admin1")
+    approval_id = _make_approval()
     create_case_assignment(
-        case_type="APPROVAL", case_id="42", tenant_id="default",
+        case_type="APPROVAL", case_id=str(approval_id), tenant_id="default",
         assigned_to_user_id="teamlead1", assigned_by_user_id="admin1",
         assignment_reason="Erstzuweisung",
     )
     with pytest.raises(CaseAssignmentValidationError):
         create_case_assignment(
-            case_type="APPROVAL", case_id="42", tenant_id="default",
+            case_type="APPROVAL", case_id=str(approval_id), tenant_id="default",
             assigned_to_user_id="teamlead1", assigned_by_user_id="admin1",
             assignment_reason="Doppelte Zuweisung",
         )
@@ -207,34 +272,122 @@ def test_duplicate_active_case_assignment_is_rejected():
 def test_cross_tenant_case_assignment_is_rejected():
     _make_user("teamlead1", tenant_id="tenant-a")
     _make_user("admin_b", tenant_id="tenant-b")
+    approval_id = _make_approval(tenant_id="tenant-b")
     with pytest.raises(CaseAssignmentValidationError):
         create_case_assignment(
-            case_type="APPROVAL", case_id="99", tenant_id="tenant-b",
+            case_type="APPROVAL", case_id=str(approval_id), tenant_id="tenant-b",
             assigned_to_user_id="teamlead1",  # gehoert zu tenant-a, nicht tenant-b
             assigned_by_user_id="admin_b",
             assignment_reason="Fehlversuch ueber Tenant-Grenze",
         )
 
 
+def test_nonexistent_agent_run_cannot_be_assigned():
+    _make_user("teamlead1")
+    _make_user("admin1")
+    with pytest.raises(CaseAssignmentValidationError):
+        create_case_assignment(
+            case_type="AGENT_RUN", case_id="run-existiert-nicht", tenant_id="default",
+            assigned_to_user_id="teamlead1", assigned_by_user_id="admin1",
+            assignment_reason="Vorgang existiert nicht",
+        )
+
+
+def test_foreign_tenant_agent_run_cannot_be_assigned():
+    _make_user("teamlead1", tenant_id="tenant-a")
+    _make_user("admin_a", tenant_id="tenant-a")
+    _make_agent_run("run-in-tenant-b", tenant_id="tenant-b")
+    with pytest.raises(CaseAssignmentValidationError):
+        create_case_assignment(
+            case_type="AGENT_RUN", case_id="run-in-tenant-b", tenant_id="tenant-a",
+            assigned_to_user_id="teamlead1", assigned_by_user_id="admin_a",
+            assignment_reason="Run gehoert zu fremdem Tenant",
+        )
+
+
+def test_nonexistent_approval_cannot_be_assigned():
+    _make_user("teamlead1")
+    _make_user("admin1")
+    with pytest.raises(CaseAssignmentValidationError):
+        create_case_assignment(
+            case_type="APPROVAL", case_id="999999", tenant_id="default",
+            assigned_to_user_id="teamlead1", assigned_by_user_id="admin1",
+            assignment_reason="Genehmigung existiert nicht",
+        )
+
+
+def test_foreign_tenant_approval_cannot_be_assigned():
+    _make_user("teamlead1", tenant_id="tenant-a")
+    _make_user("admin_a", tenant_id="tenant-a")
+    approval_id = _make_approval(tenant_id="tenant-b")
+    with pytest.raises(CaseAssignmentValidationError):
+        create_case_assignment(
+            case_type="APPROVAL", case_id=str(approval_id), tenant_id="tenant-a",
+            assigned_to_user_id="teamlead1", assigned_by_user_id="admin_a",
+            assignment_reason="Genehmigung gehoert zu fremdem Tenant",
+        )
+
+
+def test_same_case_id_in_two_tenants_does_not_collide():
+    """AGENT_RUN-IDs sind global eindeutige Strings -- daher hier ueber
+    APPROVAL getestet, wo case_id (die Integer-ID) je Tenant unabhaengig
+    vergeben wird. Der Unique-Index enthaelt tenant_id, daher keine
+    Kollision zwischen gleichlautenden case_ids verschiedener Tenants."""
+    _make_user("teamlead_a", tenant_id="tenant-a")
+    _make_user("admin_a", tenant_id="tenant-a")
+    _make_user("teamlead_b", tenant_id="tenant-b")
+    _make_user("admin_b", tenant_id="tenant-b")
+    approval_a = _make_approval(tenant_id="tenant-a")
+    approval_b = _make_approval(tenant_id="tenant-b")
+
+    entry_a = create_case_assignment(
+        case_type="APPROVAL", case_id=str(approval_a), tenant_id="tenant-a",
+        assigned_to_user_id="teamlead_a", assigned_by_user_id="admin_a",
+        assignment_reason="Zuweisung Tenant A",
+    )
+    entry_b = create_case_assignment(
+        case_type="APPROVAL", case_id=str(approval_b), tenant_id="tenant-b",
+        assigned_to_user_id="teamlead_b", assigned_by_user_id="admin_b",
+        assignment_reason="Zuweisung Tenant B",
+    )
+    assert entry_a["id"] != entry_b["id"]
+
+
 def test_case_assignment_can_be_revoked_without_deleting_record():
     _make_user("teamlead1")
     _make_user("admin1")
+    _make_agent_run("run-1")
     entry = create_case_assignment(
         case_type="AGENT_RUN", case_id="run-1", tenant_id="default",
         assigned_to_user_id="teamlead1", assigned_by_user_id="admin1",
         assignment_reason="Zuweisung",
     )
-    revoked = revoke_case_assignment(entry["id"], revoked_by_user_id="admin1")
+    revoked = revoke_case_assignment(entry["id"], tenant_id="default", revoked_by_user_id="admin1")
     assert revoked["revoked_at"] is not None
     assert list_active_case_assignments("teamlead1", "default") == []
+
+
+def test_case_assignment_of_foreign_tenant_cannot_be_revoked():
+    _make_user("teamlead_a", tenant_id="tenant-a")
+    _make_user("admin_a", tenant_id="tenant-a")
+    _make_agent_run("run-a", tenant_id="tenant-a")
+    entry = create_case_assignment(
+        case_type="AGENT_RUN", case_id="run-a", tenant_id="tenant-a",
+        assigned_to_user_id="teamlead_a", assigned_by_user_id="admin_a",
+        assignment_reason="Zuweisung",
+    )
+    result = revoke_case_assignment(entry["id"], tenant_id="tenant-b", revoked_by_user_id="jemand")
+    assert result is None
+    assert len(list_active_case_assignments("teamlead_a", "tenant-a")) == 1
 
 
 def test_case_assignment_requires_reason():
     _make_user("teamlead1")
     _make_user("admin1")
+    approval_id = _make_approval()
     with pytest.raises(CaseAssignmentValidationError):
         create_case_assignment(
-            case_type="APPROVAL", case_id="1", tenant_id="default",
+            case_type="APPROVAL", case_id=str(approval_id), tenant_id="default",
             assigned_to_user_id="teamlead1", assigned_by_user_id="admin1",
             assignment_reason="   ",
         )
@@ -257,8 +410,26 @@ def test_existing_users_without_email_field_remain_valid():
     """PR 1 fuehrt bewusst KEIN E-Mail-Feld ein (eigener Folge-PR, siehe
     Abschlussbericht) -- bestehende Nutzer bleiben unveraendert nutzbar."""
     _make_user("bestandsnutzer")
-    from apps.backend.database import get_user
     user = get_user("bestandsnutzer")
     assert user is not None
     assert "email" not in user
     assert "primary_email" not in user
+
+
+# ── Testgruppe 6: IntegrityError-Behandlung ──────────────────────────────────
+
+def test_unrelated_integrity_errors_are_not_swallowed_as_duplicate():
+    """IntegrityError darf nicht pauschal als 'bereits aktiv zugewiesen'
+    interpretiert werden -- nur der erwartete Unique-Konflikt wird uebersetzt,
+    andere Datenbankfehler werden weitergereicht."""
+    from apps.backend.database import _is_unique_violation
+    from sqlalchemy.exc import IntegrityError
+
+    class _FakeOrig:
+        def __str__(self):
+            return "NOT NULL constraint failed: user_specialist_roles.assignment_reason"
+
+    fake_exc = IntegrityError("stmt", {}, _FakeOrig())
+    assert not _is_unique_violation(
+        fake_exc, "user_specialist_roles", ("user_id", "tenant_id", "specialist_role")
+    )

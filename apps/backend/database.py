@@ -205,7 +205,7 @@ case_assignments = Table(
     Column("revoked_at", DateTime(timezone=True), nullable=True),
     Column("revoked_by_user_id", String(64), nullable=True),
     Index(
-        "ux_active_case_assignment", "case_type", "case_id", "assigned_to_user_id",
+        "ux_active_case_assignment", "tenant_id", "case_type", "case_id", "assigned_to_user_id",
         unique=True, sqlite_where=text("revoked_at IS NULL"),
     ),
 )
@@ -985,6 +985,17 @@ _VALID_SPECIALIST_ROLES = {
 }
 
 
+def _is_unique_violation(exc: IntegrityError, table: str, columns: tuple[str, ...]) -> bool:
+    """Grenzt den erwarteten Unique-Konflikt des aktiven Zuweisungs-Index von
+    anderen Integritaetsfehlern ab, die nicht verschluckt werden duerfen.
+    SQLite meldet bei UNIQUE-Verletzungen die beteiligten Spalten, nicht den
+    Indexnamen (z. B. "UNIQUE constraint failed: t.a, t.b, t.c")."""
+    message = str(exc.orig)
+    if "UNIQUE constraint failed" not in message:
+        return False
+    return all(f"{table}.{col}" in message for col in columns)
+
+
 def create_specialist_role_assignment(
     *, user_id: str, tenant_id: str, specialist_role: str,
     assigned_by_user_id: str, assignment_reason: str,
@@ -1000,6 +1011,15 @@ def create_specialist_role_assignment(
         raise SpecialistRoleValidationError("assigned_by_user_id ist Pflicht.")
     if not assignment_reason or not assignment_reason.strip():
         raise SpecialistRoleValidationError("assignment_reason ist Pflicht.")
+
+    if get_user(user_id, tenant_id=tenant_id) is None:
+        raise SpecialistRoleValidationError(
+            "Zielnutzer gehoert nicht zum angegebenen Tenant."
+        )
+    if get_user(assigned_by_user_id, tenant_id=tenant_id) is None:
+        raise SpecialistRoleValidationError(
+            "Zuweisende Person gehoert nicht zum angegebenen Tenant."
+        )
 
     now = datetime.now(timezone.utc)
     entry = {
@@ -1021,6 +1041,10 @@ def create_specialist_role_assignment(
             result = connection.execute(insert(user_specialist_roles).values(**entry))
             entry["id"] = result.inserted_primary_key[0]
     except IntegrityError as exc:
+        if not _is_unique_violation(
+            exc, "user_specialist_roles", ("user_id", "tenant_id", "specialist_role")
+        ):
+            raise
         raise SpecialistRoleValidationError(
             f"{user_id} besitzt die Fachrolle {specialist_role} in diesem Tenant bereits aktiv."
         ) from exc
@@ -1028,20 +1052,27 @@ def create_specialist_role_assignment(
     return entry
 
 
-def revoke_specialist_role_assignment(assignment_id: int, revoked_by_user_id: str) -> dict[str, Any] | None:
+def revoke_specialist_role_assignment(
+    assignment_id: int, tenant_id: str, revoked_by_user_id: str,
+) -> dict[str, Any] | None:
+    if not tenant_id:
+        raise SpecialistRoleValidationError("tenant_id ist Pflicht.")
     if not revoked_by_user_id:
         raise SpecialistRoleValidationError("revoked_by_user_id ist Pflicht.")
     now = datetime.now(timezone.utc)
     query = (
         update(user_specialist_roles)
         .where(user_specialist_roles.c.id == assignment_id)
+        .where(user_specialist_roles.c.tenant_id == tenant_id)
         .where(user_specialist_roles.c.revoked_at.is_(None))
         .values(revoked_at=now, revoked_by_user_id=revoked_by_user_id, is_active=0)
     )
     with engine.begin() as connection:
         connection.execute(query)
         row = connection.execute(
-            select(user_specialist_roles).where(user_specialist_roles.c.id == assignment_id)
+            select(user_specialist_roles)
+            .where(user_specialist_roles.c.id == assignment_id)
+            .where(user_specialist_roles.c.tenant_id == tenant_id)
         ).mappings().first()
     return dict(row) if row else None
 
@@ -1075,6 +1106,27 @@ class CaseAssignmentValidationError(ValueError):
 _VALID_CASE_TYPES = {"AGENT_RUN", "APPROVAL"}
 
 
+def _case_exists_in_tenant(case_type: str, case_id: str, tenant_id: str) -> bool:
+    with engine.begin() as connection:
+        if case_type == "AGENT_RUN":
+            row = connection.execute(
+                select(agent_runs.c.id)
+                .where(agent_runs.c.id == case_id)
+                .where(agent_runs.c.tenant_id == tenant_id)
+            ).first()
+        else:  # APPROVAL
+            try:
+                approval_id = int(case_id)
+            except (TypeError, ValueError):
+                return False
+            row = connection.execute(
+                select(approval_requests.c.id)
+                .where(approval_requests.c.id == approval_id)
+                .where(approval_requests.c.tenant_id == tenant_id)
+            ).first()
+    return row is not None
+
+
 def create_case_assignment(
     *, case_type: str, case_id: str, tenant_id: str,
     assigned_to_user_id: str, assigned_by_user_id: str, assignment_reason: str,
@@ -1101,6 +1153,10 @@ def create_case_assignment(
         raise CaseAssignmentValidationError(
             "Zugewiesene Person gehoert nicht zum angegebenen Tenant."
         )
+    if not _case_exists_in_tenant(case_type, case_id, tenant_id):
+        raise CaseAssignmentValidationError(
+            f"{case_type} {case_id} existiert nicht oder gehoert nicht zum angegebenen Tenant."
+        )
 
     now = datetime.now(timezone.utc)
     entry = {
@@ -1120,6 +1176,10 @@ def create_case_assignment(
             result = connection.execute(insert(case_assignments).values(**entry))
             entry["id"] = result.inserted_primary_key[0]
     except IntegrityError as exc:
+        if not _is_unique_violation(
+            exc, "case_assignments", ("tenant_id", "case_type", "case_id", "assigned_to_user_id")
+        ):
+            raise
         raise CaseAssignmentValidationError(
             f"{assigned_to_user_id} ist fuer {case_type} {case_id} bereits aktiv zugewiesen."
         ) from exc
@@ -1127,20 +1187,27 @@ def create_case_assignment(
     return entry
 
 
-def revoke_case_assignment(assignment_id: int, revoked_by_user_id: str) -> dict[str, Any] | None:
+def revoke_case_assignment(
+    assignment_id: int, tenant_id: str, revoked_by_user_id: str,
+) -> dict[str, Any] | None:
+    if not tenant_id:
+        raise CaseAssignmentValidationError("tenant_id ist Pflicht.")
     if not revoked_by_user_id:
         raise CaseAssignmentValidationError("revoked_by_user_id ist Pflicht.")
     now = datetime.now(timezone.utc)
     query = (
         update(case_assignments)
         .where(case_assignments.c.id == assignment_id)
+        .where(case_assignments.c.tenant_id == tenant_id)
         .where(case_assignments.c.revoked_at.is_(None))
         .values(revoked_at=now, revoked_by_user_id=revoked_by_user_id)
     )
     with engine.begin() as connection:
         connection.execute(query)
         row = connection.execute(
-            select(case_assignments).where(case_assignments.c.id == assignment_id)
+            select(case_assignments)
+            .where(case_assignments.c.id == assignment_id)
+            .where(case_assignments.c.tenant_id == tenant_id)
         ).mappings().first()
     return dict(row) if row else None
 
