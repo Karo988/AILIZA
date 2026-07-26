@@ -38,3 +38,86 @@ jobs:
       # Deaktiviert statt geloescht -- separates Aufraeumen folgt spaeter.
       # - name: Tests (Backend, verwaist -- vorerst deaktiviert)
       #   run: PYTHONPATH=. pytest apps/backend/tests/ -v --tb=short
+
+  # Eigener Job statt zusaetzlicher Schritt im bestehenden "test"-Job: ein
+  # Browser- oder Server-Startfehler im E2E-Lauf soll das Python-Testergebnis
+  # nicht unuebersichtlich machen (getrennte, klar zuordenbare CI-Ergebnisse).
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    env:
+      AILIZA_DATABASE_URL: "sqlite:///:memory:"
+      AILIZA_EXTERNAL_LLM_ENABLED: "false"
+      AILIZA_DEFAULT_TENANT_ID: default
+      AILIZA_SECRET_KEY: ci-e2e-secret-key-not-for-production-32ch
+      AILIZA_LOG_HMAC_KEY: ci-e2e-log-hmac-key-not-for-production-32ch
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements-core.txt
+
+      - name: Backend-Abhängigkeiten installieren
+        run: pip install -r apps/backend/requirements-core.txt bcrypt pyotp
+
+      - name: Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Frontend-Abhängigkeiten installieren (reproduzierbar via Lockfile)
+        working-directory: apps/frontend
+        run: npm ci
+
+      - name: Playwright Chromium installieren
+        working-directory: apps/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Backend starten (Login-Registrierung-UX-Test)
+        run: |
+          nohup python -m uvicorn apps.backend.main:app --host 127.0.0.1 --port 8811 --log-level warning \
+            > /tmp/ailiza-e2e-login.log 2>&1 &
+          echo $! > /tmp/ailiza-e2e-login.pid
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8811/health && exit 0
+            sleep 1
+          done
+          echo "Backend nicht innerhalb von 60s erreichbar:"; cat /tmp/ailiza-e2e-login.log; exit 1
+
+      - name: Playwright – Login/Registrierung-UX
+        working-directory: apps/frontend
+        run: node tests/login-registration-ux.test.js http://127.0.0.1:8811
+
+      - name: Backend stoppen (Login-Registrierung-UX-Test)
+        if: always()
+        run: kill "$(cat /tmp/ailiza-e2e-login.pid)" 2>/dev/null || true
+
+      # Eigener Server-Prozess pro Test-Datei: /auth/login ist auf 10
+      # Anfragen/Minute begrenzt (bewusst NICHT gelockert). Ein gemeinsamer
+      # Prozess fuer beide Playwright-Dateien wuerde das In-Memory-Rate-
+      # Limit-Budget ueberschreiten und die Tests faelschlich fehlschlagen
+      # lassen -- ein frischer Prozess hat ein frisches Budget.
+      - name: Backend starten (Bootstrap-Consent-Gate-Test)
+        run: |
+          nohup python -m uvicorn apps.backend.main:app --host 127.0.0.1 --port 8812 --log-level warning \
+            > /tmp/ailiza-e2e-bootstrap.log 2>&1 &
+          echo $! > /tmp/ailiza-e2e-bootstrap.pid
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8812/health && exit 0
+            sleep 1
+          done
+          echo "Backend nicht innerhalb von 60s erreichbar:"; cat /tmp/ailiza-e2e-bootstrap.log; exit 1
+
+      - name: Playwright – Bootstrap-Consent-Gate (PR #62 Regression)
+        working-directory: apps/frontend
+        run: node tests/bootstrap-consent-gate.test.js http://127.0.0.1:8812
+
+      - name: Backend stoppen (Bootstrap-Consent-Gate-Test)
+        if: always()
+        run: kill "$(cat /tmp/ailiza-e2e-bootstrap.pid)" 2>/dev/null || true

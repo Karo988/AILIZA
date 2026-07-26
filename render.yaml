@@ -26,6 +26,18 @@ services:
         value: "false"
       - key: AILIZA_SECRET_KEY
         sync: false
+      # Eigener Schluessel NUR fuer die HMAC-Pseudonymisierung von
+      # Nutzernamen in Auth-Logs -- bewusst getrennt von AILIZA_SECRET_KEY
+      # (JWT-Signatur), damit ein kompromittierter Logging-Schluessel nicht
+      # auch Sessions faelschen kann. Mindestens 32 zufaellige Zeichen.
+      # Fehlt der Wert, wird kein Fingerprint geloggt (kein Fallback, kein
+      # Login-Ausfall).
+      - key: AILIZA_LOG_HMAC_KEY
+        sync: false
+      # Optional: Schluesselversion, wird in jeden Fingerprint eingebettet
+      # (erlaubt spaeteren Schluesselwechsel ohne Verlust der Nachvollziehbarkeit).
+      - key: AILIZA_LOG_HMAC_KEY_VERSION
+        value: "1"
       - key: GROQ_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY

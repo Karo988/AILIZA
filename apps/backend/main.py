@@ -41,7 +41,12 @@ try:
     from .documents.document_handler import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, _extract_text, scan_document
     from .auth import create_token, Role, require_role, get_current_user, TokenData
     from .auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
-    from .database import create_user as db_create_user, authenticate_user as db_authenticate_user
+    from .database import (
+        create_user as db_create_user,
+        authenticate_user as db_authenticate_user,
+        authenticate_user_with_reason as db_authenticate_user_with_reason,
+        AUTH_REASON_DATABASE_ERROR, AUTH_REASON_PASSWORD_HASH_INVALID,
+    )
     from .database import (
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
@@ -71,6 +76,8 @@ except ImportError:
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_user as db_create_user, authenticate_user as db_authenticate_user,
+        authenticate_user_with_reason as db_authenticate_user_with_reason,
+        AUTH_REASON_DATABASE_ERROR, AUTH_REASON_PASSWORD_HASH_INVALID,
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
@@ -380,7 +387,36 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AILIZA Backend", lifespan=lifespan)
 app.state.limiter = _limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+async def _rate_limit_exceeded_handler_with_audit(request: Request, exc: RateLimitExceeded):
+    """Item 3: SlowAPI faengt Rate-Limit-Ueberschreitungen VOR der
+    View-Funktion ab -- authenticate_user_with_reason() wird bei einem
+    Rate-Limit-Treffer nie erreicht. "auth_rate_limited" kann daher nur hier,
+    im globalen Exception-Handler, korrekt protokolliert werden.
+
+    Fuer /auth/login: eigener Audit-Eintrag mit reason_code
+    "auth_rate_limited" / result_class AUTH_FAILED -- OHNE Nutzername,
+    Passwort, Request-Body, Authorization-Header oder Cookie zu loggen (der
+    Request-Body wurde von SlowAPI ohnehin noch nicht geparst). Fuer alle
+    anderen Routen bleibt das Standard-SlowAPI-Verhalten unveraendert.
+    """
+    if request.url.path == "/auth/login":
+        request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:8]
+        write_audit_entry(
+            action="auth.login.rate_limited",
+            metadata={
+                "request_id": request_id,
+                "reason_code": "auth_rate_limited",
+                "result_class": AUTH_RESULT_FAILED,
+                "route": request.url.path,
+                "method": request.method,
+            },
+        )
+    return _rate_limit_exceeded_handler(request, exc)
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler_with_audit)
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 
 # CORS: in Produktion über AILIZA_CORS_ORIGINS einschränken (kommasepariert).
@@ -428,6 +464,25 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class _RequestIdMiddleware(BaseHTTPMiddleware):
+    """Zentrale Request-ID: eine frisch erzeugte UUID pro Request, verfuegbar
+    ueber request.state.request_id und im Response-Header X-Request-ID.
+
+    Sicherheits-Invariante: dient AUSSCHLIESSLICH der Korrelation in
+    Logs/Audit-Eintraegen -- niemals als Authentifizierungs- oder
+    Autorisierungs-Nachweis. Ein vom Client mitgeschickter X-Request-ID-Header
+    wird IGNORIERT (nicht validiert oder uebernommen), da ein Client sonst
+    beliebige IDs vorgeben und so Log-Korrelationen faelschen koennte -- es
+    wird immer serverseitig neu erzeugt."""
+
+    async def dispatch(self, request: _StarletteRequest, call_next):
+        request.state.request_id = uuid.uuid4().hex
+        response: _StarletteResponse = await call_next(request)
+        response.headers["X-Request-ID"] = request.state.request_id
+        return response
+
+
+app.add_middleware(_RequestIdMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 
 app.include_router(approvals_router)
@@ -2505,6 +2560,15 @@ class RegisterRequest(BaseModel):
 
 _TOTP_REQUIRED_ROLES = {"admin", "dsb"}
 
+# Item 4: explizite Ergebnisklassen fuer den Login-Ablauf. Getrennt von den
+# database.AUTH_REASON_*-Ursachen-Codes (die klassifizieren NUR den
+# Passwort-Check) -- diese Klassen klassifizieren das GESAMTERGEBNIS des
+# /auth/login-Aufrufs inkl. TOTP-Zwischenschritt, fuer Audit/Monitoring.
+AUTH_RESULT_SUCCESS = "AUTH_SUCCESS"
+AUTH_RESULT_STEP_UP_REQUIRED = "AUTH_STEP_UP_REQUIRED"
+AUTH_RESULT_FAILED = "AUTH_FAILED"
+AUTH_RESULT_TECHNICAL_ERROR = "AUTH_TECHNICAL_ERROR"
+
 
 def _set_session_cookie(response: JSONResponse, token: str) -> None:
     is_prod = os.getenv("AILIZA_ENV", "development").lower() in ("production", "staging")
@@ -2520,6 +2584,46 @@ def _set_session_cookie(response: JSONResponse, token: str) -> None:
     )
 
 
+_LOG_HMAC_MIN_LEN = 32
+_log_hmac_missing_key_warned = False
+
+
+def _get_log_hmac_key() -> str | None:
+    """Eigener Logging-Schluessel, STRIKT getrennt von AILIZA_SECRET_KEY (JWT)
+    -- kein Fallback, damit ein kompromittierter Logging-Schluessel niemals
+    auch die Session-Signatur betrifft und umgekehrt."""
+    key = os.getenv("AILIZA_LOG_HMAC_KEY", "")
+    if len(key) < _LOG_HMAC_MIN_LEN:
+        return None
+    return key
+
+
+def _mask_user_id_for_log(user_id: str) -> str | None:
+    """PR A/Haertung: Nutzername NIE im Klartext und NIE als einfacher
+    SHA-256-Hash (umkehrbar per Woerterbuchangriff) in Diagnose-/
+    Fehlversuchs-Logs -- HMAC-SHA-256 mit separatem, nur fuer Logging
+    bestimmtem Schluessel (AILIZA_LOG_HMAC_KEY). Fehlt der Schluessel, wird
+    KEIN Fingerprint erzeugt (kein Fallback auf Klartext, SHA-256 oder
+    AILIZA_SECRET_KEY) -- die Anmeldung selbst darf davon nicht betroffen
+    sein, daher gibt diese Funktion in dem Fall None zurueck statt einen
+    Fehler zu werfen."""
+    global _log_hmac_missing_key_warned
+    key = _get_log_hmac_key()
+    if key is None:
+        if not _log_hmac_missing_key_warned:
+            _log_hmac_missing_key_warned = True
+            logger.warning(
+                "AILIZA_LOG_HMAC_KEY nicht gesetzt oder zu kurz (< %d Zeichen) -- "
+                "Nutzername-Fingerprints in Auth-Logs werden bis zur Konfiguration "
+                "ausgelassen (kein Fallback auf Klartext oder SHA-256).",
+                _LOG_HMAC_MIN_LEN,
+            )
+        return None
+    version = os.getenv("AILIZA_LOG_HMAC_KEY_VERSION", "1")
+    digest = hmac.new(key.encode("utf-8"), user_id.encode("utf-8"), hashlib.sha256).hexdigest()[:20]
+    return f"uh_v{version}_{digest}"
+
+
 @app.post("/auth/login")
 @_limiter.limit("10/minute")
 def login(request: Request, payload: LoginRequest) -> JSONResponse:
@@ -2527,22 +2631,60 @@ def login(request: Request, payload: LoginRequest) -> JSONResponse:
     Login: setzt HttpOnly-Cookie (Browser-Flow) und gibt Token im Body zurück.
     Für ADMIN/DSB mit aktiviertem TOTP: gibt totp_required=true + totp_pending_token zurück.
     Zweiter Schritt: POST /auth/totp/verify mit Code + totp_pending_token.
+
+    PR A: die oeffentliche Antwort ist fuer JEDEN Fehlerfall identisch (401,
+    "Ungültige Zugangsdaten.") -- unbekannter Nutzer, falsches Passwort,
+    deaktiviertes/gesperrtes Konto, beschaedigter Passwort-Hash oder
+    Tenant-Fehlzuordnung sind von aussen nicht unterscheidbar (kein
+    User-Enumeration-Leck). Intern wird der technische Ursachen-Code
+    (siehe database.AUTH_REASON_*) protokolliert -- fuer Diagnose/
+    Missbrauchserkennung, niemals fuer die HTTP-Antwort ausgewertet.
     """
-    user = db_authenticate_user(payload.user_id, payload.password, payload.tenant_id)
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:8]
+    user, reason_code = db_authenticate_user_with_reason(payload.user_id, payload.password, payload.tenant_id)
     if user is None:
+        result_class = (
+            AUTH_RESULT_TECHNICAL_ERROR
+            if reason_code in (AUTH_REASON_DATABASE_ERROR, AUTH_REASON_PASSWORD_HASH_INVALID)
+            else AUTH_RESULT_FAILED
+        )
+        user_id_hash = _mask_user_id_for_log(payload.user_id)
+        metadata: dict[str, Any] = {
+            "request_id": request_id,
+            "reason_code": reason_code,
+            "result_class": result_class,
+            # payload.tenant_id ist zu diesem Zeitpunkt UNGEPRUEFT (Login ist
+            # fehlgeschlagen) -- bewusst nicht als "tenant_id" benannt, um es
+            # nicht mit einem bestaetigten Tenant zu verwechseln.
+            "requested_tenant_id": payload.tenant_id,
+        }
+        if user_id_hash is not None:
+            metadata["user_id_hash"] = user_id_hash
         write_audit_entry(action="auth.login.failed",
-                          metadata={"user_id": payload.user_id, "tenant_id": payload.tenant_id},
+                          metadata=metadata,
                           tenant_id=payload.tenant_id)
         raise HTTPException(status_code=401, detail="Ungültige Zugangsdaten.")
 
     role = user["role"]
-    # TOTP-Pflicht für ADMIN/DSB wenn TOTP eingerichtet und bestätigt
+    user_id_hash = _mask_user_id_for_log(user["user_id"])
+    # TOTP-Pflicht für ADMIN/DSB wenn TOTP eingerichtet und bestätigt.
+    # Wichtig: dies ist KEIN Fehlschlag -- der Sperr-Zaehler (failed_login_
+    # attempts) wurde bereits in authenticate_user_with_reason() bei
+    # erfolgreicher Passwortpruefung zurueckgesetzt und wird hier NICHT
+    # erhoeht.
     if role in _TOTP_REQUIRED_ROLES:
         totp_record = get_totp_record(user["user_id"])
         if totp_record and totp_record["confirmed"]:
             pending = create_totp_pending_token(user["user_id"], user["tenant_id"], role)
+            step_up_metadata: dict[str, Any] = {
+                "request_id": request_id,
+                "result_class": AUTH_RESULT_STEP_UP_REQUIRED,
+                "role": role,
+            }
+            if user_id_hash is not None:
+                step_up_metadata["user_id_hash"] = user_id_hash
             write_audit_entry(action="auth.login.totp_required",
-                              metadata={"user_id": user["user_id"], "role": role},
+                              metadata=step_up_metadata,
                               tenant_id=user["tenant_id"])
             return JSONResponse(content={
                 "totp_required": True,
@@ -2551,8 +2693,15 @@ def login(request: Request, payload: LoginRequest) -> JSONResponse:
             })
 
     token = create_token(user["user_id"], user["tenant_id"], role)
+    success_metadata: dict[str, Any] = {
+        "request_id": request_id,
+        "result_class": AUTH_RESULT_SUCCESS,
+        "role": role,
+    }
+    if user_id_hash is not None:
+        success_metadata["user_id_hash"] = user_id_hash
     write_audit_entry(action="auth.login.success",
-                      metadata={"user_id": payload.user_id, "role": role},
+                      metadata=success_metadata,
                       tenant_id=payload.tenant_id)
     response = JSONResponse(content={
         "access_token": token, "token_type": "bearer",
