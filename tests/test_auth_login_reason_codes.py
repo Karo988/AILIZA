@@ -220,3 +220,27 @@ def test_registration_existing_user_with_weak_password_returns_422_not_409(clien
     _seed_user("Tester001")
     resp = client.post("/auth/self-register", json={"user_id": "Tester001", "password": "short"})
     assert resp.status_code == 422
+
+
+# ── Timing-Schutz: Dummy-bcrypt-Vergleich bei unbekannten Nutzernamen ──────
+
+def test_unknown_user_triggers_dummy_bcrypt_comparison(monkeypatch):
+    """Beweist, dass der bcrypt-Vergleich auch bei unbekanntem Nutzernamen
+    tatsaechlich ausgefuehrt wird (Timing-Schutz), statt fruehzeitig ohne
+    bcrypt-Aufruf zurueckzukehren."""
+    import apps.backend.database as db_module
+
+    calls = []
+    real_checkpw = __import__("bcrypt").checkpw
+
+    def spy_checkpw(password, hashed):
+        calls.append(hashed)
+        return real_checkpw(password, hashed)
+
+    monkeypatch.setattr("bcrypt.checkpw", spy_checkpw)
+
+    user, reason = db_module.authenticate_user_with_reason("GhostUser999", "whatever123!A", "default")
+    assert user is None
+    assert reason == db_module.AUTH_REASON_USER_NOT_FOUND
+    assert len(calls) == 1
+    assert calls[0] == db_module._DUMMY_BCRYPT_HASH.encode()

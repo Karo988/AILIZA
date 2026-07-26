@@ -2532,6 +2532,14 @@ AUTH_REASON_PASSWORD_HASH_INVALID = "auth_password_hash_invalid"
 AUTH_REASON_DATABASE_ERROR = "auth_database_error"
 AUTH_REASON_SUCCESS = "auth_success"
 
+# Timing-Schutz: fester, einmalig vorab berechneter bcrypt-Hash. Bei
+# unbekannten Nutzernamen wird trotzdem ein bcrypt-Vergleich gegen diesen
+# Dummy-Hash durchgefuehrt, damit die Antwortzeit sich nicht messbar von der
+# eines "Passwort falsch"-Falls unterscheidet (kein User-Enumeration-Leck
+# ueber Timing). Bewusst NICHT pro Request neu erzeugt (bcrypt.gensalt() ist
+# teuer und wuerde selbst zur Streuung beitragen).
+_DUMMY_BCRYPT_HASH = "$2b$12$C6UzMDM.H6dfI/f/IKcEeO0rAkD7DdyWjSGUmwq8U1qXENJ2QLQVe"
+
 
 def authenticate_user_with_reason(
     user_id: str, plain_password: str, tenant_id: str | None = None,
@@ -2548,6 +2556,11 @@ def authenticate_user_with_reason(
         # aendert NICHTS an der oeffentlichen Antwort, hilft aber intern,
         # eine falsche Tenant-Zuordnung von einem unbekannten Nutzernamen zu
         # unterscheiden.
+        try:
+            import bcrypt
+            bcrypt.checkpw(plain_password.encode(), _DUMMY_BCRYPT_HASH.encode())
+        except ImportError:
+            pass
         if tenant_id is not None and get_user(user_id, None) is not None:
             return None, AUTH_REASON_TENANT_MISMATCH
         return None, AUTH_REASON_USER_NOT_FOUND
