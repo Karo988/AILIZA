@@ -69,7 +69,7 @@ def create_totp_pending_token(user_id: str, tenant_id: str, role: str) -> str:
 
 def decode_totp_pending_token(token: str) -> TokenData:
     """Dekodiert einen TOTP-Pending-Token. Wirft ValueError wenn kein pending-Token."""
-    td = decode_token(token)
+    td = decode_token(token, _allow_totp_pending=True)
     # Re-decode payload to check totp_pending flag
     parts = token.split(".")
     try:
@@ -99,10 +99,18 @@ def create_token(user_id: str, tenant_id: str, role: str) -> str:
     return f"{signing_input}.{_b64url_encode(sig)}"
 
 
-def decode_token(token: str) -> TokenData:
+def decode_token(token: str, *, _allow_totp_pending: bool = False) -> TokenData:
     """
     Dekodiert und validiert ein JWT.
     Wirft ValueError bei ungueltigem oder abgelaufenen Token.
+
+    Sicherheits-Invariante: ein TOTP-Pending-Token (claim "totp_pending": true,
+    erzeugt von create_totp_pending_token()) wird hier grundsaetzlich
+    ABGELEHNT -- es darf NIEMALS als vollwertiges Session-Token akzeptiert
+    werden (get_current_user()/require_role() rufen ausschliesslich diese
+    Funktion auf). Nur decode_totp_pending_token() darf es via
+    _allow_totp_pending=True passieren lassen, um es anschliessend explizit
+    gegen den TOTP-Verify-Flow zu pruefen.
     """
     secret = os.getenv("AILIZA_SECRET_KEY", _SECRET)
     if len(secret) < 32:
@@ -126,6 +134,8 @@ def decode_token(token: str) -> TokenData:
     exp_ts = payload.get("exp")
     if exp_ts is None or datetime.fromtimestamp(exp_ts, tz=timezone.utc) < datetime.now(timezone.utc):
         raise ValueError("Token abgelaufen.")
+    if payload.get("totp_pending") and not _allow_totp_pending:
+        raise ValueError("TOTP-Pending-Token kann nicht als Session-Token verwendet werden.")
     return TokenData(
         user_id=str(payload["sub"]),
         tenant_id=str(payload.get("tenant_id", "default")),
