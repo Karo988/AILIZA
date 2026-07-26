@@ -2519,14 +2519,41 @@ def _lockout_minutes() -> int:
     return int(os.getenv("AILIZA_LOCKOUT_MINUTES", "15"))
 
 
-def authenticate_user(user_id: str, plain_password: str, tenant_id: str | None = None) -> dict[str, Any] | None:
-    """
-    Prueft Credentials. Sperrt Account nach _MAX_FAILED_ATTEMPTS Fehlversuchen
-    fuer _LOCKOUT_MINUTES Minuten. Gibt None zurueck bei Fehler (kein Hinweis auf Grund).
-    """
+# PR A: interne, technische Ursachen-Codes fuer fehlgeschlagene Anmeldungen.
+# NIEMALS nach aussen weitergeben (main.py gibt fuer ALLE Faelle dieselbe
+# neutrale 401-Antwort zurueck) -- ausschliesslich fuer die interne
+# Diagnose/das Audit-Log gedacht (kein User-Enumeration-Leck).
+AUTH_REASON_USER_NOT_FOUND = "auth_user_not_found"
+AUTH_REASON_TENANT_MISMATCH = "auth_tenant_mismatch"
+AUTH_REASON_USER_INACTIVE = "auth_user_inactive"
+AUTH_REASON_USER_LOCKED = "auth_user_locked"
+AUTH_REASON_PASSWORD_MISMATCH = "auth_password_mismatch"
+AUTH_REASON_PASSWORD_HASH_INVALID = "auth_password_hash_invalid"
+AUTH_REASON_DATABASE_ERROR = "auth_database_error"
+AUTH_REASON_SUCCESS = "auth_success"
+
+
+def authenticate_user_with_reason(
+    user_id: str, plain_password: str, tenant_id: str | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    """Wie authenticate_user(), gibt zusaetzlich einen internen, technischen
+    Ursachen-Code zurueck (siehe AUTH_REASON_*-Konstanten). Der Ursachen-Code
+    ist AUSSCHLIESSLICH fuer interne Diagnose/Audit-Logs bestimmt -- die
+    oeffentliche HTTP-Antwort bleibt in main.py fuer alle Nicht-Erfolgsfaelle
+    identisch (keine unterschiedlichen Statuscodes/Texte je Ursache)."""
     row = get_user(user_id, tenant_id)
-    if not row or not row.get("active"):
-        return None
+    if not row:
+        # Sekundaerpruefung NUR fuer die interne Klassifikation: existiert der
+        # Nutzername in irgendeinem Tenant, aber nicht im angefragten? Das
+        # aendert NICHTS an der oeffentlichen Antwort, hilft aber intern,
+        # eine falsche Tenant-Zuordnung von einem unbekannten Nutzernamen zu
+        # unterscheiden.
+        if tenant_id is not None and get_user(user_id, None) is not None:
+            return None, AUTH_REASON_TENANT_MISMATCH
+        return None, AUTH_REASON_USER_NOT_FOUND
+
+    if not row.get("active"):
+        return None, AUTH_REASON_USER_INACTIVE
 
     # Lockout pruefen
     locked_until = row.get("locked_until")
@@ -2536,21 +2563,37 @@ def authenticate_user(user_id: str, plain_password: str, tenant_id: str | None =
         if locked_until.tzinfo is None:
             locked_until = locked_until.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) < locked_until:
-            return None  # gesperrt — kein Unterschied zu falschen Credentials
+            return None, AUTH_REASON_USER_LOCKED
 
     try:
         import bcrypt
         pw_ok = bcrypt.checkpw(plain_password.encode(), row["hashed_password"].encode())
     except ImportError:
-        return None
+        return None, AUTH_REASON_DATABASE_ERROR
+    except (ValueError, TypeError):
+        # bcrypt wirft ValueError bei einem strukturell ungueltigen Hash
+        # (z.B. Datenkorruption) -- fachlich klar von "Passwort falsch" zu
+        # unterscheiden, ohne das nach aussen zu zeigen.
+        return None, AUTH_REASON_PASSWORD_HASH_INVALID
 
     if not pw_ok:
         _record_failed_login(user_id, tenant_id or row["tenant_id"])
-        return None
+        return None, AUTH_REASON_PASSWORD_MISMATCH
 
     # Erfolg: Zähler zurücksetzen
     _reset_failed_login(user_id, tenant_id or row["tenant_id"])
-    return {k: v for k, v in row.items() if k not in ("hashed_password",)}
+    return {k: v for k, v in row.items() if k not in ("hashed_password",)}, AUTH_REASON_SUCCESS
+
+
+def authenticate_user(user_id: str, plain_password: str, tenant_id: str | None = None) -> dict[str, Any] | None:
+    """
+    Prueft Credentials. Sperrt Account nach _MAX_FAILED_ATTEMPTS Fehlversuchen
+    fuer _LOCKOUT_MINUTES Minuten. Gibt None zurueck bei Fehler (kein Hinweis auf Grund).
+    Bestehende, unveraenderte oeffentliche Signatur -- reiner Wrapper um
+    authenticate_user_with_reason() fuer alle Aufrufer, die den Ursachen-Code
+    nicht benoetigen (z.B. bestehende Tests)."""
+    user, _reason = authenticate_user_with_reason(user_id, plain_password, tenant_id)
+    return user
 
 
 def _record_failed_login(user_id: str, tenant_id: str) -> None:

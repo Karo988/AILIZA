@@ -82,7 +82,11 @@ def test_logout_switches_to_anon_scope_before_awaiting_network(served_index):
 
 
 def test_login_success_awaits_scope_switch_before_continuing(served_index):
-    start = served_index.index("async function doLogin()")
+    # PR A: doLogin() erhielt einen optionalen Parameter (isFreshRegistration),
+    # um nach einer Registrierung eine andere Erfolgsmeldung zu zeigen --
+    # Signatur-Text daher angepasst, die eigentliche Invariante (Scope-Wechsel
+    # wird vor dem Fortfahren abgewartet) ist unveraendert.
+    start = served_index.index("async function doLogin(")
     fn = served_index[start:start + 3000]
     assert "await refreshAuthButton();" in fn
 

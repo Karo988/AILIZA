@@ -41,7 +41,11 @@ try:
     from .documents.document_handler import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, _extract_text, scan_document
     from .auth import create_token, Role, require_role, get_current_user, TokenData
     from .auth.jwt_handler import create_totp_pending_token, decode_totp_pending_token
-    from .database import create_user as db_create_user, authenticate_user as db_authenticate_user
+    from .database import (
+        create_user as db_create_user,
+        authenticate_user as db_authenticate_user,
+        authenticate_user_with_reason as db_authenticate_user_with_reason,
+    )
     from .database import (
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
@@ -71,6 +75,7 @@ except ImportError:
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_user as db_create_user, authenticate_user as db_authenticate_user,
+        authenticate_user_with_reason as db_authenticate_user_with_reason,
         engine,
         get_totp_record, upsert_totp_secret, confirm_totp_secret,
         delete_totp_secret, store_backup_codes, consume_backup_code,
@@ -2520,6 +2525,13 @@ def _set_session_cookie(response: JSONResponse, token: str) -> None:
     )
 
 
+def _mask_user_id_for_log(user_id: str) -> str:
+    """PR A: Nutzername NIE im Klartext in Diagnose-/Fehlversuchs-Logs --
+    kurzer, nicht umkehrbarer Hash reicht aus, um wiederholte Versuche
+    gegen denselben Namen zu korrelieren, ohne den Namen selbst zu zeigen."""
+    return "uh_" + hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
+
+
 @app.post("/auth/login")
 @_limiter.limit("10/minute")
 def login(request: Request, payload: LoginRequest) -> JSONResponse:
@@ -2527,11 +2539,25 @@ def login(request: Request, payload: LoginRequest) -> JSONResponse:
     Login: setzt HttpOnly-Cookie (Browser-Flow) und gibt Token im Body zurück.
     Für ADMIN/DSB mit aktiviertem TOTP: gibt totp_required=true + totp_pending_token zurück.
     Zweiter Schritt: POST /auth/totp/verify mit Code + totp_pending_token.
+
+    PR A: die oeffentliche Antwort ist fuer JEDEN Fehlerfall identisch (401,
+    "Ungültige Zugangsdaten.") -- unbekannter Nutzer, falsches Passwort,
+    deaktiviertes/gesperrtes Konto, beschaedigter Passwort-Hash oder
+    Tenant-Fehlzuordnung sind von aussen nicht unterscheidbar (kein
+    User-Enumeration-Leck). Intern wird der technische Ursachen-Code
+    (siehe database.AUTH_REASON_*) protokolliert -- fuer Diagnose/
+    Missbrauchserkennung, niemals fuer die HTTP-Antwort ausgewertet.
     """
-    user = db_authenticate_user(payload.user_id, payload.password, payload.tenant_id)
+    request_id = uuid.uuid4().hex[:8]
+    user, reason_code = db_authenticate_user_with_reason(payload.user_id, payload.password, payload.tenant_id)
     if user is None:
         write_audit_entry(action="auth.login.failed",
-                          metadata={"user_id": payload.user_id, "tenant_id": payload.tenant_id},
+                          metadata={
+                              "request_id": request_id,
+                              "reason_code": reason_code,
+                              "user_id_hash": _mask_user_id_for_log(payload.user_id),
+                              "tenant_id": payload.tenant_id,
+                          },
                           tenant_id=payload.tenant_id)
         raise HTTPException(status_code=401, detail="Ungültige Zugangsdaten.")
 
