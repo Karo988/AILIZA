@@ -741,21 +741,21 @@ body{
      Passwort-Wiederholung (#auth-password-confirm-field) sind NUR im
      Registrierungs-Zustand sichtbar -- genau das war die gemeldete
      Verwechslungsquelle. Siehe setAuthModalMode(). -->
-<div class="modal" id="login-modal">
+<div class="modal" id="login-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" onkeydown="handleAuthModalKeydown(event)">
   <div class="modal-box">
     <div class="modal-h" id="auth-modal-title">Anmelden</div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" id="login-modal-hint">
       Anfragen mit personenbezogenen Daten sind dokumentationspflichtig (DSGVO).
       Bitte melden Sie sich an, um fortzufahren.
     </div>
-    <div class="field"><label>Nutzername</label><input id="login-user" type="text" autocomplete="username"></div>
+    <div class="field"><label for="login-user">Nutzername</label><input id="login-user" type="text" autocomplete="username"></div>
     <div style="font-size:11px;color:var(--text-muted);margin:-4px 0 8px" id="auth-username-case-hint">Bitte Groß- und Kleinschreibung des Nutzernamens beachten.</div>
-    <div class="field"><label>Passwort</label><input id="login-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')handleAuthEnter()"></div>
-    <div class="field" id="auth-password-confirm-field" style="display:none"><label>Passwort wiederholen</label><input id="register-pass-confirm" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')handleAuthEnter()"></div>
+    <div class="field"><label for="login-pass">Passwort</label><input id="login-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')handleAuthEnter()"></div>
+    <div class="field" id="auth-password-confirm-field" style="display:none"><label for="register-pass-confirm">Passwort wiederholen</label><input id="register-pass-confirm" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')handleAuthEnter()"></div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;display:none" id="auth-password-policy-hint">Passwort: mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl, Sonderzeichen.</div>
-    <div id="login-error" style="display:none;color:var(--warn);font-size:12px;margin-bottom:8px"></div>
-    <div id="login-success" style="display:none;color:var(--ok);font-size:12px;margin-bottom:8px"></div>
-    <div class="modal-acts"><button class="btn-ghost" onclick="closeLoginModal()">Abbrechen</button><button class="btn-primary" id="auth-primary-btn" onclick="handleAuthPrimary()">Anmelden</button></div>
+    <div id="login-error" role="alert" aria-live="assertive" style="display:none;color:var(--warn);font-size:12px;margin-bottom:8px"></div>
+    <div id="login-success" role="status" aria-live="polite" style="display:none;color:var(--ok);font-size:12px;margin-bottom:8px"></div>
+    <div class="modal-acts"><button class="btn-ghost" id="auth-cancel-btn" onclick="closeLoginModal()">Abbrechen</button><button class="btn-primary" id="auth-primary-btn" onclick="handleAuthPrimary()">Anmelden</button></div>
     <div style="font-size:11px;color:var(--text-muted);margin-top:10px" id="auth-mode-switch">
       Noch kein Konto? <a href="#" onclick="setAuthModalMode('register');return false;">Neues Konto erstellen</a>
     </div>
@@ -2244,16 +2244,59 @@ function setAuthModalMode(mode){
   document.getElementById("register-pass-confirm").value="";
 }
 
+let _authModalPreviouslyFocused=null;
+
 function openLoginModal(mode){
   setAuthModalMode(mode||"login");
+  _authModalPreviouslyFocused=document.activeElement;
   document.getElementById("login-modal").classList.add("open");
   document.getElementById("login-user").focus();
 }
-function closeLoginModal(){document.getElementById("login-modal").classList.remove("open");}
+function closeLoginModal(){
+  document.getElementById("login-modal").classList.remove("open");
+  // Fokus zurueck an das Element, das das Modal geoeffnet hat (Tastatur-
+  // Nutzerinnen sollen nicht am Anfang der Seite landen).
+  if(_authModalPreviouslyFocused&&typeof _authModalPreviouslyFocused.focus==="function"){
+    _authModalPreviouslyFocused.focus();
+  }
+  _authModalPreviouslyFocused=null;
+}
+
+// Escape schliesst das Modal; Tab/Shift+Tab bleiben innerhalb des Modals
+// (Fokus-Falle), solange es offen ist -- sonst koennte Tastatur-Fokus
+// unsichtbar hinter das Modal wandern.
+function handleAuthModalKeydown(e){
+  if(e.key==="Escape"){e.preventDefault();closeLoginModal();return;}
+  if(e.key!=="Tab")return;
+  const modal=document.getElementById("login-modal");
+  const focusable=Array.from(modal.querySelectorAll('button,input,a[href]'))
+    .filter(el=>el.offsetParent!==null&&!el.disabled);
+  if(focusable.length===0)return;
+  const first=focusable[0],last=focusable[focusable.length-1];
+  if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+  else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+}
 
 // Ein Eingabefeld-Enter/ein Primaerbutton fuehrt je nach aktivem Modus die
 // richtige Aktion aus -- keine Redundanz zwischen den beiden Formularen.
-function handleAuthPrimary(){authModalMode==="register"?doRegister():doLogin();}
+// Doppelklick-/Mehrfach-Absende-Schutz: waehrend eine Anfrage laeuft, ist
+// der Primaerbutton deaktiviert und zeigt einen Ladezustand.
+let _authRequestInFlight=false;
+async function handleAuthPrimary(){
+  if(_authRequestInFlight)return;
+  const btn=document.getElementById("auth-primary-btn");
+  const originalLabel=btn.textContent;
+  _authRequestInFlight=true;
+  btn.disabled=true;
+  btn.textContent="Bitte warten…";
+  try{
+    authModalMode==="register"?await doRegister():await doLogin();
+  }finally{
+    _authRequestInFlight=false;
+    btn.disabled=false;
+    btn.textContent=originalLabel;
+  }
+}
 function handleAuthEnter(){handleAuthPrimary();}
 
 async function doLogin(isFreshRegistration){

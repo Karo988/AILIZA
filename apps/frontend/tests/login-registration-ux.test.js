@@ -248,6 +248,117 @@ async function main() {
     await ctx.close();
   }
 
+  // 10. Fokus wandert beim Oeffnen des Modals auf das Nutzername-Feld.
+  {
+    const { ctx, page } = await newPage(browser);
+    await page.click("#topbar-auth-btn");
+    await page.waitForTimeout(200);
+    const focusedId = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    check("Fokus liegt nach Modal-Oeffnung auf #login-user", focusedId === "login-user", `war "${focusedId}"`);
+    await ctx.close();
+  }
+
+  // 11. Escape schliesst das Modal.
+  {
+    const { ctx, page } = await newPage(browser);
+    await page.click("#topbar-auth-btn");
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    const isOpen = await page.$eval("#login-modal", (el) => el.classList.contains("open"));
+    check("Escape schliesst das Login-Modal", isOpen === false);
+    await ctx.close();
+  }
+
+  // 12. Fehler-/Erfolgsmeldung sind per aria-live fuer Screenreader zugaenglich.
+  {
+    const { ctx, page } = await newPage(browser);
+    const errorLive = await page.$eval("#login-error", (el) => el.getAttribute("aria-live"));
+    const successLive = await page.$eval("#login-success", (el) => el.getAttribute("aria-live"));
+    check("Fehlermeldung hat aria-live", errorLive === "assertive", `war "${errorLive}"`);
+    check("Erfolgsmeldung hat aria-live", successLive === "polite", `war "${successLive}"`);
+    await ctx.close();
+  }
+
+  // 13. Doppelklick-Schutz: der Primaerbutton ist waehrend einer laufenden
+  //     Anfrage deaktiviert (kein doppeltes Absenden).
+  {
+    const { ctx, page } = await newPage(browser);
+    await page.click("#topbar-auth-btn");
+    await page.waitForTimeout(200);
+    await page.fill("#login-user", "DoubleClickUser" + Date.now());
+    await page.fill("#login-pass", "irgendeinPasswort1!");
+    await page.click("#auth-primary-btn");
+    const disabledDuringRequest = await page.$eval("#auth-primary-btn", (el) => el.disabled);
+    check("Primaerbutton waehrend Anfrage deaktiviert", disabledDuringRequest === true);
+    await page.waitForTimeout(800);
+    const disabledAfterRequest = await page.$eval("#auth-primary-btn", (el) => el.disabled);
+    check("Primaerbutton nach Anfrage wieder aktiv", disabledAfterRequest === false);
+    await ctx.close();
+  }
+
+  // 14. Enter-Taste loest im aktiven Modus dieselbe Aktion wie der
+  //     Primaerbutton aus (hier: Login-Modus, absichtlich falsches Passwort
+  //     -- ein einzelner Request reicht als Beweis, spart Rate-Limit-Budget
+  //     fuer die uebrigen Tests in diesem Lauf).
+  {
+    const { ctx, page } = await newPage(browser);
+    await page.click("#topbar-auth-btn");
+    await page.waitForTimeout(200);
+    await page.fill("#login-user", "EnterKeyUser" + Date.now());
+    await page.fill("#login-pass", "WrongPassword1!");
+    await page.focus("#login-pass");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(800);
+    const errVisible = await page.$eval("#login-error", (el) => getComputedStyle(el).display !== "none");
+    check("Enter im Login-Zustand loest Anmeldeversuch aus", errVisible === true);
+    await ctx.close();
+  }
+
+  // 15. autocomplete-Attribute sind korrekt gesetzt (Passwortmanager-Unterstuetzung).
+  {
+    const { ctx, page } = await newPage(browser);
+    await page.click("#topbar-auth-btn");
+    await page.waitForTimeout(200);
+    const userAutocomplete = await page.$eval("#login-user", (el) => el.getAttribute("autocomplete"));
+    const passAutocomplete = await page.$eval("#login-pass", (el) => el.getAttribute("autocomplete"));
+    check("Nutzername-Feld hat autocomplete=username", userAutocomplete === "username", `war "${userAutocomplete}"`);
+    check("Passwort-Feld hat autocomplete=current-password", passAutocomplete === "current-password", `war "${passAutocomplete}"`);
+    await page.click('#auth-mode-switch a');
+    await page.waitForTimeout(200);
+    const confirmAutocomplete = await page.$eval("#register-pass-confirm", (el) => el.getAttribute("autocomplete"));
+    check("Passwort-Wiederholung hat autocomplete=new-password", confirmAutocomplete === "new-password", `war "${confirmAutocomplete}"`);
+    await ctx.close();
+  }
+
+  // 16. Fokus-Falle: Tab am letzten fokussierbaren Element springt zurueck zum ersten.
+  {
+    const { ctx, page } = await newPage(browser);
+    await page.click("#topbar-auth-btn");
+    await page.waitForTimeout(200);
+    await page.focus("#auth-primary-btn");
+    // Naechstes fokussierbares Element nach dem Primaerbutton ist der Link
+    // im Modal ("Neues Konto erstellen") -- danach muss Tab zum ersten
+    // fokussierbaren Element (Nutzername-Feld) zurueckspringen.
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    const focusedId = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    check("Tab am Ende des Modals springt zurueck zum Anfang (Fokus-Falle)", focusedId === "login-user", `war "${focusedId}"`);
+    await ctx.close();
+  }
+
+  // 17. Labels sind mit ihren Eingabefeldern verknuepft (for/id).
+  {
+    const { ctx, page } = await newPage(browser);
+    await page.click("#topbar-auth-btn");
+    await page.waitForTimeout(200);
+    const userLabelFor = await page.$eval('label[for="login-user"]', (el) => el.getAttribute("for"));
+    const passLabelFor = await page.$eval('label[for="login-pass"]', (el) => el.getAttribute("for"));
+    check("Label fuer Nutzername-Feld verknuepft", userLabelFor === "login-user");
+    check("Label fuer Passwort-Feld verknuepft", passLabelFor === "login-pass");
+    await ctx.close();
+  }
+
   await browser.close();
 
   console.log(`\n${passed} passed, ${failed} failed`);

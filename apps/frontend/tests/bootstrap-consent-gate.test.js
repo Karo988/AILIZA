@@ -153,10 +153,16 @@ async function main() {
     await page.waitForTimeout(800);
     await page.click("#topbar-auth-btn");
     await page.waitForTimeout(300);
+    // PR A: Login/Registrierung sind getrennte Modal-Zustaende -- erst in
+    // den Registrierungs-Zustand wechseln (kein "Registrieren"-Button mehr
+    // im Login-Zustand).
+    await page.click('#auth-mode-switch a');
+    await page.waitForTimeout(200);
     const uniqueUser = "e2e_hotfix_" + Date.now();
     await page.fill("#login-user", uniqueUser);
     await page.fill("#login-pass", "Sehr$icher123Pass");
-    await page.click('button:has-text("Registrieren")');
+    await page.fill("#register-pass-confirm", "Sehr$icher123Pass");
+    await page.click("#auth-primary-btn");
     await page.waitForTimeout(1500);
     const authBtnAfterRegister = await page.$eval("#topbar-auth-btn", (el) => el.textContent);
     check(
