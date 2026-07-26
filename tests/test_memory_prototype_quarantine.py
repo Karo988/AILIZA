@@ -64,6 +64,26 @@ def test_memory_router_does_not_reference_legacy_api_key_auth_module():
     assert "from ..auth import" not in code_only
 
 
+def test_quarantine_guard_registered_router_wide_not_per_endpoint():
+    """Die Sperre muss als Router-weite `dependencies=[...]` bei der
+    APIRouter-Erzeugung hinterlegt sein -- nicht einzeln pro Endpunkt --
+    damit ein spaeter ergaenzter Endpunkt sie nicht versehentlich
+    auslassen kann."""
+    from apps.backend.routers.memory import router, _quarantine_guard
+    dependant_calls = [d.dependency for d in router.dependencies]
+    assert _quarantine_guard in dependant_calls, (
+        "router.dependencies enthaelt _quarantine_guard nicht -- die Sperre "
+        "muss router-weit gelten, nicht nur pro Endpunkt."
+    )
+    # Jede einzelne Route erbt die Router-Dependency zusaetzlich zu ihren
+    # eigenen (falls vorhandenen) Dependencies.
+    for route in router.routes:
+        route_dependant_calls = [d.call for d in route.dependant.dependencies]
+        assert _quarantine_guard in route_dependant_calls, (
+            f"Route {route.path} ({route.methods}) erbt die Router-Sperre nicht."
+        )
+
+
 def test_isolated_router_denies_all_endpoints_by_default():
     """Selbst bei einer (hier bewusst isolierten, nicht-produktiven)
     Einbindung in eine frische FastAPI-Testapp muessen ALLE Endpunkte des

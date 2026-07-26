@@ -9,8 +9,10 @@ technischen Hash-only-Speicher (eigene SQLite-Datei, siehe
 `apps/backend/memory/sqlite_store.py`) für Zwecke wie Session-/Audit-
 Merkmale. Er ist NICHT identisch mit dem fachlichen Memory-Kern
 (`memory_items`/`memory_sources`/`memory_visibility`/`memory_suggestions`
-in `apps/backend/database.py`, ueber `apps/backend/permissions.py`
-abgesichert) und darf mit diesem nicht vermischt werden.
+in `apps/backend/database.py`. Seine durchgängige Anbindung an den
+bestehenden zentralen Permission-Evaluator ist noch nicht vollständig
+umgesetzt und folgt in einer späteren Memory-Härtungsphase) und darf mit
+diesem nicht vermischt werden.
 
 Ursprünglicher Fehler (vor diesem Commit): `from ..auth import
 require_admin` importierte aus einem nicht mehr existierenden Symbol --
@@ -25,13 +27,17 @@ unten), bis (falls je gewuenscht) eine bewusste Integrations-Entscheidung
 getroffen wird.
 
 Fail-Closed-Quarantäne (M0):
-  Jeder Endpunkt haengt zusaetzlich von `_quarantine_guard()` ab, die
-  IMMER 503 wirft -- unabhaengig von Credentials, Rolle oder Tenant.
-  Selbst wenn dieser Router versehentlich registriert würde (z.B. durch
-  ein zukünftiges `include_router()` ohne Rücksprache), sind KEINE
-  nutzbaren Endpunkte erreichbar. Das ist bewusst strenger als eine reine
-  Admin-Prüfung, da für dieses Prototyp-Modul keine Rollen-/Tenant-Logik
-  definiert oder geprüft wurde -- Default Deny statt stillschweigender
+  `_quarantine_guard()` ist als ROUTER-WEITE `dependencies=[...]` bei der
+  Erzeugung von `router = APIRouter(...)` registriert (nicht einzeln pro
+  Endpunkt) -- sie wirft IMMER 503, unabhaengig von Credentials, Rolle
+  oder Tenant. Dadurch ist auch ein spaeter ergaenzter Endpunkt
+  automatisch gesperrt, ohne dass der Guard dort erneut angegeben werden
+  muesste (kann nicht versehentlich vergessen werden). Selbst wenn dieser
+  Router versehentlich registriert würde (z.B. durch ein zukünftiges
+  `include_router()` ohne Rücksprache), sind KEINE nutzbaren Endpunkte
+  erreichbar. Das ist bewusst strenger als eine reine Admin-Prüfung, da
+  für dieses Prototyp-Modul keine Rollen-/Tenant-Logik definiert oder
+  geprüft wurde -- Default Deny statt stillschweigender
   Wiederverwendung von Produktions-Rollenlogik, die hier nicht passt.
 
   Vor einer produktiven Nutzung (Registrierung in main.py) waere
@@ -54,16 +60,17 @@ from pydantic import BaseModel, field_validator
 from ..memory import MemoryEntry, MemoryPurpose, VisibilityLevel
 from ..memory.sqlite_store import SqliteMemoryStore
 
-router = APIRouter(prefix="/memory", tags=["memory-prototype-quarantined"])
-
-_store: SqliteMemoryStore | None = None
-
 
 def _quarantine_guard() -> None:
     """Fail-closed: dieser technische Prototyp ist grundsaetzlich nicht
     produktiv nutzbar. Weder Rolle noch Tenant noch Owner werden hier
     geprueft -- ausschliesslich bedingungslose Ablehnung, unabhaengig
-    davon, ob/wie dieser Router eingebunden wird."""
+    davon, ob/wie dieser Router eingebunden wird.
+
+    Als Router-weite `dependencies=[...]` registriert (nicht pro
+    Endpunkt), damit auch ein spaeter ergaenzter Endpunkt automatisch
+    gesperrt ist und der Guard nicht versehentlich vergessen werden
+    kann."""
     raise HTTPException(
         status_code=503,
         detail=(
@@ -71,6 +78,15 @@ def _quarantine_guard() -> None:
             "Zugriff freigegeben (Quarantaene, siehe Moduldokumentation)."
         ),
     )
+
+
+router = APIRouter(
+    prefix="/memory",
+    tags=["memory-prototype-quarantined"],
+    dependencies=[Depends(_quarantine_guard)],
+)
+
+_store: SqliteMemoryStore | None = None
 
 
 def get_store() -> SqliteMemoryStore:
@@ -134,7 +150,7 @@ def _to_response(entry: MemoryEntry) -> MemoryEntryResponse:
 
 
 @router.post("", status_code=201, response_model=MemoryEntryResponse)
-def create_entry(payload: MemoryEntryCreate, _guard: None = Depends(_quarantine_guard)) -> MemoryEntryResponse:
+def create_entry(payload: MemoryEntryCreate) -> MemoryEntryResponse:
     entry = MemoryEntry(
         purpose=payload.purpose,
         content_hash=payload.content_hash,
@@ -148,12 +164,12 @@ def create_entry(payload: MemoryEntryCreate, _guard: None = Depends(_quarantine_
 
 
 @router.get("", response_model=list[MemoryEntryResponse])
-def list_entries(_guard: None = Depends(_quarantine_guard)) -> list[MemoryEntryResponse]:
+def list_entries() -> list[MemoryEntryResponse]:
     return [_to_response(e) for e in get_store().list_active()]
 
 
 @router.get("/{entry_id}", response_model=MemoryEntryResponse)
-def get_entry(entry_id: str, _guard: None = Depends(_quarantine_guard)) -> MemoryEntryResponse:
+def get_entry(entry_id: str) -> MemoryEntryResponse:
     entry = get_store().get(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Memory entry not found")
@@ -161,7 +177,7 @@ def get_entry(entry_id: str, _guard: None = Depends(_quarantine_guard)) -> Memor
 
 
 @router.delete("/{entry_id}", status_code=200, response_model=DeactivateResponse)
-def deactivate_entry(entry_id: str, _guard: None = Depends(_quarantine_guard)) -> DeactivateResponse:
+def deactivate_entry(entry_id: str) -> DeactivateResponse:
     ok = get_store().deactivate(entry_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Memory entry not found or already deactivated")
@@ -169,6 +185,6 @@ def deactivate_entry(entry_id: str, _guard: None = Depends(_quarantine_guard)) -
 
 
 @router.post("/purge", status_code=200, response_model=PurgeResponse)
-def purge_expired(_guard: None = Depends(_quarantine_guard)) -> PurgeResponse:
+def purge_expired() -> PurgeResponse:
     count = get_store().purge_expired()
     return PurgeResponse(purged=count)
