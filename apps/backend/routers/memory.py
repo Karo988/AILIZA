@@ -1,3 +1,54 @@
+"""
+ACHTUNG — nicht-produktiver technischer Prototyp (Quarantäne, M0)
+===================================================================
+Dieser Router ist im aktuellen `main` NICHT registriert (kein
+`app.include_router(...)`-Aufruf in `apps/backend/main.py`) und es wurde
+kein interner Aufrufer gefunden. Er gehört zu `apps/backend/memory/`
+(`MemoryEntry`/`MemoryStore`/`SqliteMemoryStore`) -- einem eigenständigen,
+technischen Hash-only-Speicher (eigene SQLite-Datei, siehe
+`apps/backend/memory/sqlite_store.py`) für Zwecke wie Session-/Audit-
+Merkmale. Er ist NICHT identisch mit dem fachlichen Memory-Kern
+(`memory_items`/`memory_sources`/`memory_visibility`/`memory_suggestions`
+in `apps/backend/database.py`. Seine durchgängige Anbindung an den
+bestehenden zentralen Permission-Evaluator ist noch nicht vollständig
+umgesetzt und folgt in einer späteren Memory-Härtungsphase) und darf mit
+diesem nicht vermischt werden.
+
+Ursprünglicher Fehler (vor diesem Commit): `from ..auth import
+require_admin` importierte aus einem nicht mehr existierenden Symbol --
+`apps/backend/auth/__init__.py` (Package) exportiert kein `require_admin`;
+dieses Symbol existiert nur in der separaten, veralteten Datei
+`apps/backend/auth.py` (altes Operator/API-Key-Schema), die vom
+gleichnamigen Package verdeckt wird und nicht Teil des aktuellen RBAC-/
+Permission-Systems ist. Ein Import von dort waere schlicht falsch
+gewesen -- dieser Router bekommt daher KEIN eigenes zweites
+Auth-/API-Key-System, sondern eine dedizierte Fail-Closed-Sperre (siehe
+unten), bis (falls je gewuenscht) eine bewusste Integrations-Entscheidung
+getroffen wird.
+
+Fail-Closed-Quarantäne (M0):
+  `_quarantine_guard()` ist als ROUTER-WEITE `dependencies=[...]` bei der
+  Erzeugung von `router = APIRouter(...)` registriert (nicht einzeln pro
+  Endpunkt) -- sie wirft IMMER 503, unabhaengig von Credentials, Rolle
+  oder Tenant. Dadurch ist auch ein spaeter ergaenzter Endpunkt
+  automatisch gesperrt, ohne dass der Guard dort erneut angegeben werden
+  muesste (kann nicht versehentlich vergessen werden). Selbst wenn dieser
+  Router versehentlich registriert würde (z.B. durch ein zukünftiges
+  `include_router()` ohne Rücksprache), sind KEINE nutzbaren Endpunkte
+  erreichbar. Das ist bewusst strenger als eine reine Admin-Prüfung, da
+  für dieses Prototyp-Modul keine Rollen-/Tenant-Logik definiert oder
+  geprüft wurde -- Default Deny statt stillschweigender
+  Wiederverwendung von Produktions-Rollenlogik, die hier nicht passt.
+
+  Vor einer produktiven Nutzung (Registrierung in main.py) waere
+  mindestens noetig: echte Authentifizierung ueber
+  `apps.backend.auth.require_role`/`evaluate_permission`, Abgrenzung der
+  hier verwendeten Konzepte (`MemoryPurpose`, `VisibilityLevel`) vom
+  fachlichen Memory-Kern, und eine bewusste Entscheidung, ob dieses
+  Modul ueberhaupt weiterbetrieben oder entfernt wird (siehe HANDOFF im
+  PR-Beschreibungstext). Bis dahin bleibt dieser Router unregistriert
+  und quarantänisiert.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,12 +57,34 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
-from ..auth import require_admin
-
 from ..memory import MemoryEntry, MemoryPurpose, VisibilityLevel
 from ..memory.sqlite_store import SqliteMemoryStore
 
-router = APIRouter(prefix="/memory", tags=["memory"])
+
+def _quarantine_guard() -> None:
+    """Fail-closed: dieser technische Prototyp ist grundsaetzlich nicht
+    produktiv nutzbar. Weder Rolle noch Tenant noch Owner werden hier
+    geprueft -- ausschliesslich bedingungslose Ablehnung, unabhaengig
+    davon, ob/wie dieser Router eingebunden wird.
+
+    Als Router-weite `dependencies=[...]` registriert (nicht pro
+    Endpunkt), damit auch ein spaeter ergaenzter Endpunkt automatisch
+    gesperrt ist und der Guard nicht versehentlich vergessen werden
+    kann."""
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Dieser technische Memory-Prototyp ist nicht fuer produktiven "
+            "Zugriff freigegeben (Quarantaene, siehe Moduldokumentation)."
+        ),
+    )
+
+
+router = APIRouter(
+    prefix="/memory",
+    tags=["memory-prototype-quarantined"],
+    dependencies=[Depends(_quarantine_guard)],
+)
 
 _store: SqliteMemoryStore | None = None
 
@@ -112,6 +185,6 @@ def deactivate_entry(entry_id: str) -> DeactivateResponse:
 
 
 @router.post("/purge", status_code=200, response_model=PurgeResponse)
-def purge_expired(_role=Depends(require_admin)) -> PurgeResponse:
+def purge_expired() -> PurgeResponse:
     count = get_store().purge_expired()
     return PurgeResponse(purged=count)
