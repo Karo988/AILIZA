@@ -1931,6 +1931,11 @@ def _validate_memory_item(scope: str, tenant_id: str | None, owner_user_id: str 
         raise MemoryValidationError("user_memory braucht owner_user_id.")
     if scope == "company_memory" and not tenant_id:
         raise MemoryValidationError("company_memory braucht tenant_id (Organisationsbezug).")
+    if scope == "company_memory" and owner_user_id:
+        raise MemoryValidationError(
+            "company_memory darf keinen owner_user_id haben (gehoert der Organisation, "
+            "nicht einer einzelnen Person)."
+        )
     if status in _ACTIVE_STATUS_VALUES:
         if not source_id:
             raise MemoryValidationError("Aktiver Memory-Eintrag braucht source_id.")
@@ -1981,13 +1986,23 @@ def get_memory_item(item_id: int) -> dict[str, Any] | None:
 
 
 def list_active_memory_items_for_user(user_id: str, tenant_id: str = DEFAULT_TENANT_ID) -> list[dict[str, Any]]:
-    """Nur eigene, aktive, nicht abgelaufene Eintraege -- keine fremden user_memory-Eintraege."""
+    """Nur eigene, aktive, nicht abgelaufene user_memory-Eintraege -- keine
+    fremden Eintraege und kein company_memory (M1: expliziter scope-Filter,
+    vorher implizit ueber owner_user_id).
+
+    Uebergangsregel (M1): Legacy-user_memory mit tenant_id=NULL (aus der
+    Zeit vor Tenant-Pflicht) MUSS weiterhin fuer den Owner auffindbar,
+    exportierbar und loeschbar bleiben -- SQL-NULL-Vergleich
+    (`tenant_id == tenant_id`) liefert bei NULL sonst nie True und wuerde
+    diese Zeilen unsichtbar machen. Kein Erraten/Nachtragen eines
+    Tenant-Werts -- nur zusaetzlich sichtbar machen."""
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         rows = conn.execute(
             select(memory_items)
+            .where(memory_items.c.scope == "user_memory")
             .where(memory_items.c.owner_user_id == user_id)
-            .where(memory_items.c.tenant_id == tenant_id)
+            .where(or_(memory_items.c.tenant_id == tenant_id, memory_items.c.tenant_id.is_(None)))
             .where(memory_items.c.status == "active")
         ).mappings().all()
     return [dict(r) for r in rows if r["expires_at"] is None or _as_aware(r["expires_at"]) > now]
@@ -2008,6 +2023,90 @@ def list_active_memory_items_for_org(tenant_id: str) -> list[dict[str, Any]]:
 
 def _as_aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+# ── M1: Read-only Bestandspruefung der Scope-/Owner-/Tenant-Invarianten ────
+# Verbindliche Zielregeln (siehe _validate_memory_item):
+#   user_memory:    scope=="user_memory", owner_user_id PFLICHT
+#   company_memory: scope=="company_memory", tenant_id PFLICHT, owner_user_id MUSS NULL sein
+#
+# Diese Funktion VERAENDERT NIEMALS Daten (rein lesend) -- sie liefert nur
+# einen Bericht. tenant_id=NULL bei user_memory ist im Uebergang gueltig
+# (siehe list_active_memory_items_for_user) und wird daher NICHT als
+# Verletzung gezaehlt, sondern separat als Info ausgewiesen. Aufrufer
+# (z.B. ein Migrations-/Deploy-Skript) entscheiden selbst, ob bei
+# gefundenen echten Verletzungen abgebrochen wird -- diese Funktion selbst
+# wirft nichts, sie berichtet nur (fail-safe: lieber ein zu ausfuehrlicher
+# Bericht als eine stille Fehlklassifikation).
+def audit_memory_scope_invariants() -> dict[str, Any]:
+    """Liefert einen Bestandsbericht ueber memory_items, der alle
+    Verletzungen der Scope-/Owner-/Tenant-Invarianten auflistet, OHNE
+    irgendetwas zu veraendern. Gedacht als Trockenlauf/Repair-Report vor
+    einer kuenftigen Migration."""
+    from sqlalchemy import func
+    with engine.begin() as conn:
+        total = conn.execute(select(func.count()).select_from(memory_items)).scalar_one()
+
+        user_memory_missing_owner = conn.execute(
+            select(memory_items.c.id)
+            .where(memory_items.c.scope == "user_memory")
+            .where(memory_items.c.owner_user_id.is_(None))
+        ).scalars().all()
+
+        company_memory_missing_tenant = conn.execute(
+            select(memory_items.c.id)
+            .where(memory_items.c.scope == "company_memory")
+            .where(memory_items.c.tenant_id.is_(None))
+        ).scalars().all()
+
+        company_memory_with_owner = conn.execute(
+            select(memory_items.c.id)
+            .where(memory_items.c.scope == "company_memory")
+            .where(memory_items.c.owner_user_id.isnot(None))
+        ).scalars().all()
+
+        unknown_scope = conn.execute(
+            select(memory_items.c.id, memory_items.c.scope)
+            .where(memory_items.c.scope.notin_(list(_VALID_MEMORY_SCOPES)))
+        ).all()
+
+        legacy_user_memory_null_tenant = conn.execute(
+            select(memory_items.c.id)
+            .where(memory_items.c.scope == "user_memory")
+            .where(memory_items.c.tenant_id.is_(None))
+            .where(memory_items.c.owner_user_id.isnot(None))
+        ).scalars().all()
+
+        active_without_visibility = conn.execute(
+            select(memory_items.c.id)
+            .select_from(memory_items.outerjoin(
+                memory_visibility, memory_visibility.c.memory_item_id == memory_items.c.id,
+            ))
+            .where(memory_items.c.status == "active")
+            .where(memory_visibility.c.id.is_(None))
+        ).scalars().all()
+
+    violations = {
+        "user_memory_missing_owner": list(user_memory_missing_owner),
+        "company_memory_missing_tenant": list(company_memory_missing_tenant),
+        "company_memory_with_owner": list(company_memory_with_owner),
+        "unknown_scope": [{"id": r[0], "scope": r[1]} for r in unknown_scope],
+    }
+    info_only = {
+        # Kein Fehler -- gueltiger Uebergangszustand, siehe Docstring oben.
+        "legacy_user_memory_null_tenant": list(legacy_user_memory_null_tenant),
+        # Kein harter Fehler dieser Pruefung, aber relevant fuer M2/M3
+        # (Default-Deny beim Lesen einer sichtbarkeits-losen aktiven Zeile).
+        "active_without_visibility": list(active_without_visibility),
+    }
+    has_violations = any(v for v in violations.values())
+    return {
+        "total_memory_items": total,
+        "has_violations": has_violations,
+        "violations": violations,
+        "info_only": info_only,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def set_memory_visibility(memory_item_id: int, *, visibility_scope: str,
@@ -2466,10 +2565,20 @@ def export_user_data(user_id: str, tenant_id: str = DEFAULT_TENANT_ID) -> dict[s
 
 
 def _soft_delete_owned_memory_items(conn: Any, user_id: str, tenant_id: str, now: datetime) -> None:
+    """Loescht (soft) ausschliesslich eigenes user_memory des Nutzers --
+    NIEMALS company_memory (M1: expliziter scope-Filter; company_memory
+    hat ohnehin owner_user_id=NULL und wuerde durch den owner_user_id-
+    Filter allein schon ausgeschlossen, der scope-Filter macht das aber
+    unmissverstaendlich explizit statt implizit).
+
+    Uebergangsregel (M1): schliesst wie list_active_memory_items_for_user()
+    Legacy-Zeilen mit tenant_id=NULL mit ein, damit Accountloeschung auch
+    fuer Alt-Daten vollstaendig greift."""
     conn.execute(
         update(memory_items)
+        .where(memory_items.c.scope == "user_memory")
         .where(memory_items.c.owner_user_id == user_id)
-        .where(memory_items.c.tenant_id == tenant_id)
+        .where(or_(memory_items.c.tenant_id == tenant_id, memory_items.c.tenant_id.is_(None)))
         .values(status="deleted", updated_at=now)
     )
 
