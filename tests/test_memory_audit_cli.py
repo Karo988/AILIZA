@@ -143,3 +143,81 @@ def test_unreachable_database_exits_two():
     'kein Problem' / 'Verletzung gefunden')."""
     result = _run_script("postgresql+psycopg://user:pass@nonexistent-host-xyz.invalid:5432/db")
     assert result.returncode == 2
+
+
+# ── --summary-only: keine internen ID-Listen in oeffentlich einsehbaren Logs ─
+
+def test_summary_only_json_omits_id_lists(tmp_path):
+    db_path = tmp_path / "summary_violation.db"
+    db_url = f"sqlite:///{db_path}"
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    setup = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.database import init_db, engine, memory_items
+from sqlalchemy import insert
+from datetime import datetime, timezone
+init_db()
+now = datetime.now(timezone.utc)
+with engine.begin() as conn:
+    conn.execute(insert(memory_items).values(
+        tenant_id="default", scope="company_memory", owner_user_id="sollte_leer_sein",
+        title="invalid", content="c", purpose="p", source_id=None,
+        status="active", created_at=now, updated_at=now,
+    ))
+"""
+    subprocess.run([sys.executable, "-c", setup], env=env, capture_output=True, text=True, check=True, timeout=30)
+
+    result = _run_script(db_url, ["--json", "--summary-only"])
+    assert result.returncode == 1, result.stderr
+    report = json.loads(result.stdout)
+    assert report["has_violations"] is True
+    # Zaehlwert bleibt erhalten ...
+    assert report["violations"]["company_memory_with_owner"] == 1
+    # ... aber KEINE ID-Liste -- der Wert ist ein Integer, keine Liste.
+    assert isinstance(report["violations"]["company_memory_with_owner"], int)
+    # Auch als Rohtext darf keine erkennbare ID-Listen-Klammer auftauchen
+    # (Regressionsschutz: stellt sicher, dass niemand versehentlich doch
+    # eine Liste serialisiert).
+    assert "[1]" not in result.stdout
+
+
+def test_summary_only_text_output_has_no_id_list_suffix(tmp_path):
+    db_path = tmp_path / "summary_violation_text.db"
+    db_url = f"sqlite:///{db_path}"
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    setup = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.database import init_db, engine, memory_items
+from sqlalchemy import insert
+from datetime import datetime, timezone
+init_db()
+now = datetime.now(timezone.utc)
+with engine.begin() as conn:
+    conn.execute(insert(memory_items).values(
+        tenant_id="default", scope="company_memory", owner_user_id="sollte_leer_sein",
+        title="invalid", content="c", purpose="p", source_id=None,
+        status="active", created_at=now, updated_at=now,
+    ))
+"""
+    subprocess.run([sys.executable, "-c", setup], env=env, capture_output=True, text=True, check=True, timeout=30)
+
+    result = _run_script(db_url, ["--summary-only"])
+    assert result.returncode == 1, result.stderr
+    assert "company_memory_with_owner: 1 Treffer" in result.stdout
+    assert "--" not in result.stdout.split("company_memory_with_owner")[1].split("\n")[0]
+
+
+def test_summary_only_clean_db_still_exits_zero(tmp_path):
+    db_path = tmp_path / "summary_clean.db"
+    result = _run_script(f"sqlite:///{db_path}", ["--summary-only", "--json"])
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["has_violations"] is False

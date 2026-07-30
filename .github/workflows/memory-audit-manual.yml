@@ -1,0 +1,83 @@
+name: Memory-Scope-Audit (manuell, Produktions-Datenbank)
+
+# Manueller One-Off-Job (workflow_dispatch) fuer den in PR M1/M2 (#65, #66)
+# angekuendigten Produktions-Audit der Memory-Scope-/Owner-/Tenant-
+# Invarianten gegen die echte Render/Neon-Datenbank.
+#
+# WICHTIG (oeffentliches Repository):
+#   - Dieser Workflow fuehrt AUSSCHLIESSLICH audit_memory_scope_cli.py aus
+#     -- eine rein lesende Funktion (siehe deren Docstring/Tests). Es
+#     werden KEINE Daten veraendert.
+#   - Das Secret AILIZA_DATABASE_URL_AUDIT wird NIEMALS direkt geloggt
+#     oder ausgegeben. GitHub maskiert als "secrets." referenzierte Werte
+#     automatisch in Logs, zusaetzlich wird es an keiner Stelle in einem
+#     "echo"/"print" verwendet.
+#   - Die Ausgabe laeuft IMMER mit --summary-only: nur Zaehlwerte und
+#     has_violations, KEINE internen Datensatz-IDs -- das Repository ist
+#     oeffentlich, interne IDs sollen dort nicht auftauchen, auch wenn sie
+#     fuer sich genommen keine Rohinhalte sind.
+#   - Empfehlung: AILIZA_DATABASE_URL_AUDIT sollte ein separater,
+#     rein lesender (read-only) Datenbank-Nutzer sein, nicht der volle
+#     Anwendungs-Connection-String mit Schreibrechten.
+#
+# Exit-Code-Interpretation (siehe audit_memory_scope_cli.py):
+#   0 -- keine Verletzungen -> M2 kann vorbereitet werden
+#   1 -- Verletzungen gefunden -> KEINE M2-Arbeit, erst Report auswerten
+#   2 -- Ausfuehrungsfehler (z.B. DB nicht erreichbar) -> Konfiguration
+#        pruefen, Workflow erneut ausfuehren
+#
+# Nur Exit-Code 2 markiert diesen Workflow-Lauf als fehlgeschlagen (echter
+# technischer Fehler). Exit-Code 1 ("Verletzungen gefunden") ist ein
+# gueltiges, informatives Ergebnis und laesst den Lauf bewusst NICHT als
+# rot markiert erscheinen -- das ist kein CI-Bug, sondern der eigentliche
+# Zweck des Audits.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  memory-scope-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Minimal-Abhängigkeiten installieren (nur was der Audit-Pfad braucht)
+        run: pip install "sqlalchemy==2.0.30" "psycopg[binary]>=3.1" "python-dotenv==1.0.1"
+
+      - name: Produktions-Audit ausführen (read-only, summary-only)
+        env:
+          AILIZA_DATABASE_URL: ${{ secrets.AILIZA_DATABASE_URL_AUDIT }}
+        run: |
+          set +e
+          python apps/backend/audit_memory_scope_cli.py --summary-only --json > audit_summary.json
+          exit_code=$?
+          set -e
+
+          echo "## Memory-Scope-Audit Ergebnis" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat audit_summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Exit-Code: $exit_code" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$exit_code" -eq 0 ]; then
+            echo "✅ Keine Invarianten-Verletzungen -- M2 kann vorbereitet werden." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$exit_code" -eq 1 ]; then
+            echo "⚠️ Invarianten-Verletzungen gefunden -- KEINE M2-Arbeit, erst Report auswerten." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ Ausführungsfehler (Exit-Code $exit_code) -- Konfiguration/Zugriff prüfen." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          cat audit_summary.json
+
+          # Nur ein echter Ausfuehrungsfehler (Exit 2) markiert den Lauf
+          # als fehlgeschlagen. Exit 1 (Verletzungen gefunden) ist ein
+          # gueltiges Ergebnis, kein CI-Fehler.
+          if [ "$exit_code" -eq 2 ]; then
+            exit 1
+          fi

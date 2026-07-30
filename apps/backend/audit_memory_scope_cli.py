@@ -11,11 +11,20 @@ bislang nur als Trockenlauf gegen eine leere lokale Dev-Datei nachgewiesen
 werden.
 
 Verwendung (aus einer Umgebung mit Zugriff auf die produktive
-AILIZA_DATABASE_URL, z.B. Render Shell):
+AILIZA_DATABASE_URL, z.B. Render Shell oder ein manueller GitHub-Actions-
+Workflow):
 
     python apps/backend/audit_memory_scope_cli.py
     python apps/backend/audit_memory_scope_cli.py --json
     python apps/backend/audit_memory_scope_cli.py --json > audit_report.json
+    python apps/backend/audit_memory_scope_cli.py --summary-only --json
+
+--summary-only: unterdrueckt ALLE internen ID-Listen (Verletzungen und
+Info-Werte) -- nur Zaehlwerte + has_violations bleiben erhalten. Gedacht
+fuer Ausfuehrungen, deren Log oeffentlich einsehbar ist (z.B. Logs eines
+Workflow-Laufs in einem oeffentlichen GitHub-Repository) -- interne
+Datensatz-IDs sollen dort nicht auftauchen, auch wenn sie fuer sich
+genommen keine Rohinhalte sind.
 
 Exit-Codes (fuer Skripting/CI-Gates geeignet):
     0 -- keine Verletzungen gefunden (has_violations == False)
@@ -47,7 +56,22 @@ except ImportError:
     pass
 
 
-def _print_human_report(report: dict) -> None:
+def _summarize(report: dict) -> dict:
+    """Reduziert einen Bericht auf reine Zaehlwerte -- keine internen
+    ID-Listen. Fuer Ausgaben in oeffentlich einsehbare Logs (siehe
+    --summary-only)."""
+    return {
+        "total_memory_items": report["total_memory_items"],
+        "has_violations": report["has_violations"],
+        "violations": {k: len(v) for k, v in report["violations"].items()},
+        "info_only": {k: len(v) for k, v in report["info_only"].items()},
+        "checked_at": report["checked_at"],
+    }
+
+
+def _print_human_report(report: dict, *, summary_only: bool) -> None:
+    """report: bei summary_only=True bereits ueber _summarize() reduziert
+    (violations/info_only-Werte sind dann int Zaehlwerte statt ID-Listen)."""
     print(f"Memory-Scope-Audit ({report['checked_at']})")
     print(f"Gesamtzahl memory_items: {report['total_memory_items']}")
     print()
@@ -55,13 +79,17 @@ def _print_human_report(report: dict) -> None:
         print("❌ INVARIANTEN VERLETZT:")
     else:
         print("✅ Keine Invarianten-Verletzungen gefunden.")
-    for key, ids in report["violations"].items():
-        marker = "❌" if ids else "  "
-        print(f"  {marker} {key}: {len(ids)} Treffer" + (f" -- {ids}" if ids else ""))
+    for key, val in report["violations"].items():
+        count = val if summary_only else len(val)
+        marker = "❌" if count else "  "
+        detail = "" if summary_only or not val else f" -- {val}"
+        print(f"  {marker} {key}: {count} Treffer{detail}")
     print()
     print("Info (kein harter Fehler, siehe Dokumentation):")
-    for key, ids in report["info_only"].items():
-        print(f"     {key}: {len(ids)} Treffer" + (f" -- {ids}" if ids else ""))
+    for key, val in report["info_only"].items():
+        count = val if summary_only else len(val)
+        detail = "" if summary_only or not val else f" -- {val}"
+        print(f"     {key}: {count} Treffer{detail}")
     print()
     if report["has_violations"]:
         print("Naechster Schritt: Verletzte Datensaetze pruefen (KEINE automatische")
@@ -73,6 +101,10 @@ def main() -> int:
         description="Rein lesender Bestandsbericht der Memory-Scope-/Owner-/Tenant-Invarianten.",
     )
     parser.add_argument("--json", action="store_true", help="Bericht als JSON statt Klartext ausgeben.")
+    parser.add_argument(
+        "--summary-only", action="store_true",
+        help="Unterdrueckt interne ID-Listen -- nur Zaehlwerte. Fuer oeffentlich einsehbare Logs.",
+    )
     args = parser.parse_args()
 
     try:
@@ -85,12 +117,15 @@ def main() -> int:
         print(f"❌ Audit fehlgeschlagen: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
-    if args.json:
-        print(json.dumps(report, indent=2, default=str))
-    else:
-        _print_human_report(report)
+    has_violations = report["has_violations"]
+    output_report = _summarize(report) if args.summary_only else report
 
-    return 1 if report["has_violations"] else 0
+    if args.json:
+        print(json.dumps(output_report, indent=2, default=str))
+    else:
+        _print_human_report(output_report, summary_only=args.summary_only)
+
+    return 1 if has_violations else 0
 
 
 if __name__ == "__main__":
