@@ -3,6 +3,18 @@
 **Stand:** 24.06.2026
 **Branch:** claude/adoring-lamport-c1zs8h
 
+> **Nachtrag (30.07.2026):** Die Aussagen "Memory-Backend existiert noch
+> nicht" / "Memory-Backend fehlt noch" in diesem Dokument sind **veraltet**.
+> Der fachliche Memory-Kern (`memory_items`, `memory_sources`,
+> `memory_visibility`, `memory_suggestions` in `apps/backend/database.py`)
+> ist seit PR #44/#45 implementiert und wurde in PR #64–#67 gehärtet
+> (Scope-/Owner-/Tenant-Invarianten, Bestands-Audit-CLI, manueller
+> GitHub-Actions-Audit-Workflow). Audit-Vault Stufe 1+2 (SHA-256-Hash-Chain)
+> ist ebenfalls implementiert. Aktueller Stand: siehe
+> `docs/HANDOFF_DATENBANK_GEDAECHTNIS.md` und den Skill `ailiza-wissen`.
+> Dieses Dokument bleibt als historischer Planungsstand vom 24.06.2026
+> erhalten, ist aber für den technischen Ist-Zustand nicht mehr maßgeblich.
+
 ---
 
 ## Präzise Formulierung des aktuellen Stands

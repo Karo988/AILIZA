@@ -39,6 +39,8 @@ Alle abgeschlossenen Artefakte sind in diesem Repository versioniert.
 - [x] Audit-Vault Stufe 1 (append-only, sanitized, paginiert)
 - [x] Audit-Vault Stufe 2 (SHA-256 Hash-Chain, `verify_audit_chain()`)
 - [x] Memory-Governance (Opt-in, CREDENTIALS/SPECIAL_CATEGORY/HR/LEGAL blockiert)
+- [x] Fachlicher Memory-Kern (`user_memory`/`company_memory`, Scope-/Owner-/Tenant-Invarianten gehärtet, PR #64–#67)
+- [x] Bestands-Audit für Memory-Invarianten (`audit_memory_scope_cli.py`, manueller GitHub-Actions-Workflow)
 - [x] Dokument-Scan vor Upload
 - [x] Startup Secret-Key-Check
 - [x] Governance-Dokumentation (TOM-Katalog, Provider-DPA, AI-Act-Klassifikation, Incident-Response, Review-Plan)
@@ -48,6 +50,7 @@ Alle abgeschlossenen Artefakte sind in diesem Repository versioniert.
 
 ## Offene Bausteine
 
+- [ ] Produktions-Bestandsprüfung der Memory-Invarianten ausführen (Workflow „Memory-Scope-Audit" manuell auslösen) — Voraussetzung, bevor die Anbindung des Memory-Kerns an den zentralen Permission-Evaluator (`apps/backend/permissions.py`) beginnt
 - [ ] Memory-Governance UI (`GET /memory/facts`, `DELETE /memory/facts/{id}`)
 - [ ] Freigabe-UI (`GET /admin/approvals` Frontend-Seite)
 - [ ] Fehlende Audit-Events (`provider.blocked`, `capability.blocked`, `memory.stored`, `memory.deleted`, `approval.granted`, `approval.rejected`)
