@@ -1,7 +1,45 @@
 # AILIZA — Übergabe-Dokument: Datenbank & Gedächtnis
 
-Stand: 21.07.2026 · Für den nächsten Agenten oder PC-Wechsel.
+Stand: 30.07.2026 · Für den nächsten Agenten oder PC-Wechsel.
 **Bitte diese Datei zuerst lesen.**
+
+---
+
+## 0. Memory-Kern-Härtung (M0–M2), Stand main @ `133c07a4ff99fc6120450ecd3c22a8d41685e005`
+
+Nach diesem Dokument begann ein mehrteiliger Härtungs-Auftrag für den
+fachlichen Memory-Kern (`memory_items`/`memory_sources`/`memory_visibility`/
+`memory_suggestions` in `apps/backend/database.py`). Ausführliche fachliche
+Erklärung: Skill `ailiza-wissen`.
+
+| PR | Inhalt | Status |
+|---|---|---|
+| **#64** (M0) | Technischer Memory-Prototyp-Router (`apps/backend/routers/memory.py`, eigenständiges `MemoryEntry`-Modell in `apps/backend/memory/*`) fail-closed quarantänisiert — war nie in `main` registriert, hatte einen fehlerhaften `require_admin`-Import. **Kein** Bezug zu `user_memory`/`company_memory`. | ✅ gemergt |
+| **#65** (M1) | Scope-/Owner-/Tenant-Invarianten im fachlichen Memory-Kern korrigiert: `company_memory` mit `owner_user_id` wird abgelehnt, `list_active_memory_items_for_user()` filtert jetzt explizit auf `scope="user_memory"`, Legacy-`user_memory` mit `tenant_id=NULL` bleibt für den Owner sichtbar/exportierbar/löschbar. Neue read-only Funktion `audit_memory_scope_invariants()`. | ✅ gemergt |
+| **#66** | CLI-Entrypoint `apps/backend/audit_memory_scope_cli.py` für den Bestands-Audit (`--json`, Exit-Codes 0/1/2). | ✅ gemergt |
+| **#67** | Manueller GitHub-Actions-Workflow (`workflow_dispatch`) für den Produktions-Audit gegen die echte Render/Neon-DB, mit `--summary-only`-Flag (keine internen IDs im öffentlichen Log). | ✅ gemergt |
+
+**Aktueller Blocker vor "M2" (Anbindung des Memory-Kerns an den zentralen
+Permission-Evaluator `apps/backend/permissions.py` + Sichtbarkeitsdurchsetzung):**
+Der Produktions-Audit gegen die echte Datenbank wurde **noch nicht
+ausgeführt**. Nötig, bevor M2 beginnt:
+1. GitHub-Secret `AILIZA_DATABASE_URL_AUDIT` anlegen (idealerweise ein
+   separater, read-only Neon-DB-Nutzer).
+2. Workflow „Memory-Scope-Audit (manuell, Produktions-Datenbank)" manuell
+   auslösen (Actions-Tab → workflow_dispatch).
+3. Exit-Code auswerten: `0` → M2 vorbereiten; `1` → keine M2-Arbeit, erst
+   Report/Verletzungen auswerten; `2` → Zugriff/Konfiguration reparieren,
+   erneut ausführen.
+
+**Wichtig, falls diese Datei mit älterem Kontext gelesen wird:** Frühere
+Beschreibungen von `apps/backend/memory/models.py`/`store.py`/
+`sqlite_store.py` (eigenständiges `MemoryEntry`-Modell mit `content_hash`,
+`MemoryPurpose`, `VisibilityLevel`) als Referenz für die
+`user_memory`/`company_memory`-Architektur sind **falsch** — das ist ein
+separates, kleineres, nie produktiv eingebundenes System (siehe PR #64).
+Ebenso ist `temporary_only` (in `decide_memory_storage()`) nur ein
+Rückgabewert, keine eigene Tabelle, kein Konsolidierungsmechanismus — ein
+literaler „Konsolidierung"-Mechanismus ist im aktuellen Code nicht belegt.
 
 ---
 
