@@ -47,7 +47,7 @@ jobs:
           python-version: "3.11"
 
       - name: Minimal-Abhängigkeiten installieren (nur was der Audit-Pfad braucht)
-        run: pip install "sqlalchemy==2.0.30" "psycopg[binary]>=3.1" "python-dotenv==1.0.1"
+        run: pip install "sqlalchemy==2.0.30" "psycopg[binary]>=3.1" "python-dotenv==1.0.1" "cryptography>=42.0.0"
 
       - name: Produktions-Audit ausführen (read-only, summary-only)
         env:

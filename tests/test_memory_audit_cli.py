@@ -221,3 +221,47 @@ def test_summary_only_clean_db_still_exits_zero(tmp_path):
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["has_violations"] is False
+
+
+# ── Regression: Produktions-Audit-Run #1 (Workflow-Run 30626472529, Exit 2) ─
+# Ursache: database.py importiert transitiv "cryptography"
+# (governance/field_crypto.py). Fehlte dieses Paket in der Minimal-
+# Installation des Workflows, warf "from database import ..." ein
+# ImportError -- der damalige Fallback "from apps.backend.database import
+# ..." schlug ZUSAETZLICH fehl, weil das Repo-Root beim direkten
+# Skriptaufruf nicht automatisch in sys.path liegt (nur das Skript-
+# Verzeichnis selbst). Das erzeugte die irrefuehrende Meldung
+# "ModuleNotFoundError: No module named 'apps'" statt des eigentlichen
+# Fehlers. Fix: Repo-Root wird jetzt explizit ueber __file__ (nicht cwd)
+# in sys.path eingefuegt + "cryptography" in der Workflow-Installation
+# ergaenzt.
+
+def test_script_works_regardless_of_caller_cwd(tmp_path):
+    """Der Importpfad darf nicht vom Arbeitsverzeichnis des Aufrufers
+    abhaengen -- nur vom tatsaechlichen Speicherort des Skripts. Simuliert
+    exakt den Fall, der im Produktions-Workflow (Run 30626472529) zum
+    irrefuehrenden 'No module named apps'-Fehler fuehrte."""
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = f"sqlite:///{tmp_path / 'cwd_test.db'}"
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    other_cwd = tmp_path / "not_the_repo_root"
+    other_cwd.mkdir()
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--summary-only", "--json"],
+        cwd=other_cwd, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert "No module named 'apps'" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["has_violations"] is False
+
+
+def test_workflow_installs_cryptography_dependency():
+    """Regressionsschutz: database.py braucht transitiv 'cryptography'
+    (governance/field_crypto.py) -- muss in der Minimal-Installation des
+    Produktions-Audit-Workflows enthalten sein, sonst schlaegt der Import
+    fehl, bevor ueberhaupt eine DB-Verbindung versucht wird."""
+    workflow = REPO_ROOT / ".github" / "workflows" / "memory-audit-manual.yml"
+    content = workflow.read_text(encoding="utf-8")
+    assert "cryptography" in content
