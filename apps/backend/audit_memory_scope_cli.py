@@ -47,10 +47,30 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
+
+# Repo-Root explizit auf sys.path bringen, BEVOR irgendein AILIZA-Modul
+# importiert wird. Grund (Produktions-Audit-Run #1, Exit 2, Workflow-Run
+# 30626472529): database.py importiert transitiv `cryptography`
+# (governance/field_crypto.py). Fehlt dieses Paket (z.B. bei einer
+# schlanken Minimal-Installation), wirft `from database import ...` ein
+# ImportError -- der bisherige Fallback `from apps.backend.database import
+# ...` schlug dann ZUSAETZLICH fehl, weil das Repo-Root beim direkten
+# Skriptaufruf (`python apps/backend/audit_memory_scope_cli.py`) nicht in
+# sys.path liegt (nur das Skript-Verzeichnis selbst wird automatisch
+# hinzugefuegt). Das erzeugte die irrefuehrende Meldung
+# "ModuleNotFoundError: No module named 'apps'", die den eigentlichen
+# Fehler (fehlendes cryptography-Paket) verdeckte. Mit dem Repo-Root fest
+# in sys.path funktioniert der Import unabhaengig vom Aufrufverzeichnis
+# und unabhaengig davon, welches Paket im Einzelfall fehlt -- der echte
+# Fehler wird dann klar sichtbar statt durch einen zweiten, irrefuehrenden
+# ImportError ueberdeckt.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 try:
     from dotenv import load_dotenv
-    from pathlib import Path
     load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 except ImportError:
     pass
@@ -108,10 +128,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        try:
-            from database import audit_memory_scope_invariants
-        except ImportError:
-            from apps.backend.database import audit_memory_scope_invariants
+        from apps.backend.database import audit_memory_scope_invariants
         report = audit_memory_scope_invariants()
     except Exception as exc:
         print(f"❌ Audit fehlgeschlagen: {type(exc).__name__}: {exc}", file=sys.stderr)
