@@ -56,6 +56,9 @@ try:
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
+        MemorySuggestionNotAvailable, MemorySuggestionAlreadyDecided,
+        create_memory_suggestion_delegation, revoke_memory_suggestion_delegation,
+        list_delegated_memory_suggestions_for_user,
         export_user_data, delete_own_account_data,
     )
     from .auth.models import UserCreate, UserInDB
@@ -3121,21 +3124,29 @@ def api_list_memory_suggestions(
     return {"suggestions": suggestions, "count": len(suggestions)}
 
 
+_MEMORY_SUGGESTION_UNAVAILABLE_MESSAGE = "Der Vorschlag ist nicht verfügbar."
+
+
 @app.post("/api/memory-suggestions/{suggestion_id}/confirm")
 def api_confirm_memory_suggestion(
     suggestion_id: int,
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
+    """Zustaendigkeit (Owner fuer user_memory / echter Admin-Manager fuer
+    company_memory / gueltige Delegation) wird ausschliesslich atomar in der
+    DB-Schicht geprueft (siehe database._decide_memory_suggestion_atomic) --
+    kein Vorabfilter mehr hier, der Admin/Manager faelschlich aussperren
+    wuerde. Alle Fehlschlagsfaelle liefern dieselbe generische Antwort
+    (kein Enumerations-Orakel)."""
     user = _require_user(token)
-    own = {s["id"] for s in list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
-    if suggestion_id not in own:
-        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
     try:
         result = confirm_memory_suggestion(
-            suggestion_id, confirmed_by=user.user_id, reviewer_role=user.role,
+            suggestion_id, confirmed_by=user.user_id, tenant_id=user.tenant_id,
         )
+    except (MemorySuggestionNotAvailable, MemorySuggestionAlreadyDecided) as exc:
+        raise HTTPException(status_code=404, detail=_MEMORY_SUGGESTION_UNAVAILABLE_MESSAGE) from exc
     except MemoryValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=_MEMORY_SUGGESTION_UNAVAILABLE_MESSAGE) from exc
     return {"status": "confirmed", **result}
 
 
@@ -3145,11 +3156,61 @@ def api_reject_memory_suggestion(
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     user = _require_user(token)
-    own = {s["id"] for s in list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
-    if suggestion_id not in own:
-        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
-    reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id)
+    try:
+        reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id, tenant_id=user.tenant_id)
+    except (MemorySuggestionNotAvailable, MemorySuggestionAlreadyDecided) as exc:
+        raise HTTPException(status_code=404, detail=_MEMORY_SUGGESTION_UNAVAILABLE_MESSAGE) from exc
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=404, detail=_MEMORY_SUGGESTION_UNAVAILABLE_MESSAGE) from exc
     return {"status": "rejected", "id": suggestion_id}
+
+
+@app.post("/api/memory-suggestions/{suggestion_id}/delegate")
+def api_delegate_memory_suggestion(
+    suggestion_id: int,
+    payload: dict[str, Any],
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Nur ein serverseitig verifizierter Admin/Manager im selben Tenant darf
+    delegieren. delegated_to_user_id kommt aus dem Request-Body (manipulierbar),
+    wird aber in create_memory_suggestion_delegation gegen die users-Tabelle
+    verifiziert (aktiv, gleicher Tenant) -- kein Vertrauen in den Body-Wert
+    ausser als reine ID-Angabe."""
+    user = _require_user(token)
+    delegated_to_user_id = str(payload.get("delegated_to_user_id") or "").strip()
+    if not delegated_to_user_id:
+        raise HTTPException(status_code=422, detail="delegated_to_user_id ist erforderlich.")
+    try:
+        result = create_memory_suggestion_delegation(
+            suggestion_id, tenant_id=user.tenant_id,
+            delegated_by_user_id=user.user_id, delegated_to_user_id=delegated_to_user_id,
+        )
+    except (MemorySuggestionNotAvailable, MemorySuggestionAlreadyDecided) as exc:
+        raise HTTPException(status_code=404, detail=_MEMORY_SUGGESTION_UNAVAILABLE_MESSAGE) from exc
+    return {"status": "delegated", **result}
+
+
+@app.post("/api/memory-suggestion-delegations/{delegation_id}/revoke")
+def api_revoke_memory_suggestion_delegation(
+    delegation_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    ok = revoke_memory_suggestion_delegation(
+        delegation_id, tenant_id=user.tenant_id, revoking_user_id=user.user_id,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail=_MEMORY_SUGGESTION_UNAVAILABLE_MESSAGE)
+    return {"status": "revoked", "id": delegation_id}
+
+
+@app.get("/api/memory-suggestions/delegated-to-me")
+def api_list_delegated_memory_suggestions(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    delegations = list_delegated_memory_suggestions_for_user(user.user_id, user.tenant_id)
+    return {"delegations": delegations, "count": len(delegations)}
 
 
 # ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ─────────

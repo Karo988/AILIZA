@@ -293,14 +293,69 @@ def test_company_memory_needs_admin_before_confirm():
         suggested_title="DATEV", suggested_content="Firma nutzt DATEV.",
         suggested_purpose="Kontext", source_type="user_confirmation",
     )
-    # Ohne Admin-Rolle: Bestaetigung schlaegt fehl.
+    # Ohne Admin-Rolle (normaler Nutzer, auch der Ersteller selbst): Bestaetigung
+    # schlaegt fehl -- company_memory hat KEINEN Owner-Bypass.
     with pytest.raises(MemoryValidationError):
-        confirm_memory_suggestion(s["id"], confirmed_by="alice", reviewer_role="user")
-    # Mit Admin-Rolle: klappt und erzeugt memory_item.
-    result = confirm_memory_suggestion(s["id"], confirmed_by="karo-admin", reviewer_role="admin")
+        confirm_memory_suggestion(s["id"], confirmed_by="alice")
+    # Mit ECHTEM, in der DB verifiziertem Admin-Eintrag: klappt und erzeugt memory_item.
+    create_user(user_id="karo-admin", tenant_id="default", role="admin", hashed_password="hash")
+    result = confirm_memory_suggestion(s["id"], confirmed_by="karo-admin")
     item = get_memory_item(result["memory_item_id"])
     assert item["scope"] == "company_memory"
     assert item["status"] == "active"
+
+
+def test_reviewer_role_parameter_grants_no_authorization():
+    """M2-Regressionstest: der (deprecated) reviewer_role-Parameter darf
+    NIEMALS eine Berechtigung vermitteln -- nur ein echter DB-Rolleneintrag
+    zaehlt. Ein Nutzer OHNE echten Admin-/Manager-Eintrag, der trotzdem
+    reviewer_role="admin" behauptet, darf company_memory NICHT bestaetigen."""
+    _make_user("alice")
+    s = create_memory_suggestion(
+        user_id="alice", tenant_id="default", suggested_scope="company_memory",
+        suggested_title="DATEV", suggested_content="Firma nutzt DATEV.",
+        suggested_purpose="Kontext", source_type="user_confirmation",
+    )
+    with pytest.raises(MemoryValidationError):
+        confirm_memory_suggestion(s["id"], confirmed_by="alice", reviewer_role="admin")
+
+
+def test_admin_cannot_confirm_foreign_user_memory():
+    """Kritischer Regressionstest fuer M2: ein echter, aktiver Admin darf
+    NIEMALS einen fremden user_memory-Vorschlag (private Notiz) bestaetigen --
+    der company_memory-Zweig darf niemals auf user_memory durchschlagen."""
+    _make_user("alice")
+    create_user(user_id="karo-admin", tenant_id="default", role="admin", hashed_password="hash")
+    s = create_memory_suggestion(
+        user_id="alice", tenant_id="default", suggested_scope="user_memory",
+        suggested_title="Privat", suggested_content="Alice' private Notiz.",
+        suggested_purpose="Kontext", source_type="user_confirmation",
+    )
+    with pytest.raises(MemoryValidationError):
+        confirm_memory_suggestion(s["id"], confirmed_by="karo-admin")
+    updated = [x for x in list_memory_suggestions_for_user("alice", "default", status=None)
+               if x["id"] == s["id"]][0]
+    assert updated["status"] == "open"
+
+
+def test_foreign_nonexistent_and_already_decided_yield_identical_error():
+    """Enumerations-Schutz: nicht existent, fremder Owner und bereits
+    entschieden liefern dieselbe Exception-Klassenkategorie (kein Detail-Leck
+    ueber unterschiedliche Fehlermeldungen)."""
+    _make_user("alice")
+    _make_user("bob")
+    s = create_memory_suggestion(
+        user_id="alice", tenant_id="default", suggested_scope="user_memory",
+        suggested_title="x", suggested_content="y",
+        suggested_purpose="z", source_type="user_confirmation",
+    )
+    with pytest.raises(MemoryValidationError):
+        confirm_memory_suggestion(999999, confirmed_by="bob")
+    with pytest.raises(MemoryValidationError):
+        confirm_memory_suggestion(s["id"], confirmed_by="bob")
+    confirm_memory_suggestion(s["id"], confirmed_by="alice")
+    with pytest.raises(MemoryValidationError):
+        confirm_memory_suggestion(s["id"], confirmed_by="bob")
 
 
 def test_confirm_rejected_suggestion_fails():
