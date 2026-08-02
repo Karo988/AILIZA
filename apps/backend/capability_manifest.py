@@ -16,7 +16,7 @@ Profil-Felder:
   can_write           — schreibt Daten (Datei, DB, API)
   can_delete          — löscht Daten
   external_call       — kontaktiert externen Dienst (LLM, API, Messenger)
-  risk_level          — RiskLevel aus approval.py
+  risk_level          — ApprovalRiskLevel aus approval.py
   requires_approval   — True wenn immer Approval nötig
   required_roles      — Mindest-Rollen für Approval-Freigabe
   fallback_id         — Pflichtfeld: was passiert wenn blockiert (None → No-Go)
@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from approval import RiskLevel
+from approval import ApprovalRiskLevel
 from governance.data_governance import DataClass
 from kill_switch import OperationMode
 from sandbox import ActionClass
@@ -48,7 +48,7 @@ class CapabilityProfile:
     action_class: ActionClass
     data_scope: DataClass
     device_scope: str                          # "workspace"|"local_system"|"mobile"|"external_api"|"none"
-    risk_level: str                            # RiskLevel-Wert
+    risk_level: str                            # ApprovalRiskLevel-Wert
     fallback_id: str | None                   # None = No-Fallback-No-Go → immer geblockt
     can_write: bool = False
     can_delete: bool = False
@@ -101,7 +101,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.READ_FILE,
     data_scope=DataClass.PUBLIC,
     device_scope="workspace",
-    risk_level=RiskLevel.LOW.value,
+    risk_level=ApprovalRiskLevel.LOW.value,
     fallback_id="manual_review",
     can_write=False,
     external_call=False,
@@ -121,7 +121,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.READ_FILE,
     data_scope=DataClass.PUBLIC,
     device_scope="workspace",
-    risk_level=RiskLevel.LOW.value,
+    risk_level=ApprovalRiskLevel.LOW.value,
     fallback_id="manual_classification",
     external_call=False,
     requires_approval=False,
@@ -140,7 +140,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.WRITE_FILE,
     data_scope=DataClass.INTERNAL,
     device_scope="workspace",
-    risk_level=RiskLevel.LOW.value,
+    risk_level=ApprovalRiskLevel.LOW.value,
     fallback_id="export_manual",
     can_write=True,
     external_call=False,
@@ -158,7 +158,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.READ_FILE,
     data_scope=DataClass.INTERNAL,
     device_scope="workspace",
-    risk_level=RiskLevel.LOW.value,
+    risk_level=ApprovalRiskLevel.LOW.value,
     fallback_id="manual_compliance_review",
     external_call=False,
     requires_approval=False,
@@ -177,7 +177,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.READ_FILE,
     data_scope=DataClass.INTERNAL,
     device_scope="workspace",
-    risk_level=RiskLevel.MEDIUM.value,
+    risk_level=ApprovalRiskLevel.MEDIUM.value,
     fallback_id="manual_summary",
     external_call=True,
     requires_approval=True,
@@ -196,7 +196,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.SEND_MESSAGE,
     data_scope=DataClass.PERSONAL_DATA,
     device_scope="external_api",
-    risk_level=RiskLevel.HIGH.value,
+    risk_level=ApprovalRiskLevel.HIGH.value,
     fallback_id="draft_for_manual_send",
     can_write=False,
     external_call=True,
@@ -214,7 +214,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.SEND_MESSAGE,
     data_scope=DataClass.PERSONAL_DATA,
     device_scope="mobile",
-    risk_level=RiskLevel.SAFETY_CRITICAL.value,
+    risk_level=ApprovalRiskLevel.SAFETY_CRITICAL.value,
     fallback_id="send_message_single",
     can_write=False,
     external_call=True,
@@ -235,7 +235,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.WRITE_FILE,
     data_scope=DataClass.HR,
     device_scope="workspace",
-    risk_level=RiskLevel.PERSON_DECISION.value,
+    risk_level=ApprovalRiskLevel.PERSON_DECISION.value,
     fallback_id="hr_shift_proposal",       # nur Vorschlag, kein Auto-Commit
     can_write=True,
     external_call=False,
@@ -253,7 +253,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.WRITE_FILE,
     data_scope=DataClass.HR,
     device_scope="workspace",
-    risk_level=RiskLevel.HIGH.value,
+    risk_level=ApprovalRiskLevel.HIGH.value,
     fallback_id="manual_hr_planning",
     can_write=True,
     external_call=False,
@@ -273,7 +273,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.ACCESS_PHOTOS,
     data_scope=DataClass.SPECIAL_CATEGORY,
     device_scope="local_system",
-    risk_level=RiskLevel.SAFETY_CRITICAL.value,
+    risk_level=ApprovalRiskLevel.SAFETY_CRITICAL.value,
     fallback_id=None,                       # No-Fallback-No-Go → permanent geblockt
     can_write=False,
     external_call=False,
@@ -291,7 +291,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.ACCESS_PHOTOS,
     data_scope=DataClass.SPECIAL_CATEGORY,
     device_scope="local_system",
-    risk_level=RiskLevel.SAFETY_CRITICAL.value,
+    risk_level=ApprovalRiskLevel.SAFETY_CRITICAL.value,
     fallback_id=None,                       # No-Fallback-No-Go
     avv_required=True,
     allowed_modes=(),
@@ -306,7 +306,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.INSTALL_APP,
     data_scope=DataClass.PUBLIC,
     device_scope="local_system",
-    risk_level=RiskLevel.SAFETY_CRITICAL.value,
+    risk_level=ApprovalRiskLevel.SAFETY_CRITICAL.value,
     fallback_id=None,                       # No-Fallback-No-Go
     can_write=True,
     allowed_modes=(),
@@ -319,7 +319,7 @@ _reg(CapabilityProfile(
     action_class=ActionClass.EXECUTE_SHELL,
     data_scope=DataClass.PUBLIC,
     device_scope="local_system",
-    risk_level=RiskLevel.SAFETY_CRITICAL.value,
+    risk_level=ApprovalRiskLevel.SAFETY_CRITICAL.value,
     fallback_id=None,                       # No-Fallback-No-Go
     can_write=True,
     can_delete=True,
@@ -375,7 +375,7 @@ def check_capability(
             allowed=False,
             capability_id=capability_id,
             reason=f"Unbekannte Capability '{capability_id}' — fail-closed geblockt.",
-            risk_level=RiskLevel.HIGH.value,
+            risk_level=ApprovalRiskLevel.HIGH.value,
             fallback_id=None,
             requires_approval=True,
             required_roles=["owner"],

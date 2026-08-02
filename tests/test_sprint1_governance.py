@@ -133,16 +133,16 @@ class TestHRAndPersonDecisionGate:
 
     def test_approval_risk_level_for_person_decision(self):
         """Personalentscheidungs-Abfrage → risk_level=person_decision."""
-        from apps.backend.approval import assess_search_risk, RiskLevel
+        from apps.backend.approval import assess_search_risk, ApprovalRiskLevel
         result = assess_search_risk("Automatische Personalentscheidung für Schicht treffen")
-        assert result.risk_level == RiskLevel.PERSON_DECISION.value
+        assert result.risk_level == ApprovalRiskLevel.PERSON_DECISION.value
         assert result.risky is True
 
     def test_neutral_staff_scheduling_without_decision_stays_lower_risk(self):
         """Neutrale Schichtanfrage ohne Entscheidungsbegriff → kein person_decision-Gate."""
-        from apps.backend.approval import assess_search_risk, RiskLevel
+        from apps.backend.approval import assess_search_risk, ApprovalRiskLevel
         result = assess_search_risk("Wie viele Mitarbeiter brauchen wir am Samstag?")
-        assert result.risk_level != RiskLevel.PERSON_DECISION.value
+        assert result.risk_level != ApprovalRiskLevel.PERSON_DECISION.value
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,36 +213,36 @@ class TestOperationModes:
 class TestSafetyCriticalApproval:
     def test_mass_push_to_all_visitors_is_safety_critical(self):
         """Crash-Szenario 4: Massennachricht → safety_critical, nicht nur medium."""
-        from apps.backend.approval import assess_search_risk, RiskLevel
+        from apps.backend.approval import assess_search_risk, ApprovalRiskLevel
         result = assess_search_risk("Alle Besucher sofort zum Ausgang schicken wegen Sicherheitslage")
-        assert result.risk_level == RiskLevel.SAFETY_CRITICAL.value
+        assert result.risk_level == ApprovalRiskLevel.SAFETY_CRITICAL.value
         assert result.risky is True
 
     def test_mass_notify_english_is_safety_critical(self):
-        from apps.backend.approval import assess_search_risk, RiskLevel
+        from apps.backend.approval import assess_search_risk, ApprovalRiskLevel
         result = assess_search_risk("broadcast to all attendees: emergency evacuation now")
-        assert result.risk_level == RiskLevel.SAFETY_CRITICAL.value
+        assert result.risk_level == ApprovalRiskLevel.SAFETY_CRITICAL.value
 
     def test_safety_critical_timeout_is_short(self):
         """Safety-Critical: Timeout 300s (5 min), danach Auto-Reject."""
-        from apps.backend.approval import APPROVAL_TIMEOUT_SECONDS, RiskLevel
-        assert APPROVAL_TIMEOUT_SECONDS[RiskLevel.SAFETY_CRITICAL.value] == 300
+        from apps.backend.approval import APPROVAL_TIMEOUT_SECONDS, ApprovalRiskLevel
+        assert APPROVAL_TIMEOUT_SECONDS[ApprovalRiskLevel.SAFETY_CRITICAL.value] == 300
 
     def test_safety_critical_requires_elevated_roles(self):
         """Safety-Critical darf nur von security_lead / operations_lead / owner freigegeben werden."""
-        from apps.backend.approval import can_approve, RiskLevel
-        assert can_approve(RiskLevel.SAFETY_CRITICAL.value, "security_lead")
-        assert can_approve(RiskLevel.SAFETY_CRITICAL.value, "operations_lead")
-        assert can_approve(RiskLevel.SAFETY_CRITICAL.value, "owner")
-        assert not can_approve(RiskLevel.SAFETY_CRITICAL.value, "admin")
-        assert not can_approve(RiskLevel.SAFETY_CRITICAL.value, "user")
-        assert not can_approve(RiskLevel.SAFETY_CRITICAL.value, "manager")
+        from apps.backend.approval import can_approve, ApprovalRiskLevel
+        assert can_approve(ApprovalRiskLevel.SAFETY_CRITICAL.value, "security_lead")
+        assert can_approve(ApprovalRiskLevel.SAFETY_CRITICAL.value, "operations_lead")
+        assert can_approve(ApprovalRiskLevel.SAFETY_CRITICAL.value, "owner")
+        assert not can_approve(ApprovalRiskLevel.SAFETY_CRITICAL.value, "admin")
+        assert not can_approve(ApprovalRiskLevel.SAFETY_CRITICAL.value, "user")
+        assert not can_approve(ApprovalRiskLevel.SAFETY_CRITICAL.value, "manager")
 
     def test_normal_search_is_not_safety_critical(self):
         """Normale Suchanfrage ohne Crowd-Control → nicht safety_critical."""
-        from apps.backend.approval import assess_search_risk, RiskLevel
+        from apps.backend.approval import assess_search_risk, ApprovalRiskLevel
         result = assess_search_risk("Was ist das Wetterprogramm für Samstag?")
-        assert result.risk_level != RiskLevel.SAFETY_CRITICAL.value
+        assert result.risk_level != ApprovalRiskLevel.SAFETY_CRITICAL.value
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -250,25 +250,25 @@ class TestSafetyCriticalApproval:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestApprovalRoleGating:
     def test_person_decision_requires_privacy_or_legal(self):
-        from apps.backend.approval import can_approve, RiskLevel
-        assert can_approve(RiskLevel.PERSON_DECISION.value, "privacy")
-        assert can_approve(RiskLevel.PERSON_DECISION.value, "legal")
-        assert can_approve(RiskLevel.PERSON_DECISION.value, "owner")
-        assert not can_approve(RiskLevel.PERSON_DECISION.value, "admin")
-        assert not can_approve(RiskLevel.PERSON_DECISION.value, "manager")
-        assert not can_approve(RiskLevel.PERSON_DECISION.value, "user")
+        from apps.backend.approval import can_approve, ApprovalRiskLevel
+        assert can_approve(ApprovalRiskLevel.PERSON_DECISION.value, "privacy")
+        assert can_approve(ApprovalRiskLevel.PERSON_DECISION.value, "legal")
+        assert can_approve(ApprovalRiskLevel.PERSON_DECISION.value, "owner")
+        assert not can_approve(ApprovalRiskLevel.PERSON_DECISION.value, "admin")
+        assert not can_approve(ApprovalRiskLevel.PERSON_DECISION.value, "manager")
+        assert not can_approve(ApprovalRiskLevel.PERSON_DECISION.value, "user")
 
     def test_high_risk_requires_admin_or_owner(self):
-        from apps.backend.approval import can_approve, RiskLevel
-        assert can_approve(RiskLevel.HIGH.value, "admin")
-        assert can_approve(RiskLevel.HIGH.value, "owner")
-        assert not can_approve(RiskLevel.HIGH.value, "manager")
-        assert not can_approve(RiskLevel.HIGH.value, "user")
+        from apps.backend.approval import can_approve, ApprovalRiskLevel
+        assert can_approve(ApprovalRiskLevel.HIGH.value, "admin")
+        assert can_approve(ApprovalRiskLevel.HIGH.value, "owner")
+        assert not can_approve(ApprovalRiskLevel.HIGH.value, "manager")
+        assert not can_approve(ApprovalRiskLevel.HIGH.value, "user")
 
     def test_medium_risk_allows_manager(self):
-        from apps.backend.approval import can_approve, RiskLevel
-        assert can_approve(RiskLevel.MEDIUM.value, "manager")
-        assert not can_approve(RiskLevel.MEDIUM.value, "user")
+        from apps.backend.approval import can_approve, ApprovalRiskLevel
+        assert can_approve(ApprovalRiskLevel.MEDIUM.value, "manager")
+        assert not can_approve(ApprovalRiskLevel.MEDIUM.value, "user")
 
     def test_approval_record_contains_required_roles(self):
         """Neu erstellter Approval-Record enthält required_approver_roles."""

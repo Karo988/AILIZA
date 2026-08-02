@@ -52,7 +52,7 @@ class ApprovalStatus(str, Enum):
     CONSUMED = "consumed"
 
 
-class RiskLevel(str, Enum):
+class ApprovalRiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -62,22 +62,22 @@ class RiskLevel(str, Enum):
 
 # Rollen die für ein Approval-Gate freigeben dürfen
 APPROVAL_ROLES: dict[str, list[str]] = {
-    RiskLevel.SAFETY_CRITICAL.value: ["security_lead", "operations_lead", "owner"],
-    RiskLevel.PERSON_DECISION.value: ["privacy", "legal", "owner"],
+    ApprovalRiskLevel.SAFETY_CRITICAL.value: ["security_lead", "operations_lead", "owner"],
+    ApprovalRiskLevel.PERSON_DECISION.value: ["privacy", "legal", "owner"],
     "provider_avv":                  ["admin", "privacy", "legal", "owner"],
     "memory_write":                  ["admin", "owner"],
-    RiskLevel.HIGH.value:            ["admin", "owner"],
-    RiskLevel.MEDIUM.value:          ["admin", "manager", "owner"],
-    RiskLevel.LOW.value:             ["admin", "manager", "user", "owner"],
+    ApprovalRiskLevel.HIGH.value:            ["admin", "owner"],
+    ApprovalRiskLevel.MEDIUM.value:          ["admin", "manager", "owner"],
+    ApprovalRiskLevel.LOW.value:             ["admin", "manager", "user", "owner"],
 }
 
 # Timeout in Sekunden je Risikolevel (danach: Auto-Reject, nicht Auto-Approve)
 APPROVAL_TIMEOUT_SECONDS: dict[str, int] = {
-    RiskLevel.SAFETY_CRITICAL.value: 300,   # 5 Minuten
-    RiskLevel.PERSON_DECISION.value: 600,   # 10 Minuten
-    RiskLevel.HIGH.value:            1800,  # 30 Minuten
-    RiskLevel.MEDIUM.value:          3600,  # 1 Stunde
-    RiskLevel.LOW.value:             0,     # Auto (kein Timeout)
+    ApprovalRiskLevel.SAFETY_CRITICAL.value: 300,   # 5 Minuten
+    ApprovalRiskLevel.PERSON_DECISION.value: 600,   # 10 Minuten
+    ApprovalRiskLevel.HIGH.value:            1800,  # 30 Minuten
+    ApprovalRiskLevel.MEDIUM.value:          3600,  # 1 Stunde
+    ApprovalRiskLevel.LOW.value:             0,     # Auto (kein Timeout)
 }
 
 
@@ -93,7 +93,7 @@ class RiskResult:
         return asdict(self)
 
     def required_approver_roles(self) -> list[str]:
-        return APPROVAL_ROLES.get(self.risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
+        return APPROVAL_ROLES.get(self.risk_level, APPROVAL_ROLES[ApprovalRiskLevel.HIGH.value])
 
     def approval_timeout(self) -> int:
         return APPROVAL_TIMEOUT_SECONDS.get(self.risk_level, 1800)
@@ -109,7 +109,7 @@ def can_approve(risk_level: str, approver_role: str) -> bool:
     geprüften compliance_consent-Ausnahme) grundsaetzlich verweigert -- das
     ist bewusst so belassen, um bestehende Altlasten-Tests dieser reinen
     Matrix-Hilfsfunktion nicht zu veraendern."""
-    allowed = APPROVAL_ROLES.get(risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
+    allowed = APPROVAL_ROLES.get(risk_level, APPROVAL_ROLES[ApprovalRiskLevel.HIGH.value])
     return approver_role in allowed
 
 
@@ -154,43 +154,43 @@ def assess_fetch_risk(url: str) -> RiskResult:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     if not host:
-        return RiskResult(True, "URL host is missing", RiskLevel.HIGH.value, "fetch", "<no-url>")
+        return RiskResult(True, "URL host is missing", ApprovalRiskLevel.HIGH.value, "fetch", "<no-url>")
     if host in TRUSTED_DOMAINS:
-        return RiskResult(False, f"Trusted domain: {host}", RiskLevel.LOW.value, "fetch", "<url-host-only>")
-    return RiskResult(True, f"Unknown domain: {host}", RiskLevel.MEDIUM.value, "fetch", "<url-host-only>")
+        return RiskResult(False, f"Trusted domain: {host}", ApprovalRiskLevel.LOW.value, "fetch", "<url-host-only>")
+    return RiskResult(True, f"Unknown domain: {host}", ApprovalRiskLevel.MEDIUM.value, "fetch", "<url-host-only>")
 
 
 def assess_search_risk(query: str) -> RiskResult:
     if _MASS_NOTIFY_PATTERNS.search(query):
         return RiskResult(
             True, "Mass notification detected — Safety-Critical gate required",
-            RiskLevel.SAFETY_CRITICAL.value, "search", "<query-length-only>",
+            ApprovalRiskLevel.SAFETY_CRITICAL.value, "search", "<query-length-only>",
         )
     if _PERSON_DECISION_PATTERNS.search(query):
         return RiskResult(
             True, "Automated person decision detected — human approval required (DSGVO Art. 22)",
-            RiskLevel.PERSON_DECISION.value, "search", "<query-length-only>",
+            ApprovalRiskLevel.PERSON_DECISION.value, "search", "<query-length-only>",
         )
     if len(query) > COMPLEX_QUERY_THRESHOLD:
         return RiskResult(
             True, f"Complex query ({len(query)} characters)",
-            RiskLevel.MEDIUM.value, "search", "<query-length-only>",
+            ApprovalRiskLevel.MEDIUM.value, "search", "<query-length-only>",
         )
     for pattern in RISKY_QUERY_PATTERNS:
         if pattern.search(query):
             return RiskResult(
                 True, "Query contains potentially risky terms",
-                RiskLevel.HIGH.value, "search", "<query-length-only>",
+                ApprovalRiskLevel.HIGH.value, "search", "<query-length-only>",
             )
-    return RiskResult(False, "Query is low risk", RiskLevel.LOW.value, "search", "<query-length-only>")
+    return RiskResult(False, "Query is low risk", ApprovalRiskLevel.LOW.value, "search", "<query-length-only>")
 
 
-def assess_risk(tool: str, params: dict[str, Any]) -> RiskResult:
+def assess_tool_risk(tool: str, params: dict[str, Any]) -> RiskResult:
     if tool == "fetch":
         return assess_fetch_risk(str(params.get("url", "")))
     if tool == "search":
         return assess_search_risk(str(params.get("query", "")))
-    return RiskResult(True, f"Unknown tool: {tool}", RiskLevel.HIGH.value, tool, "<params-unknown>")
+    return RiskResult(True, f"Unknown tool: {tool}", ApprovalRiskLevel.HIGH.value, tool, "<params-unknown>")
 
 
 # ── Approval Preview (kein Execute) ──────────────────────────────────────────
@@ -228,8 +228,8 @@ def create_approval_preview(
     Erstellt eine Approval-Vorschau ohne die Aktion auszuführen.
     Darf nur an den Nutzer/Admin gezeigt werden — nie ausführen.
     """
-    risk = assess_risk(tool, params)
-    required_role = APPROVAL_ROLES.get(risk.risk_level, APPROVAL_ROLES[RiskLevel.HIGH.value])
+    risk = assess_tool_risk(tool, params)
+    required_role = APPROVAL_ROLES.get(risk.risk_level, APPROVAL_ROLES[ApprovalRiskLevel.HIGH.value])
     role_str = ", ".join(required_role)
 
     target = "extern"
