@@ -657,7 +657,12 @@ def _add_column_if_missing(connection, table: str, column: str, ddl_type: str) -
 
 
 def ensure_sqlite_schema() -> None:
-    if not DATABASE_URL.startswith("sqlite"):
+    # Am tatsaechlichen Engine-Dialekt pruefen, nicht an der beim Modul-Import
+    # aus AILIZA_DATABASE_URL gebildeten Konstante DATABASE_URL -- Tests, die
+    # zur Laufzeit `database.engine` gegen eine andere Engine (z. B. Postgres)
+    # austauschen, aendern DATABASE_URL nicht mit. Ein Guard auf DATABASE_URL
+    # wuerde dort faelschlich SQLite-PRAGMA-Statements gegen Postgres ausfuehren.
+    if engine.dialect.name != "sqlite":
         return
 
     with engine.begin() as connection:

@@ -39,6 +39,51 @@ jobs:
       # - name: Tests (Backend, verwaist -- vorerst deaktiviert)
       #   run: PYTHONPATH=. pytest apps/backend/tests/ -v --tb=short
 
+  # Eigener Job statt zusaetzlicher Schritt im "test"-Job: nutzt einen
+  # ephemeren postgres:16-Service-Container (nur fuer die Dauer dieses
+  # CI-Laufs, keine Verbindung zu Render/Staging/Produktion). Prueft die
+  # M2/M2b-Nebenlaeufigkeitsgarantien (WHERE-Klausel + Rowcount +
+  # partieller Unique-Index) zusaetzlich gegen echtes Postgres, wo -- anders
+  # als bei sqlite:///:memory: -- kein Python-Prozess-Lock mehr greift.
+  postgres-concurrency:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ailiza_test
+          POSTGRES_PASSWORD: ailiza_test_ci_only
+          POSTGRES_DB: ailiza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AILIZA_DATABASE_URL: "sqlite:///:memory:"
+      AILIZA_TEST_POSTGRES_URL: "postgresql+psycopg://ailiza_test:ailiza_test_ci_only@localhost:5432/ailiza_test"
+      AILIZA_EXTERNAL_LLM_ENABLED: "false"
+      AILIZA_DEFAULT_TENANT_ID: default
+      SECRET_KEY: ci-test-secret-key-not-for-production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements-core.txt
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r apps/backend/requirements-core.txt pytest pytest-asyncio httpx bcrypt pyotp python-jose[cryptography]
+
+      - name: PostgreSQL-Nebenläufigkeitstests + Dialekt-Guard
+        run: pytest tests/test_memory_suggestion_postgres_optional.py tests/test_ensure_sqlite_schema_dialect_guard.py -v --tb=short
+
   # Eigener Job statt zusaetzlicher Schritt im bestehenden "test"-Job: ein
   # Browser- oder Server-Startfehler im E2E-Lauf soll das Python-Testergebnis
   # nicht unuebersichtlich machen (getrennte, klar zuordenbare CI-Ergebnisse).

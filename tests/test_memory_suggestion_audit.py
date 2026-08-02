@@ -227,23 +227,20 @@ def test_hash_chain_consistent_after_confirm_reject_delegate_revoke():
 
 
 def test_tampering_with_audit_entry_changes_its_recomputed_hash():
-    """Manipulationstest (fairer Vorher/Nachher-Vergleich, siehe Kommentar
-    oben zum Timestamp-Rundungsproblem): der aus den Feldern neu berechnete
-    Hash AENDERT SICH, wenn das action-Feld nachtraeglich manipuliert wird --
-    die Hash-Funktion ist also grundsaetzlich manipulationsempfindlich (SHA-256
-    ueber id/timestamp/action/tenant_id/previous_hash). Beide Berechnungen
-    (vorher/nachher) nutzen konsistent denselben (DB-round-getrippten,
-    zeitzonenfreien) Timestamp-String, damit der Vergleich NICHT durch das
-    Timestamp-Problem verfaelscht wird.
+    """Manipulationstest: der aus den Feldern neu berechnete Hash AENDERT
+    SICH, wenn das action-Feld nachtraeglich manipuliert wird -- die
+    Hash-Funktion ist also grundsaetzlich manipulationsempfindlich (SHA-256
+    ueber id/timestamp/action/tenant_id/previous_hash).
 
-    WICHTIGE EINSCHRAENKUNG (ehrlich dokumentiert): ein Vergleich des
-    NEU BERECHNETEN Hashes gegen den GESPEICHERTEN entry_hash wuerde wegen
-    des oben beschriebenen Timestamp-Rundungsproblems AUCH bei einem
-    unveraenderten, nicht manipulierten Eintrag fehlschlagen -- ein solcher
-    Vergleich waere also aktuell fuer eine echte, automatisierte
-    Manipulationserkennung NICHT zuverlaessig nutzbar. Das ist ein
-    vorbestehendes Reparaturbeduerfnis ausserhalb des M2/M2b-Scopes, hier nur
-    aufgedeckt und dokumentiert, nicht behoben."""
+    Aktualisiert fuer PR #71 (fix(audit): canonicalize timestamps for hash
+    verification, siehe tests/test_audit_hash_timestamp_roundtrip.py):
+    _compute_audit_hash() erwartet jetzt ein datetime-Objekt (nicht mehr
+    einen vorformatierten String) und normalisiert Zeitzonen intern selbst
+    (_canonicalize_audit_timestamp). Das vormals hier dokumentierte
+    Timestamp-Rundungsproblem ist damit behoben; der gespeicherte entry_hash
+    stimmt jetzt auch fuer unveraenderte Eintraege mit dem neu berechneten
+    Hash ueberein (siehe test_unmodified_entries_never_report_false_positive
+    in test_audit_hash_timestamp_roundtrip.py)."""
     s = _setup()
     dbmod.confirm_memory_suggestion(s["id"], confirmed_by="admin1", tenant_id="default")
 
@@ -252,8 +249,11 @@ def test_tampering_with_audit_entry_changes_its_recomputed_hash():
             select(dbmod.audit_logs).where(dbmod.audit_logs.c.action == "memory_suggestion.confirmed")
         ).mappings().first()
     hash_before = dbmod._compute_audit_hash(
-        original["id"], original["timestamp"].isoformat(), original["action"],
+        original["id"], original["timestamp"], original["action"],
         original["tenant_id"], original["previous_hash"],
+    )
+    assert hash_before == original["entry_hash"], (
+        "Unveraenderter Eintrag muss mit neu berechnetem Hash uebereinstimmen"
     )
 
     with dbmod.engine.begin() as conn:
@@ -266,12 +266,11 @@ def test_tampering_with_audit_entry_changes_its_recomputed_hash():
             select(dbmod.audit_logs).where(dbmod.audit_logs.c.id == original["id"])
         ).mappings().first()
     hash_after = dbmod._compute_audit_hash(
-        tampered["id"], tampered["timestamp"].isoformat(), tampered["action"],
+        tampered["id"], tampered["timestamp"], tampered["action"],
         tampered["tenant_id"], tampered["previous_hash"],
     )
 
     assert hash_before != hash_after, "Manipulation des action-Feldes muss den berechneten Hash aendern"
-    # Der gespeicherte entry_hash blieb unveraendert (nicht mit-manipuliert) --
-    # er stimmt jetzt weder mit hash_before noch mit hash_after exakt ueberein
-    # (Timestamp-Rundungsproblem, siehe Docstring); die MANIPULATION selbst
-    # ist trotzdem durch den veraenderten Hashwert nachweisbar.
+    assert hash_after != tampered["entry_hash"], (
+        "Manipulation muss durch Abweichung vom gespeicherten entry_hash nachweisbar sein"
+    )
