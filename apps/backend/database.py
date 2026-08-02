@@ -451,6 +451,33 @@ memory_suggestions = Table(
     Index("ix_memory_suggestions_user_tenant", "user_id", "tenant_id"),
 )
 
+# ── M2b: Delegation eines einzelnen company_memory-Vorschlags an genau einen
+# Mitarbeiter desselben Tenants (nur company_memory -- user_memory ist NIE
+# delegierbar, siehe create_memory_suggestion_delegation). ──────────────────
+memory_suggestion_delegations = Table(
+    "memory_suggestion_delegations",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("suggestion_id", Integer, ForeignKey("memory_suggestions.id"), nullable=False),
+    Column("tenant_id", String(64), nullable=False),
+    Column("delegated_to_user_id", String(64), nullable=False),
+    Column("delegated_by_user_id", String(64), nullable=False),
+    Column("delegator_role_snapshot", String(32), nullable=False),
+    Column("status", String(32), nullable=False, default="active"),  # active/completed/revoked
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+    Column("revoked_by_user_id", String(64), nullable=True),
+    Column("decided_at", DateTime(timezone=True), nullable=True),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Index(
+        "ux_active_memory_delegation", "tenant_id", "suggestion_id",
+        unique=True,
+        sqlite_where=text("status='active'"),
+        postgresql_where=text("status='active'"),
+    ),
+)
+
 
 messenger_bindings = Table(
     "messenger_bindings",
@@ -630,7 +657,12 @@ def _add_column_if_missing(connection, table: str, column: str, ddl_type: str) -
 
 
 def ensure_sqlite_schema() -> None:
-    if not DATABASE_URL.startswith("sqlite"):
+    # Am tatsaechlichen Engine-Dialekt pruefen, nicht an der beim Modul-Import
+    # aus AILIZA_DATABASE_URL gebildeten Konstante DATABASE_URL -- Tests, die
+    # zur Laufzeit `database.engine` gegen eine andere Engine (z. B. Postgres)
+    # austauschen, aendern DATABASE_URL nicht mit. Ein Guard auf DATABASE_URL
+    # wuerde dort faelschlich SQLite-PRAGMA-Statements gegen Postgres ausfuehren.
+    if engine.dialect.name != "sqlite":
         return
 
     with engine.begin() as connection:
@@ -1949,20 +1981,36 @@ _VALID_MEMORY_STATUS = {"suggested", "confirmed", "active", "outdated", "deleted
 _ACTIVE_STATUS_VALUES = ("active",)
 
 
+def _create_memory_source_on_conn(conn: Any, tenant_id: str, source_type: str, *,
+                                  reference: str | None = None, source_title: str | None = None,
+                                  source_date: datetime | None = None,
+                                  confirmed_by: str | None = None,
+                                  approved_by: str | None = None) -> dict[str, Any]:
+    """Wie create_memory_source(), aber auf einer BEREITS OFFENEN conn -- kein
+    eigenes engine.begin(). Fuer den Einsatz innerhalb einer groesseren
+    atomaren Transaktion (siehe confirm_memory_suggestion_atomic)."""
+    now = datetime.now(timezone.utc)
+    result = conn.execute(insert(memory_sources).values(
+        tenant_id=tenant_id, source_type=source_type, reference=reference,
+        source_title=source_title, source_date=source_date,
+        confirmed_by=confirmed_by, approved_by=approved_by,
+        created_at=now, updated_at=now,
+    ))
+    source_id = result.inserted_primary_key[0]
+    return {"id": source_id, "tenant_id": tenant_id, "source_type": source_type}
+
+
 def create_memory_source(tenant_id: str, source_type: str, *,
                          reference: str | None = None, source_title: str | None = None,
                          source_date: datetime | None = None,
                          confirmed_by: str | None = None, approved_by: str | None = None) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+    """Oeffentlicher Wrapper: oeffnet eine EIGENE Transaktion. Unveraendertes
+    Verhalten fuer bestehende Aufrufer."""
     with engine.begin() as conn:
-        result = conn.execute(insert(memory_sources).values(
-            tenant_id=tenant_id, source_type=source_type, reference=reference,
-            source_title=source_title, source_date=source_date,
-            confirmed_by=confirmed_by, approved_by=approved_by,
-            created_at=now, updated_at=now,
-        ))
-        source_id = result.inserted_primary_key[0]
-    return {"id": source_id, "tenant_id": tenant_id, "source_type": source_type}
+        return _create_memory_source_on_conn(
+            conn, tenant_id, source_type, reference=reference, source_title=source_title,
+            source_date=source_date, confirmed_by=confirmed_by, approved_by=approved_by,
+        )
 
 
 def _validate_memory_item(scope: str, tenant_id: str | None, owner_user_id: str | None,
@@ -1993,6 +2041,48 @@ def _default_visibility_for_scope(scope: str, tenant_id: str | None) -> dict[str
     return {"visibility_scope": "organization", "allowed_org_id": tenant_id}
 
 
+def _create_memory_item_on_conn(conn: Any, tenant_id: str | None, scope: str, title: str, content: str, *,
+                                purpose: str | None = None, source_id: int | None = None,
+                                owner_user_id: str | None = None, category: str | None = None,
+                                status: str = "suggested", expires_at: datetime | None = None,
+                                created_by: str | None = None,
+                                approved_by: str | None = None) -> dict[str, Any]:
+    """Wie create_memory_item(), aber auf einer BEREITS OFFENEN conn -- kein
+    eigenes engine.begin(), kein Re-Read ueber eine neue Connection (Grund:
+    innerhalb einer groesseren atomaren Transaktion, z.B.
+    confirm_memory_suggestion_atomic, wuerde ein Re-Read ueber eine neue
+    Connection eine noch offene, nicht committete Schreibsperre treffen --
+    bei Datei-SQLite droht dadurch Selbstblockade/"database is locked").
+    Das Rueckgabe-Dict wird deshalb direkt aus den bekannten Insert-Werten +
+    der generierten ID gebaut, MUSS daher alle 16 Spalten von memory_items
+    enthalten (inkl. der nullable last_used_at, bei Neuanlage immer None)."""
+    _validate_memory_item(scope, tenant_id, owner_user_id, status, source_id, purpose)
+    now = datetime.now(timezone.utc)
+    result = conn.execute(insert(memory_items).values(
+        tenant_id=tenant_id, scope=scope, owner_user_id=owner_user_id,
+        title=title, content=content, category=category, purpose=purpose,
+        source_id=source_id, status=status, expires_at=expires_at,
+        created_by=created_by, approved_by=approved_by,
+        created_at=now, updated_at=now,
+    ))
+    item_id = result.inserted_primary_key[0]
+    if status in _ACTIVE_STATUS_VALUES:
+        vis = _default_visibility_for_scope(scope, tenant_id)
+        conn.execute(insert(memory_visibility).values(
+            memory_item_id=item_id, visibility_scope=vis["visibility_scope"],
+            allowed_roles=[], allowed_user_ids=[], allowed_org_id=vis["allowed_org_id"],
+            project_id=None, created_at=now, updated_at=now,
+        ))
+    return {
+        "id": item_id, "tenant_id": tenant_id, "scope": scope,
+        "owner_user_id": owner_user_id, "title": title, "content": content,
+        "category": category, "purpose": purpose, "source_id": source_id,
+        "status": status, "expires_at": expires_at, "last_used_at": None,
+        "created_by": created_by, "approved_by": approved_by,
+        "created_at": now, "updated_at": now,
+    }
+
+
 def create_memory_item(tenant_id: str | None, scope: str, title: str, content: str, *,
                        purpose: str | None = None, source_id: int | None = None,
                        owner_user_id: str | None = None, category: str | None = None,
@@ -2001,26 +2091,15 @@ def create_memory_item(tenant_id: str | None, scope: str, title: str, content: s
     """Legt einen Memory-Eintrag an. Kein automatischer Aufrufpfad -- diese
     Funktion wird nur explizit aufgerufen (siehe test_no_automatic_chat_to_memory_path_exists).
     Pflichtregeln (Scope/Zweck/Quelle/Besitzer) werden hier durchgesetzt,
-    nicht erst in einer spaeteren Schicht (fail-closed)."""
-    _validate_memory_item(scope, tenant_id, owner_user_id, status, source_id, purpose)
-    now = datetime.now(timezone.utc)
+    nicht erst in einer spaeteren Schicht (fail-closed). Oeffentlicher
+    Wrapper: oeffnet eine EIGENE Transaktion, unveraendertes Verhalten fuer
+    bestehende Aufrufer."""
     with engine.begin() as conn:
-        result = conn.execute(insert(memory_items).values(
-            tenant_id=tenant_id, scope=scope, owner_user_id=owner_user_id,
-            title=title, content=content, category=category, purpose=purpose,
-            source_id=source_id, status=status, expires_at=expires_at,
-            created_by=created_by, approved_by=approved_by,
-            created_at=now, updated_at=now,
-        ))
-        item_id = result.inserted_primary_key[0]
-        if status in _ACTIVE_STATUS_VALUES:
-            vis = _default_visibility_for_scope(scope, tenant_id)
-            conn.execute(insert(memory_visibility).values(
-                memory_item_id=item_id, visibility_scope=vis["visibility_scope"],
-                allowed_roles=[], allowed_user_ids=[], allowed_org_id=vis["allowed_org_id"],
-                project_id=None, created_at=now, updated_at=now,
-            ))
-    return get_memory_item(item_id)
+        return _create_memory_item_on_conn(
+            conn, tenant_id, scope, title, content, purpose=purpose, source_id=source_id,
+            owner_user_id=owner_user_id, category=category, status=status,
+            expires_at=expires_at, created_by=created_by, approved_by=approved_by,
+        )
 
 
 def get_memory_item(item_id: int) -> dict[str, Any] | None:
@@ -2515,15 +2594,6 @@ def list_memory_suggestions_for_user(user_id: str, tenant_id: str = DEFAULT_TENA
     return out
 
 
-def reject_memory_suggestion(suggestion_id: int, *, reviewed_by: str) -> None:
-    """Abgelehnte Vorschlaege erzeugen NIE ein memory_item."""
-    with engine.begin() as conn:
-        conn.execute(
-            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
-            .values(status="rejected", reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
-        )
-
-
 def mark_memory_suggestion_blocked(suggestion_id: int, *, reviewed_by: str | None = None) -> None:
     """Blockiert + entfernt den Rohinhalt (Datensparsamkeit)."""
     with engine.begin() as conn:
@@ -2535,54 +2605,336 @@ def mark_memory_suggestion_blocked(suggestion_id: int, *, reviewed_by: str | Non
         )
 
 
-def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
-                              reviewer_role: str = "user") -> dict[str, Any]:
-    """Ueberfuehrt einen bestaetigten Vorschlag in das Gedaechtnis:
-    memory_source + memory_item + memory_visibility (via create_memory_item).
-    company_memory verlangt Admin-Rolle (bestehendes Rollenmodell: admin/manager).
-    Nur Status open/needs_admin_approval sind bestaetigbar -- rejected/expired/
-    blocked erzeugen nie ein memory_item."""
-    suggestion = _get_memory_suggestion(suggestion_id)
-    if suggestion is None:
-        raise MemoryValidationError("Vorschlag nicht gefunden.")
-    if suggestion["status"] not in ("open", "needs_admin_approval"):
-        raise MemoryValidationError(
-            f"Vorschlag mit Status {suggestion['status']!r} kann nicht bestaetigt werden."
-        )
-    if suggestion["requires_admin_approval"] and reviewer_role not in ("admin", "manager"):
-        raise MemoryValidationError(
-            "company_memory-Vorschlaege brauchen Admin-/Manager-Freigabe."
+class MemorySuggestionNotAvailable(MemoryValidationError):
+    """Vorschlag nicht gefunden, fremder Tenant, kein Owner, keine Admin-/
+    Manager-Rolle, keine gueltige Delegation oder falscher Scope -- extern
+    absichtlich NICHT unterscheidbar (kein Enumerations-Orakel)."""
+
+
+class MemorySuggestionAlreadyDecided(MemoryValidationError):
+    """Zustaendig, aber der Vorschlag wurde bereits entschieden (oder ein
+    paralleler Vorgang war schneller)."""
+
+
+def _get_memory_suggestion_with_conn(conn: Any, suggestion_id: int) -> dict[str, Any] | None:
+    """Wie _get_memory_suggestion(), aber auf der uebergebenen conn -- fuer
+    den Einsatz INNERHALB einer groesseren atomaren Transaktion (kein
+    zweites engine.begin(), kein TOCTOU-Fenster)."""
+    row = conn.execute(
+        select(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+    ).mappings().first()
+    if not row:
+        return None
+    result = dict(row)
+    result["requires_admin_approval"] = bool(result["requires_admin_approval"])
+    return result
+
+
+def _memory_suggestion_zustaendig_clause(tenant_id: str, actor_user_id: str, now: datetime):
+    """Zustaendigkeits-Bedingung fuer confirm/reject, direkt als SQL-Ausdruck
+    (nicht Python-Vorpruefung) -- gehoert in dieselbe WHERE-Klausel wie das
+    Status-UPDATE selbst (die Bedingung IST das UPDATE, analog
+    decide_approval_atomic). DREI Zweige, JEDER mit explizitem scope-Praedikat
+    im selben and_()-Block wie die jeweilige Berechtigung -- das verhindert
+    strukturell, dass ein Admin/Manager oder ein delegierter Mitarbeiter
+    jemals einen user_memory-Vorschlag (private Notiz) erreichen kann:
+
+    1. Owner-Zweig: NUR user_memory, NUR der Ersteller selbst.
+    2. Admin/Manager-Zweig: NUR company_memory, NUR ein aktiver, nicht
+       gesperrter Nutzer mit Rolle admin/manager im selben Tenant (live aus
+       der users-Tabelle, NIEMALS aus einem Client-Parameter/Token-Claim).
+    3. Delegations-Zweig (M2b): NUR company_memory, NUR wenn eine aktive
+       Delegation fuer GENAU diesen Vorschlag auf actor_user_id existiert.
+    """
+    owner_clause = and_(
+        memory_suggestions.c.suggested_scope == "user_memory",
+        memory_suggestions.c.user_id == actor_user_id,
+    )
+
+    admin_manager_exists = exists(
+        select(users.c.user_id)
+        .where(users.c.user_id == actor_user_id)
+        .where(users.c.tenant_id == tenant_id)
+        .where(users.c.active == 1)
+        .where(or_(users.c.locked_until.is_(None), users.c.locked_until <= now))
+        .where(users.c.role.in_(("admin", "manager")))
+    )
+    admin_clause = and_(
+        memory_suggestions.c.suggested_scope == "company_memory",
+        admin_manager_exists,
+    )
+
+    delegation_exists = exists(
+        select(memory_suggestion_delegations.c.id)
+        .where(memory_suggestion_delegations.c.suggestion_id == memory_suggestions.c.id)
+        .where(memory_suggestion_delegations.c.tenant_id == tenant_id)
+        .where(memory_suggestion_delegations.c.delegated_to_user_id == actor_user_id)
+        .where(memory_suggestion_delegations.c.status == "active")
+        .where(or_(
+            memory_suggestion_delegations.c.expires_at.is_(None),
+            memory_suggestion_delegations.c.expires_at > now,
+        ))
+    )
+    delegation_clause = and_(
+        memory_suggestions.c.suggested_scope == "company_memory",
+        delegation_exists,
+    )
+
+    return or_(owner_clause, admin_clause, delegation_clause)
+
+
+def _decide_memory_suggestion_atomic(
+    suggestion_id: int, *, actor_user_id: str, tenant_id: str, new_status: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Gemeinsamer atomarer Kern fuer Confirm UND Reject. GESAMTER Vorgang
+    (Zustaendigkeitspruefung + Statuswechsel + bei Confirm: Item/Source-
+    Erzeugung + Delegation-Abschluss) laeuft in EINEM
+    `with _sql_write_lock, engine.begin()`-Block -- dieselbe Sperre wie
+    decide_approval_atomic, damit sich Genehmigungs-, Memory- und
+    Delegations-Entscheidungen auf der geteilten SQLite-Verbindung niemals
+    ueberlappen koennen.
+
+    Rueckgabe: (suggestion_row_nach_uebernahme, item_oder_None).
+    Wirft MemorySuggestionNotAvailable / MemorySuggestionAlreadyDecided bei
+    Nichterfolg -- beide Faelle sind extern absichtlich nicht unterscheidbar
+    (main.py mappt beide auf dieselbe generische 404-Antwort)."""
+    now = datetime.now(timezone.utc)
+    zustaendig = _memory_suggestion_zustaendig_clause(tenant_id, actor_user_id, now)
+
+    update_query = (
+        update(memory_suggestions)
+        .where(memory_suggestions.c.id == suggestion_id)
+        .where(memory_suggestions.c.tenant_id == tenant_id)
+        .where(memory_suggestions.c.status.in_(("open", "needs_admin_approval")))
+        .where(zustaendig)
+        .values(status=new_status, reviewed_at=now, reviewed_by=actor_user_id)
+    )
+
+    with _sql_write_lock, engine.begin() as conn:
+        result = conn.execute(update_query)
+
+        if result.rowcount != 1:
+            # Kein Unterschied zwischen "nicht gefunden", "fremder Tenant",
+            # "kein Owner", "keine Rolle", "falscher Scope", "bereits
+            # entschieden" oder "Race verloren" -- Default Deny, generische
+            # Fehlerklasse (kein Enumerations-Orakel).
+            entry = conn.execute(
+                select(memory_suggestions.c.status)
+                .where(memory_suggestions.c.id == suggestion_id)
+                .where(memory_suggestions.c.tenant_id == tenant_id)
+            ).first()
+            if entry is not None and entry[0] not in ("open", "needs_admin_approval"):
+                raise MemorySuggestionAlreadyDecided("Vorschlag wurde bereits entschieden.")
+            raise MemorySuggestionNotAvailable("Der Vorschlag ist nicht verfuegbar.")
+
+        suggestion = _get_memory_suggestion_with_conn(conn, suggestion_id)
+
+        item = None
+        if new_status == "confirmed":
+            source = _create_memory_source_on_conn(
+                conn, tenant_id=suggestion["tenant_id"],
+                source_type=suggestion["source_type"] or "user_confirmation",
+                reference=suggestion["source_reference"],
+                source_title=f"Bestaetigter Vorschlag #{suggestion_id}",
+                confirmed_by=actor_user_id,
+                approved_by=actor_user_id if suggestion["requires_admin_approval"] else None,
+            )
+            owner = suggestion["user_id"] if suggestion["suggested_scope"] == "user_memory" else None
+            item = _create_memory_item_on_conn(
+                conn, tenant_id=suggestion["tenant_id"], scope=suggestion["suggested_scope"],
+                title=suggestion["suggested_title"], content=suggestion["suggested_content"] or "",
+                purpose=suggestion["suggested_purpose"], source_id=source["id"],
+                owner_user_id=owner, category=suggestion["suggested_category"],
+                status="active", created_by=suggestion["user_id"],
+                approved_by=actor_user_id if suggestion["requires_admin_approval"] else None,
+            )
+
+        # M2b: Falls der Vorgang ueber eine aktive Delegation lief, wird sie
+        # in DERSELBEN Transaktion als "completed" markiert (Einmalverbrauch).
+        # rowcount==0 ist der Normalfall fuer Owner-/Admin-Pfad (keine
+        # Delegation vorhanden) -- kein Fehler, nur best-effort Abschluss.
+        conn.execute(
+            update(memory_suggestion_delegations)
+            .where(memory_suggestion_delegations.c.suggestion_id == suggestion_id)
+            .where(memory_suggestion_delegations.c.tenant_id == tenant_id)
+            .where(memory_suggestion_delegations.c.delegated_to_user_id == actor_user_id)
+            .where(memory_suggestion_delegations.c.status == "active")
+            .values(status="completed", decided_at=now, updated_at=now)
         )
 
-    source = create_memory_source(
-        tenant_id=suggestion["tenant_id"],
-        source_type=suggestion["source_type"] or "user_confirmation",
-        reference=suggestion["source_reference"],
-        source_title=f"Bestaetigter Vorschlag #{suggestion_id}",
-        confirmed_by=confirmed_by,
-        approved_by=confirmed_by if suggestion["requires_admin_approval"] else None,
-    )
-    owner = suggestion["user_id"] if suggestion["suggested_scope"] == "user_memory" else None
-    item = create_memory_item(
-        tenant_id=suggestion["tenant_id"], scope=suggestion["suggested_scope"],
-        title=suggestion["suggested_title"], content=suggestion["suggested_content"] or "",
-        purpose=suggestion["suggested_purpose"], source_id=source["id"],
-        owner_user_id=owner, category=suggestion["suggested_category"],
-        status="active", created_by=suggestion["user_id"],
-        approved_by=confirmed_by if suggestion["requires_admin_approval"] else None,
-    )
-    with engine.begin() as conn:
-        conn.execute(
-            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
-            .values(status="confirmed", reviewed_at=datetime.now(timezone.utc), reviewed_by=confirmed_by)
+        # Audit-Eintrag AUF DERSELBEN Connection/Transaktion -- muss mit
+        # Statuswechsel + Item/Source + Delegation-Abschluss entweder
+        # GEMEINSAM committen oder GEMEINSAM zurueckgerollt werden (kein
+        # Phantom-Audit-Eintrag fuer eine tatsaechlich zurueckgerollte
+        # Aktion). Nur Codes/IDs, keine Inhalte.
+        _insert_audit_entry_on_connection(
+            conn,
+            action=f"memory_suggestion.{new_status}",
+            metadata={
+                "suggestion_id": suggestion_id,
+                "memory_item_id": item["id"] if item else None,
+            },
+            tenant_id=tenant_id,
         )
-    return {"suggestion_id": suggestion_id, "memory_item_id": item["id"], "source_id": source["id"]}
+
+        return suggestion, item
+
+
+def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
+                              tenant_id: str = DEFAULT_TENANT_ID,
+                              reviewer_role: str = "user") -> dict[str, Any]:
+    """Ueberfuehrt einen bestaetigten Vorschlag in das Gedaechtnis:
+    memory_source + memory_item + memory_visibility, alles in EINER
+    atomaren Transaktion (siehe _decide_memory_suggestion_atomic).
+
+    reviewer_role ist DEPRECATED und hat KEINE Berechtigungswirkung mehr --
+    bleibt nur aus Rueckwaertskompatibilitaetsgruenden in der Signatur. Die
+    tatsaechliche Berechtigung (Owner / echter Admin-Manager / gueltige
+    Delegation) wird ausschliesslich serverseitig, live gegen die
+    users-/memory_suggestion_delegations-Tabellen geprueft."""
+    _, item = _decide_memory_suggestion_atomic(
+        suggestion_id, actor_user_id=confirmed_by, tenant_id=tenant_id, new_status="confirmed",
+    )
+    return {"suggestion_id": suggestion_id, "memory_item_id": item["id"], "source_id": item["source_id"]}
+
+
+def reject_memory_suggestion(suggestion_id: int, *, reviewed_by: str,
+                             tenant_id: str = DEFAULT_TENANT_ID) -> None:
+    """Abgelehnte Vorschlaege erzeugen NIE ein memory_item. Gleiche
+    Zustaendigkeitspruefung (Owner / Admin-Manager / Delegation) wie confirm,
+    atomar in einer Transaktion."""
+    _decide_memory_suggestion_atomic(
+        suggestion_id, actor_user_id=reviewed_by, tenant_id=tenant_id, new_status="rejected",
+    )
 
 
 def apply_confirmed_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
+                                      tenant_id: str = DEFAULT_TENANT_ID,
                                       reviewer_role: str = "user") -> dict[str, Any]:
     """Alias gemaess Spec-Namensvorschlag -- identisch zu confirm_memory_suggestion."""
-    return confirm_memory_suggestion(suggestion_id, confirmed_by=confirmed_by, reviewer_role=reviewer_role)
+    return confirm_memory_suggestion(suggestion_id, confirmed_by=confirmed_by, tenant_id=tenant_id)
+
+
+# ── M2b: Delegation eines company_memory-Vorschlags ─────────────────────────
+
+def _is_active_admin_or_manager(conn: Any, user_id: str, tenant_id: str, now: datetime) -> bool:
+    row = conn.execute(
+        select(users.c.user_id)
+        .where(users.c.user_id == user_id)
+        .where(users.c.tenant_id == tenant_id)
+        .where(users.c.active == 1)
+        .where(or_(users.c.locked_until.is_(None), users.c.locked_until <= now))
+        .where(users.c.role.in_(("admin", "manager")))
+    ).first()
+    return row is not None
+
+
+def _is_active_user(conn: Any, user_id: str, tenant_id: str, now: datetime) -> bool:
+    row = conn.execute(
+        select(users.c.user_id)
+        .where(users.c.user_id == user_id)
+        .where(users.c.tenant_id == tenant_id)
+        .where(users.c.active == 1)
+        .where(or_(users.c.locked_until.is_(None), users.c.locked_until <= now))
+    ).first()
+    return row is not None
+
+
+def create_memory_suggestion_delegation(
+    suggestion_id: int, *, tenant_id: str, delegated_by_user_id: str, delegated_to_user_id: str,
+) -> dict[str, Any]:
+    """Delegiert einen einzelnen, offenen company_memory-Vorschlag an einen
+    aktiven Mitarbeiter desselben Tenants. NIEMALS fuer user_memory (strikt
+    geprueft). Delegierender muss serverseitig verifizierter, aktiver
+    Admin/Manager im Tenant sein. Der Unique-Index
+    ux_active_memory_delegation verhindert zwei gleichzeitige aktive
+    Delegationen fuer denselben Vorschlag (IntegrityError -> generischer
+    Fehler)."""
+    now = datetime.now(timezone.utc)
+    with _sql_write_lock, engine.begin() as conn:
+        suggestion = _get_memory_suggestion_with_conn(conn, suggestion_id)
+        if suggestion is None or suggestion["tenant_id"] != tenant_id:
+            raise MemorySuggestionNotAvailable("Der Vorschlag ist nicht verfuegbar.")
+        if suggestion["suggested_scope"] != "company_memory":
+            raise MemorySuggestionNotAvailable("Der Vorschlag ist nicht verfuegbar.")
+        if suggestion["status"] not in ("open", "needs_admin_approval"):
+            raise MemorySuggestionNotAvailable("Der Vorschlag ist nicht verfuegbar.")
+        if not _is_active_admin_or_manager(conn, delegated_by_user_id, tenant_id, now):
+            raise MemorySuggestionNotAvailable("Der Vorschlag ist nicht verfuegbar.")
+        if not _is_active_user(conn, delegated_to_user_id, tenant_id, now):
+            raise MemorySuggestionNotAvailable("Der Vorschlag ist nicht verfuegbar.")
+
+        delegator_role_row = conn.execute(
+            select(users.c.role).where(users.c.user_id == delegated_by_user_id)
+            .where(users.c.tenant_id == tenant_id)
+        ).first()
+        delegator_role = delegator_role_row[0] if delegator_role_row else "unknown"
+
+        try:
+            result = conn.execute(insert(memory_suggestion_delegations).values(
+                suggestion_id=suggestion_id, tenant_id=tenant_id,
+                delegated_to_user_id=delegated_to_user_id,
+                delegated_by_user_id=delegated_by_user_id,
+                delegator_role_snapshot=delegator_role,
+                status="active", created_at=now, updated_at=now,
+            ))
+        except IntegrityError as exc:
+            raise MemorySuggestionAlreadyDecided(
+                "Fuer diesen Vorschlag existiert bereits eine aktive Delegation."
+            ) from exc
+        delegation_id = result.inserted_primary_key[0]
+
+        _insert_audit_entry_on_connection(
+            conn, action="memory_suggestion.delegated",
+            metadata={"suggestion_id": suggestion_id, "delegation_id": delegation_id},
+            tenant_id=tenant_id,
+        )
+
+    return {
+        "id": delegation_id, "suggestion_id": suggestion_id, "tenant_id": tenant_id,
+        "delegated_to_user_id": delegated_to_user_id, "delegated_by_user_id": delegated_by_user_id,
+        "status": "active",
+    }
+
+
+def revoke_memory_suggestion_delegation(delegation_id: int, *, tenant_id: str,
+                                        revoking_user_id: str) -> bool:
+    """Widerruft eine aktive Delegation. Nutzt DENSELBEN Lock/dieselbe
+    Transaktionsgrenze wie die Confirm-Funktion (_sql_write_lock), damit
+    Bestaetigen und Widerrufen sich niemals ueberlappend auf denselben
+    Delegations-Datensatz auswirken koennen -- wer zuerst den Lock erhaelt,
+    gewinnt exklusiv, der andere sieht danach garantiert den bereits
+    geaenderten Status."""
+    now = datetime.now(timezone.utc)
+    with _sql_write_lock, engine.begin() as conn:
+        if not _is_active_admin_or_manager(conn, revoking_user_id, tenant_id, now):
+            return False
+        result = conn.execute(
+            update(memory_suggestion_delegations)
+            .where(memory_suggestion_delegations.c.id == delegation_id)
+            .where(memory_suggestion_delegations.c.tenant_id == tenant_id)
+            .where(memory_suggestion_delegations.c.status == "active")
+            .values(status="revoked", revoked_at=now, revoked_by_user_id=revoking_user_id, updated_at=now)
+        )
+        if result.rowcount == 1:
+            _insert_audit_entry_on_connection(
+                conn, action="memory_suggestion.delegation_revoked",
+                metadata={"delegation_id": delegation_id},
+                tenant_id=tenant_id,
+            )
+        return result.rowcount == 1
+
+
+def list_delegated_memory_suggestions_for_user(user_id: str, tenant_id: str = DEFAULT_TENANT_ID) -> list[dict[str, Any]]:
+    """Aktive Delegationen, die genau diesem Nutzer zugewiesen sind."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(memory_suggestion_delegations)
+            .where(memory_suggestion_delegations.c.delegated_to_user_id == user_id)
+            .where(memory_suggestion_delegations.c.tenant_id == tenant_id)
+            .where(memory_suggestion_delegations.c.status == "active")
+        ).mappings().all()
+    return [dict(r) for r in rows]
 
 
 # ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ──────────
