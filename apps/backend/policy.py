@@ -258,6 +258,11 @@ class PolicyContext:
     tool: str | None = None
     parameters: dict = field(default_factory=dict)
     risk_assessment: "RiskAssessment | None" = None
+    # Fachbereich (z.B. "accounting", "hr"), der noch nicht durch eine
+    # geprüfte Fachanwendung freigegeben ist. None (Default) laesst
+    # bestehende Aufrufer/Capabilities vollstaendig unveraendert -- siehe
+    # RESPONSIBILITY_HANDOFF-Pruefung in evaluate_policy() unten.
+    responsibility_domain: str | None = None
 
 
 @dataclass
@@ -295,6 +300,51 @@ _REASONS = {
 }
 
 
+# ── responsibility_handoff (Kernumsetzung, siehe HANDOFF-Vorarbeit oben) ────
+#
+# Feste, bestätigte Fachbereichs-Sperrliste -- KEINE Freitext-/KI-Erkennung.
+# Nur ein Capability-Entwickler kann `PolicyContext.responsibility_domain`
+# ueberhaupt setzen (ueber Capability.responsibility_domain, siehe
+# capabilities/registry.py); Endnutzer-Eingaben koennen diesen Wert nicht
+# beeinflussen. Allgemeine, nicht-domänenspezifische Anfragen bleiben davon
+# unberuehrt, da hierfuer gar keine Capability mit gesetztem
+# responsibility_domain existiert (aktuell: keine einzige, siehe Auftrag
+# Punkt 13 -- bewusst noch keine Buchhaltungs-/HR-Capabilities angelegt).
+#
+# Zentrale Domain-Statusregel: einzige Stelle, die entscheidet, ob eine
+# Domain aktuell an einen Menschen uebergeben wird. Eine kuenftige,
+# geprueft freigegebene Fachanwendung fuer z.B. Buchhaltung setzt NICHT
+# Capability.responsibility_domain auf None zurueck (die Capability bleibt
+# fachlich weiterhin klar als "accounting" gekennzeichnet) -- stattdessen
+# aendert sich AUSSCHLIESSLICH der Status-Wert hier fuer genau diese Domain
+# von "handoff_required" auf exakt "approved". Diese Datei ist damit der
+# einzige Ort, an dem eine Freigabe erfolgen kann -- nicht durch Entfernen
+# des Domain-Feldes an einzelnen Capabilities.
+#
+# Fail-closed: GENAU zwei gueltige Status-Werte, "handoff_required" und
+# "approved". Jeder andere Wert -- fehlender Eintrag, Tippfehler (z.B.
+# "aproved"), zukuenftig versehentlich falsch geschriebener Status -- wird
+# in evaluate_policy() als BLOCK behandelt, NIE stillschweigend als
+# Freigabe interpretiert.
+_RESPONSIBILITY_DOMAIN_STATUS: dict[str, str] = {
+    "accounting": "handoff_required",
+    "hr": "handoff_required",
+}
+
+_RESPONSIBILITY_HANDOFF_MESSAGES: dict[str, str] = {
+    "accounting": (
+        "AILIZA ist für Buchhaltungsentscheidungen (Belegerfassung, Buchungen, "
+        "Zahlungen) kein geprüftes System. Bitte wenden Sie sich an Ihre "
+        "Steuerberatung oder ein zertifiziertes Buchhaltungssystem."
+    ),
+    "hr": (
+        "AILIZA ist für Personalentscheidungen (Bewerbungsscreening, "
+        "Mitarbeiterbewertung, Gehaltsentscheidungen) kein geprüftes System. "
+        "Bitte wenden Sie sich an eine qualifizierte Fachperson im Personalbereich."
+    ),
+}
+
+
 def evaluate_policy(context: PolicyContext) -> PolicyResultV2:
     """Governance-basierte Policy-Bewertung. Fail-closed bei Unklarheit.
 
@@ -303,10 +353,57 @@ def evaluate_policy(context: PolicyContext) -> PolicyResultV2:
     den erreichbaren capabilities/registry.py-Pfad als auch core_api.py und
     etwaige weitere Aufrufer, ohne dass diese selbst etwas aendern muessen.
     RiskAssessment bewertet ausschliesslich Risiko; die Policy-Entscheidung
-    selbst (ALLOW/BLOCK/...) bleibt unveraendert bei check_data_target."""
+    selbst (ALLOW/BLOCK/...) bleibt unveraendert bei check_data_target.
+
+    responsibility_domain wird VOR check_data_target ausgewertet (siehe
+    _RESPONSIBILITY_HANDOFF_MESSAGES oben): eine gesetzte, bekannte Domain
+    fuehrt zu PolicyDecision.RESPONSIBILITY_HANDOFF mit fester, PII-freier
+    Meldung -- unabhaengig von Datenklasse/Ziel. Eine gesetzte, UNBEKANNTE
+    Domain wird fail-closed als BLOCK behandelt (kein erratener Handoff-Text).
+    Der Kill-Switch (enforce_kill_switch in providers/orchestrator.py) ist
+    eine vorgelagerte, unabhaengige Pipelinestufe (Kill-Switch -> Data
+    Governance -> Policy-Gateway -> Redaction -> Provider-Orchestrator) und
+    wird von dieser Funktion weder aufgerufen noch veraendert -- er behaelt
+    dadurch unveraendert Vorrang."""
     try:
         context = _ensure_risk_assessment(context)
         ra = context.risk_assessment
+
+        if context.responsibility_domain is not None:
+            status = _RESPONSIBILITY_DOMAIN_STATUS.get(context.responsibility_domain)
+            if status is None:
+                # Unbekannte Domain (kein Eintrag in der zentralen
+                # Statusregel) -- fail-closed BLOCK, kein erratener Text.
+                return PolicyResultV2(
+                    PolicyDecision.BLOCK,
+                    "Unbekannter Fachbereich — fail-closed blockiert.",
+                    **_risk_result_fields(ra),
+                )
+            if status == "handoff_required":
+                message = _RESPONSIBILITY_HANDOFF_MESSAGES[context.responsibility_domain]
+                return PolicyResultV2(
+                    PolicyDecision.RESPONSIBILITY_HANDOFF,
+                    message,
+                    recovery_path=message,
+                    **_risk_result_fields(ra),
+                )
+            if status != "approved":
+                # Fail-closed: nur der EXAKTE Status "approved" darf zur
+                # normalen Pruefung durchfallen. Jeder andere Wert --
+                # unbekannt, Tippfehler (z.B. "aproved"), zukuenftig
+                # versehentlich falsch geschriebener Status -- wird
+                # blockiert statt stillschweigend als Freigabe interpretiert.
+                return PolicyResultV2(
+                    PolicyDecision.BLOCK,
+                    "Unbekannter oder ungueltiger Domain-Status — fail-closed blockiert.",
+                    **_risk_result_fields(ra),
+                )
+            # status == "approved": faellt bewusst durch zur normalen
+            # Datenprüfung unten -- das ist der einzige vorgesehene Weg,
+            # eine Domain spaeter (nach geprueft freigegebener
+            # Fachanwendung) freizugeben: durch Aendern von
+            # _RESPONSIBILITY_DOMAIN_STATUS oben auf exakt "approved",
+            # nicht durch Entfernen von Capability.responsibility_domain.
 
         if context.target is None:
             return PolicyResultV2(

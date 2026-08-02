@@ -17,6 +17,15 @@ class PolicyDecision(str, Enum):
     REDACT_REQUIRED = "redact_required"
     APPROVAL_REQUIRED = "approval_required"
     BLOCK = "block"
+    # Fachbereich (aktuell: accounting, hr) noch nicht durch eine geprüfte
+    # Fachanwendung freigegeben -- Uebergabe an einen Menschen statt
+    # Ausfuehrung. Wird AUSSCHLIESSLICH in policy.evaluate_policy() vor
+    # check_data_target() entschieden (siehe dort) -- _decide_single()/
+    # check_data_target() in dieser Datei geben diesen Wert NIE zurueck,
+    # daher bleiben alle direkten check_data_target()-Aufrufer (main.py,
+    # knowledge/ingestion.py, knowledge/rag_context.py,
+    # documents/document_handler.py) von diesem Wert unberuehrt.
+    RESPONSIBILITY_HANDOFF = "responsibility_handoff"
 
 
 _PERSISTENT_TARGETS = {

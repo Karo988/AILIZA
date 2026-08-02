@@ -196,15 +196,23 @@ def test_existing_dataclass_values_unchanged():
 
 
 def test_existing_policy_decision_values_unchanged():
-    expected = {"allow", "allow_with_notice", "redact_required", "approval_required", "block"}
+    # responsibility_handoff wurde im Folgepaket (siehe
+    # tests/test_responsibility_handoff.py) bewusst und bestaetigt ergaenzt --
+    # dieses RiskAssessment-Paket selbst erweitert PolicyDecision nicht.
+    expected = {"allow", "allow_with_notice", "redact_required", "approval_required",
+                "block", "responsibility_handoff"}
     actual = {d.value for d in PolicyDecision}
     assert actual == expected, "PolicyDecision darf in diesem Paket nicht erweitert werden"
 
 
 def test_no_conceptual_categories_added_as_enums():
+    # secret/forbidden/local_only bleiben weiterhin unbestaetigte HANDOFF-
+    # Begriffe. responsibility_handoff ist NICHT mehr Teil dieser Prüfung --
+    # es wurde im Folgepaket bewusst als PolicyDecision-Wert bestaetigt
+    # (siehe tests/test_responsibility_handoff.py).
     dataclass_values = {c.value for c in DataClass}
     decision_values = {d.value for d in PolicyDecision}
-    for forbidden_term in ("secret", "forbidden", "responsibility_handoff", "local_only"):
+    for forbidden_term in ("secret", "forbidden", "local_only"):
         assert forbidden_term not in dataclass_values
         assert forbidden_term not in decision_values
 
