@@ -25,7 +25,7 @@ from apps.backend.policy import PolicyContext, evaluate_policy
 from apps.backend.capabilities.registry import check_capability, _CAPABILITIES
 from apps.backend.kill_switch import check_kill_switch, is_action_allowed
 from apps.backend.providers.provider_profiles import check_provider_policy, get_profile
-from apps.backend.approval import assess_risk, RiskLevel, create_approval_preview
+from apps.backend.approval import assess_tool_risk, ApprovalRiskLevel, create_approval_preview
 from apps.backend import core_api
 
 
@@ -332,15 +332,15 @@ class TestApprovalFlow:
         assert result["preview_only"] is True
 
     def test_mass_notify_gets_safety_critical_risk(self):
-        risk = assess_risk("search", {"query": "Massennachricht an alle Teilnehmer"})
-        assert risk.risk_level == RiskLevel.SAFETY_CRITICAL.value
+        risk = assess_tool_risk("search", {"query": "Massennachricht an alle Teilnehmer"})
+        assert risk.risk_level == ApprovalRiskLevel.SAFETY_CRITICAL.value
 
     def test_person_decision_gets_person_decision_risk(self):
-        risk = assess_risk("search", {"query": "Personalentscheidung fuer Mitarbeiter"})
-        assert risk.risk_level == RiskLevel.PERSON_DECISION.value
+        risk = assess_tool_risk("search", {"query": "Personalentscheidung fuer Mitarbeiter"})
+        assert risk.risk_level == ApprovalRiskLevel.PERSON_DECISION.value
 
     def test_risky_query_requires_high_role(self):
-        risk = assess_risk("search", {"query": "hack vulnerability CVE-2024"})
+        risk = assess_tool_risk("search", {"query": "hack vulnerability CVE-2024"})
         roles = risk.required_approver_roles()
         assert "admin" in roles or "owner" in roles
 

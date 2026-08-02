@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..approval import ApprovalStatus, assess_risk
+from ..approval import ApprovalStatus, assess_tool_risk
 from ..database import create_approval_request, get_approval_request, write_audit_entry
 from ..policy import check_tool_call
 from ..tools import execute_tool
@@ -43,7 +43,7 @@ def enforce_policy(tool_name: str, parameters: dict[str, Any]) -> None:
 
 
 def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> dict[str, Any] | None:
-    risk = assess_risk(tool_name, parameters)
+    risk = assess_tool_risk(tool_name, parameters)
     if not risk.risky:
         write_audit_entry(
             action="approval.auto",

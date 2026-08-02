@@ -20,7 +20,7 @@ from capability_manifest import (
     check_capability,
     get_manifest_summary,
 )
-from approval import RiskLevel
+from approval import ApprovalRiskLevel
 from governance.data_governance import DataClass
 from kill_switch import OperationMode
 from sandbox import ActionClass
@@ -35,7 +35,7 @@ class TestRegistryCompleteness:
         assert len(CAPABILITY_REGISTRY) >= 10
 
     def test_all_capabilities_have_valid_risk_level(self):
-        valid = {r.value for r in RiskLevel}
+        valid = {r.value for r in ApprovalRiskLevel}
         for cap in CAPABILITY_REGISTRY.values():
             assert cap.risk_level in valid, f"{cap.capability_id}: ungültiger risk_level '{cap.risk_level}'"
 
@@ -257,7 +257,7 @@ class TestManifestSummary:
         """SAFETY_CRITICAL braucht mindestens security_lead oder operations_lead oder owner."""
         elevated = {"security_lead", "operations_lead", "privacy", "legal", "owner"}
         for cap in CAPABILITY_REGISTRY.values():
-            if cap.risk_level == RiskLevel.SAFETY_CRITICAL.value and cap.required_roles:
+            if cap.risk_level == ApprovalRiskLevel.SAFETY_CRITICAL.value and cap.required_roles:
                 assert bool(set(cap.required_roles) & elevated), (
                     f"{cap.capability_id}: SAFETY_CRITICAL ohne erhöhte Rolle"
                 )
