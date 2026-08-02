@@ -60,6 +60,14 @@ class Capability:
     # Erweiterungsfelder für Orchestrator-Anbindung (Codex-Andockpunkt)
     provider_profile_id: str | None = None   # verknüpfter Provider, falls extern
     denied_data_classes: list[DataClass] = field(default_factory=list)
+    # Fachbereich, der noch nicht durch eine geprüfte Fachanwendung
+    # freigegeben ist (z.B. "accounting", "hr") -- fuehrt in evaluate_policy()
+    # zu PolicyDecision.RESPONSIBILITY_HANDOFF statt Ausfuehrung. None laesst
+    # bestehende Capabilities vollstaendig unveraendert. Aktuell werden HIER
+    # bewusst KEINE Capabilities mit gesetztem responsibility_domain angelegt
+    # (siehe Auftrag) -- das Feld ist vorbereitet fuer kuenftige, geprüfte
+    # Buchhaltungs-/HR-Fachanwendungen.
+    responsibility_domain: str | None = None
     allowed_actions: list[str] = field(default_factory=list)  # "read","write","send_external","save_memory"
     can_read: bool = True
     can_write: bool = False
@@ -386,6 +394,7 @@ def check_capability(
         approval_given=approval_given or (not cap.requires_approval),
         provider_profile_id=provider_profile_id,
         tool=capability_id,
+        responsibility_domain=cap.responsibility_domain,
         parameters={
             "capability_name": cap.name,
             "scope": tenant_id,
