@@ -1,12 +1,12 @@
 {
   "manifest_version": "1.0",
-  "generated_at": "2026-07-25T18:04:56.317160+00:00",
+  "generated_at": "2026-08-02T15:51:19.712145+00:00",
   "governance_files": {
     "approval.py": "0d3e78efc0291a8f2c2f92290f71be8ba43b6642cd12e7bdfd39ef9c9b382ff1",
     "kill_switch.py": "20663bc70d6b207a903a0e6449ee1eb77c669d69c247905214aedb95f321ec16",
     "sandbox.py": "97eb8cd7895f64a3fc78f1b7307835de7bdaec694eb9d12aa40c9d1bed62a82b",
     "capability_manifest.py": "04c7c3713ced0a73ac7d09e7244836336d41e7d40477b1f1393a79c91a1df545",
-    "policy.py": "545ed5f952a555dd95e62c8d70ea70c5f84e3ee96a5668694fa88d69ccca6cef",
+    "policy.py": "43c2af37bb892355a32edaef334e4d03c59317cfac041bd8b63b4eb6f3cee2ef",
     "governance/data_governance.py": "bc353927b7039c90aed782795a82d45f7ff92271adeedd3ba35670736e386541",
     "governance/redaction.py": "864a5235f73e71e40f2816a35eaddb75518d19ab9d76c89f089d6daef92d3db2",
     "documents/document_handler.py": "5c36a481bc26e42efecbad0dc338664560670c0a8044f1f09ecc2c1c4ef5dde1"

@@ -368,7 +368,13 @@ def check_capability(
             context_summary={"forbidden_classes": forbidden_names},
         )
 
-    # Policy Engine konsultieren — mit strengster Klasse als Leitklasse
+    # Policy Engine konsultieren — mit strengster Klasse als Leitklasse.
+    # tool/parameters werden mit den hier tatsaechlich verfuegbaren
+    # kanonischen Informationen angereichert (assess_risk() in policy.py
+    # liest diese fuer die Signalerhebung). resource_id/recipient_id/
+    # write_effect/reversibility sind auf Capability-Ebene NICHT bekannt
+    # (check_capability ist pro Capability, nicht pro Einzelaufruf) --
+    # bewusst nicht erfunden, bleiben als fehlende Signale sichtbar.
     ctx = PolicyContext(
         tenant_id=tenant_id,
         user_id=user_id,
@@ -379,6 +385,15 @@ def check_capability(
         redaction_applied=redaction_applied,
         approval_given=approval_given or (not cap.requires_approval),
         provider_profile_id=provider_profile_id,
+        tool=capability_id,
+        parameters={
+            "capability_name": cap.name,
+            "scope": tenant_id,
+            "target": cap.target.value if cap.target else None,
+            "external_call": cap.external_call,
+            "requires_approval": cap.requires_approval,
+            "capability_risk_level": cap.risk_level.value,
+        },
     )
     result = evaluate_policy(ctx)
 
