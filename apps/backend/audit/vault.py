@@ -159,8 +159,12 @@ def verify_audit_chain(
         entry_id, ts, action, tid, previous_hash, stored_hash = (
             row[0], row[1], row[2], row[3], row[4], row[5]
         )
-        ts_str = ts.isoformat() if isinstance(ts, datetime) else str(ts)
-        computed = _compute_audit_hash(entry_id, ts_str, action, tid, previous_hash)
+        # ts wird UNVERAENDERT (als datetime-Objekt) an _compute_audit_hash
+        # weitergereicht -- die kanonische Normalisierung (naiv=UTC, aware
+        # -> UTC) geschieht dort zentral, identisch zum Schreibpfad. Kein
+        # str()-Fallback: ein Nicht-datetime-Wert ist fail-closed ein Fehler,
+        # keine geratene Zeichenkette in der Hash-Chain.
+        computed = _compute_audit_hash(entry_id, ts, action, tid, previous_hash)
 
         chain_ok = (previous_hash == expected_previous) and (stored_hash == computed)
         if not chain_ok and first_invalid is None:

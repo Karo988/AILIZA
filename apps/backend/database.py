@@ -733,11 +733,54 @@ def list_performance_logs(tenant_id: str | None = None, limit: int = 100) -> lis
         return [dict(r) for r in connection.execute(query).mappings().all()]
 
 
-def _compute_audit_hash(entry_id: int, timestamp: str, action: str,
+def _canonicalize_audit_timestamp(ts: datetime) -> str:
+    """Kanonische, zeitzonensichere Serialisierung eines Audit-Timestamps
+    fuer die Hash-Chain -- einzige Quelle dieser Logik, von Schreib- UND
+    Verifikationspfad gemeinsam genutzt (siehe _compute_audit_hash).
+
+    Hintergrund (Bug, live reproduziert): audit_logs.timestamp wird beim
+    Schreiben ausnahmslos ueber datetime.now(timezone.utc) gesetzt (belegte
+    Bestandsinvariante, per Grep verifiziert -- keine andere Zeitquelle).
+    SQLite liefert eine DateTime(timezone=True)-Spalte beim Zurueklesen
+    jedoch als NAIVES datetime (tzinfo geht verloren). isoformat() auf dem
+    zurueckgelesenen, naiven Objekt erzeugt dadurch einen anderen String
+    als beim urspruenglichen Schreiben ("...441014" statt "...441014+00:00"),
+    wodurch der neu berechnete Hash nie mit dem gespeicherten entry_hash
+    uebereinstimmt -- verify_audit_chain() meldete dadurch bei JEDEM Aufruf
+    faelschlich "Manipulation erkannt" (Falsch-Alarm), obwohl nichts
+    veraendert wurde.
+
+    Fix ausschliesslich auf der Leseseite: ein naives datetime wird als UTC
+    interpretiert (angehaengtes tzinfo=UTC, kein Zeitwert veraendert) --
+    das rekonstruiert exakt den beim Schreiben gehashten String, ohne
+    bestehende entry_hash-Werte oder Datensaetze zu veraendern. Ein bereits
+    aware datetime wird zusaetzlich nach UTC normalisiert (astimezone),
+    damit ein kuenftiger, nicht-UTC-aware Zeitstempel keinen abweichenden
+    String erzeugt.
+
+    Fail-closed: kein stiller str()-Fallback fuer Nicht-datetime-Werte --
+    ein ungueltiger Typ ist ein Programmfehler, kein Fall fuer eine
+    geratene Zeichenkette in der Hash-Chain."""
+    if not isinstance(ts, datetime):
+        raise TypeError(
+            f"Audit-Timestamp muss ein datetime-Objekt sein, nicht {type(ts).__name__!r}."
+        )
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    else:
+        ts = ts.astimezone(timezone.utc)
+    return ts.isoformat()
+
+
+def _compute_audit_hash(entry_id: int, timestamp: datetime, action: str,
                         tenant_id: str, previous_hash: str) -> str:
-    """SHA-256 Hash-Chain für Audit-Vault Stufe 2."""
+    """SHA-256 Hash-Chain für Audit-Vault Stufe 2. `timestamp` MUSS ein
+    datetime-Objekt sein (nicht vorformatiert) -- die kanonische
+    Serialisierung erfolgt intern via _canonicalize_audit_timestamp(),
+    damit Schreib- und Verifikationspfad garantiert identisch hashen."""
     import hashlib
-    raw = f"{entry_id}|{timestamp}|{action}|{tenant_id}|{previous_hash}"
+    ts_str = _canonicalize_audit_timestamp(timestamp)
+    raw = f"{entry_id}|{ts_str}|{action}|{tenant_id}|{previous_hash}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -777,9 +820,10 @@ def _insert_audit_entry_on_connection(
     )
     entry_id = result.inserted_primary_key[0]
     entry["id"] = entry_id
-    # Hash mit echter ID berechnen und zurückschreiben
-    ts_str = ts.isoformat()
-    entry_hash = _compute_audit_hash(entry_id, ts_str, action, tenant_id, previous_hash)
+    # Hash mit echter ID berechnen und zurückschreiben -- ts ist das
+    # bereits aware datetime-Objekt aus dieser Funktion (Zeile oben, VOR
+    # dem DB-Insert/Round-Trip), nicht das zurückgelesene.
+    entry_hash = _compute_audit_hash(entry_id, ts, action, tenant_id, previous_hash)
     entry["entry_hash"] = entry_hash
     from sqlalchemy import update as _update
     connection.execute(
