@@ -1,32 +1,89 @@
 """
 Audit Logger
 ============
-Vollständiges Audit-Trail System für AILIZA.
+Schnittstelle für den Agent-Kern (agent/agent_core.py, agent/tool_executor.py)
+zur zentralen, dauerhaften Audit-Hash-Chain.
 
 DSGVO Art. 30: Verzeichnis von Verarbeitungstätigkeiten
 EU AI Act Art. 12: Protokollierungspflichten
 EU AI Act Art. 19: Automatisch erzeugte Protokolle
 
-Alle Aktionen werden pseudonymisiert gespeichert.
-Keine Klartextdaten im Audit-Log.
+Alle Aktionen werden pseudonymisiert gespeichert. Keine Klartextdaten im
+Audit-Log.
+
+WICHTIG (Arbeitspaket 1, Audit-Konsolidierung): Diese Klasse fuehrt KEINE
+eigene, zweite Audit-Datenbank mehr. Jeder Log-Aufruf schreibt ueber
+database.write_audit_entry() direkt in die bestehende, produktiv genutzte
+audit_logs-Tabelle -- inkl. der dort bereits vorhandenen SHA-256-Hash-Chain
+(_compute_audit_hash/_get_latest_audit_hash). Vorher schrieb diese Klasse in
+eine eigene sqlite3-Datenbank, die standardmaessig (":memory:") nie
+persistiert wurde und beim Prozessende verloren ging -- dieser stille
+Datenverlust ist der Grund fuer die Umstellung.
+
+Fail-closed bei Schreibfehlern: ein fehlgeschlagener Audit-Schreibvorgang
+wird NICHT stillschweigend verschluckt, sondern lautstark geloggt und erneut
+ausgeloest (re-raise) -- ein Aufrufer, der Audit-Verlust ignoriert, wuerde
+sonst unbemerkt gegen DSGVO Art. 30 / EU AI Act Art. 12 verstossen.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import sqlite3
-import time
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Verbotene Schluessel in metadata -- niemals in die Hash-Chain uebernehmen
+# (deckungsgleich mit core_api.write_audit_event(), damit beide Schreibpfade
+# denselben Schutz bieten).
+_BLOCKED_METADATA_KEYS = frozenset({
+    "task_content", "prompt", "input_summary", "credentials",
+    "secret", "totp", "backup_code", "password", "token",
+})
+
+
+def _sanitize_value(value: Any) -> Any:
+    """Entfernt verbotene Schluessel rekursiv -- auch in verschachtelten
+    dicts/Listen (z.B. {"context": {"prompt": "..."}} oder
+    [{"credentials": "..."}])."""
+    if isinstance(value, dict):
+        return {
+            k: _sanitize_value(v)
+            for k, v in value.items()
+            if k.lower() not in _BLOCKED_METADATA_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_value(v) for v in value]
+    return value
+
+
+def _sanitize_metadata(details: Dict[str, Any] | None) -> Dict[str, Any]:
+    return _sanitize_value(details or {})
+
+
+class AuditChainDeletionNotAllowed(Exception):
+    """Direkte Loeschung einzelner Zeilen aus der Audit-Hash-Chain ist nicht
+    erlaubt. audit_logs ist eine append-only Hash-Chain
+    (previous_hash/entry_hash, siehe database.py/_compute_audit_hash) -- das
+    Entfernen einer einzelnen, nutzerbezogenen Zeile aus der Mitte der Kette
+    wuerde previous_hash fuer alle nachfolgenden Eintraege ungueltig machen
+    und die Manipulationserkennung faelschlich ausloesen.
+
+    Die bestehende, bereits vorhandene Alters-Retention
+    (maintenance/retention_cleanup.py) loescht ausschliesslich die AELTESTEN
+    Eintraege chronologisch von vorne -- das ist ein anderer, bereits
+    bestaetigter Prozess und betrifft keine gezielte, nutzerbezogene
+    Einzel-Loeschung (DSGVO Art. 17).
+
+    Ein bestaetigter, dokumentierter Prozess fuer eine solche gezielte
+    Loeschung existiert aktuell nicht und wird hier NICHT erfunden -- siehe
+    HANDOFF in delete_user_audit_data()."""
+
 
 class AuditLogger:
     """
-    Audit-Trail Logger für AILIZA.
+    Audit-Trail Logger für AILIZA -- dünner, fehlerlauter Adapter auf die
+    zentrale audit_logs-Hash-Chain (siehe database.write_audit_entry).
 
     Implementiert:
     - DSGVO Art. 30: Verzeichnis von Verarbeitungstätigkeiten
@@ -35,73 +92,53 @@ class AuditLogger:
     - Pseudonymisierung: Keine Klartextdaten
     """
 
-    DB_VERSION = 1
-
     def __init__(
         self,
         session_id: str,
         user_id: str,
-        db_path: str = None,
+        tenant_id: Optional[str] = None,
     ):
         self.session_id = session_id
         self.user_id = user_id
-        self._db_path = db_path or ":memory:"
-        self._conn = self._init_db()
+        try:
+            from ..database import DEFAULT_TENANT_ID
+        except ImportError:
+            from database import DEFAULT_TENANT_ID  # type: ignore
+        self.tenant_id = tenant_id or DEFAULT_TENANT_ID
         self._entry_count = 0
-
-    def _init_db(self) -> sqlite3.Connection:
-        """Initialisiert die Audit-Datenbank."""
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id  TEXT NOT NULL,
-                user_id     TEXT NOT NULL,
-                event_type  TEXT NOT NULL,
-                details     TEXT,
-                timestamp   REAL NOT NULL,
-                timestamp_iso TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_audit_session
-                ON audit_log(session_id);
-            CREATE INDEX IF NOT EXISTS idx_audit_user
-                ON audit_log(user_id);
-            CREATE INDEX IF NOT EXISTS idx_audit_event
-                ON audit_log(event_type);
-            CREATE TABLE IF NOT EXISTS audit_meta (
-                key   TEXT PRIMARY KEY,
-                value TEXT
-            );
-        """)
-        conn.execute(
-            "INSERT OR IGNORE INTO audit_meta (key, value) VALUES (?, ?)",
-            ("db_version", str(self.DB_VERSION)),
-        )
-        conn.commit()
-        return conn
 
     # ── Logging Methoden ──────────────────────────────────────────────────
 
     def _log(self, event_type: str, details: Dict[str, Any] = None) -> None:
-        """Basis-Logging-Methode."""
-        now = time.time()
-        details_json = json.dumps(details or {}, ensure_ascii=False)
+        """Schreibt EINEN Eintrag ueber die zentrale Hash-Chain.
 
-        self._conn.execute(
-            """INSERT INTO audit_log
-               (session_id, user_id, event_type, details, timestamp, timestamp_iso)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                self.session_id,
-                self.user_id,
-                event_type,
-                details_json,
-                now,
-                datetime.utcnow().isoformat() + "Z",
-            ),
-        )
-        self._conn.commit()
+        Fail-closed: schlaegt der Schreibvorgang fehl, wird der Fehler laut
+        geloggt (kein stiller Verlust) und erneut ausgeloest -- der Aufrufer
+        entscheidet, wie er darauf reagiert, statt dass der Audit-Verlust
+        unbemerkt bleibt."""
+        try:
+            from ..database import write_audit_entry
+        except ImportError:
+            from database import write_audit_entry  # type: ignore
+
+        safe_details = _sanitize_metadata(details)
+        metadata = {
+            "session_id": self.session_id,
+            "agent_user_id": self.user_id,
+            **safe_details,
+        }
+        try:
+            write_audit_entry(
+                action=f"agent.{event_type}",
+                metadata=metadata,
+                tenant_id=self.tenant_id,
+            )
+        except Exception:
+            logger.error(
+                "AUDIT-SCHREIBFEHLER (nicht verschluckt) | session=%s | event=%s",
+                self.session_id[:8], event_type,
+            )
+            raise
         self._entry_count += 1
 
         logger.debug(
@@ -204,30 +241,36 @@ class AuditLogger:
             "article": "EU AI Act Art. 14",
         })
 
-    # ── Abfragen ──────────────────────────────────────────────────────────
+    # ── Abfragen (lesen aus der zentralen audit_logs-Tabelle) ───────────────
 
     def get_session_events(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Gibt alle Ereignisse der aktuellen Session zurück."""
-        cursor = self._conn.execute(
-            """SELECT event_type, details, timestamp_iso
-               FROM audit_log
-               WHERE session_id = ?
-               ORDER BY timestamp ASC
-               LIMIT ?""",
-            (self.session_id, limit),
-        )
-        return [dict(row) for row in cursor.fetchall()]
+        """Gibt alle Ereignisse der aktuellen Session zurück (read-only
+        Filterung auf metadata.session_id nach dem Laden -- audit_logs hat
+        keinen eigenen Session-Index, das ist fuer die hier ueblichen
+        Datenmengen je Konversation unkritisch)."""
+        try:
+            from ..database import query_audit_events
+        except ImportError:
+            from database import query_audit_events  # type: ignore
+
+        rows = query_audit_events(tenant_id=self.tenant_id, limit=1000)
+        own = [r for r in rows if (r.get("metadata") or {}).get("session_id") == self.session_id]
+        own.sort(key=lambda r: r.get("timestamp") or 0)
+        return [
+            {
+                "event_type": (r.get("action") or "").removeprefix("agent."),
+                "details": r.get("metadata"),
+                "timestamp_iso": str(r.get("timestamp")),
+            }
+            for r in own[:limit]
+        ]
 
     def get_summary(self) -> Dict[str, Any]:
         """Gibt eine Zusammenfassung des Audit-Logs zurück."""
-        cursor = self._conn.execute(
-            """SELECT event_type, COUNT(*) as count
-               FROM audit_log
-               WHERE session_id = ?
-               GROUP BY event_type""",
-            (self.session_id,),
-        )
-        event_counts = {row["event_type"]: row["count"] for row in cursor.fetchall()}
+        events = self.get_session_events(limit=1000)
+        event_counts: Dict[str, int] = {}
+        for e in events:
+            event_counts[e["event_type"]] = event_counts.get(e["event_type"], 0) + 1
 
         return {
             "session_id": self.session_id,
@@ -241,20 +284,30 @@ class AuditLogger:
 
     def delete_user_audit_data(self, user_id: str) -> int:
         """
-        Löscht Audit-Einträge eines Users (DSGVO Art. 17).
+        Loescht Audit-Eintraege eines Users (DSGVO Art. 17).
 
-        WICHTIG: Behält Einträge zu Löschvorgängen als Nachweis.
+        HANDOFF: audit_logs ist seit der Umstellung auf die zentrale
+        Hash-Chain (Arbeitspaket 1) eine append-only Kette. Ein direktes
+        DELETE einzelner, nutzerbezogener Zeilen wuerde previous_hash fuer
+        alle nachfolgenden Eintraege brechen (siehe
+        AuditChainDeletionNotAllowed). Diese Methode fuehrt deshalb KEINE
+        Loeschung aus, sondern loest fail-closed IMMER eine klare Ausnahme
+        aus -- solange kein gesondert bestaetigter, dokumentierter
+        Loeschprozess fuer nutzerbezogene audit_logs-Eintraege existiert
+        (z.B. Neuaufbau der Kette mit Platzhalter-Eintraegen fuer geloeschte
+        Zeilen + erneuter Hash-Berechnung, oder ein gesondert freigegebener
+        Kompensationsprozess). Ein solcher Prozess ist bewusst NICHT Teil
+        dieser Aenderung -- keine Erfindung einer neuen Loeschregel.
+
+        Erhaelt die urspruengliche Signatur (Rueckgabewert `int`, Anzahl
+        geloeschter Zeilen) bewusst NICHT bei -- die Methode wirft immer,
+        gibt also nie tatsaechlich zurueck; die Signatur (Parameter,
+        Exception statt stillem Fehlschlagen) bleibt kompatibel zu
+        bestehenden Aufrufkonventionen.
         """
-        cursor = self._conn.execute(
-            """DELETE FROM audit_log
-               WHERE user_id = ?
-               AND event_type != 'data_deletion'""",
-            (user_id,),
+        raise AuditChainDeletionNotAllowed(
+            f"Direkte Loeschung aus der Audit-Hash-Chain ist nicht erlaubt "
+            f"(user_id-Praefix: {user_id[:8]}...). Ein bestaetigter, "
+            f"dokumentierter Loeschprozess fuer nutzerbezogene "
+            f"audit_logs-Eintraege (DSGVO Art. 17) existiert aktuell nicht."
         )
-        self._conn.commit()
-        deleted = cursor.rowcount
-        logger.info(
-            "Audit-Einträge gelöscht | user=%s | count=%d | art=DSGVO Art. 17",
-            user_id[:8], deleted,
-        )
-        return deleted
