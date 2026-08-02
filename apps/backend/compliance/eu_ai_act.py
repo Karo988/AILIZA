@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 
 # EU AI Act Risikoklassen (Art. 6)
-class RiskLevel:
+class AIActRiskLevel:
     UNACCEPTABLE = "unacceptable"   # Art. 5: Verboten
     HIGH = "high"                   # Anhang III: Hochrisiko
     LIMITED = "limited"             # Art. 50: Transparenzpflicht
@@ -48,7 +48,7 @@ class EUAIActCompliance:
         self,
         system_name: str,
         version: str,
-        risk_level: str = RiskLevel.LIMITED,
+        risk_level: str = AIActRiskLevel.LIMITED,
     ):
         self.system_name = system_name
         self.version = version
@@ -116,7 +116,7 @@ class EUAIActCompliance:
         requires = (
             action in HIGH_RISK_ACTIONS
             or risk_score >= 0.7
-            or self.risk_level == RiskLevel.HIGH
+            or self.risk_level == AIActRiskLevel.HIGH
         )
 
         self._log_action("oversight_check", {
@@ -150,7 +150,7 @@ class EUAIActCompliance:
 
     # ── Art. 9: Risikomanagement ──────────────────────────────────────────
 
-    def assess_risk(self, action: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    def assess_ai_act_risk(self, action: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Bewertet das Risiko einer Aktion (Art. 9: Risikomanagementsystem).
         """
