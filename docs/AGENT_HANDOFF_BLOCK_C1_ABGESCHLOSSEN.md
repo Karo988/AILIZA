@@ -1,8 +1,8 @@
-# AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3 + C4
+# AILIZA Agent-Handoff: Block C (C1–C4, alle gemergt) + Block D0 (Demo-UI)
 
-**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion) und PR #50 (lokale Suche) sind **gemergt**. Block C4 (interne Wissensquellen im Chat mit Quellenanzeige) ist implementiert, 1034/1034 Tests grün, PR wird als nächstes erstellt.
+**Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion), PR #50 (lokale Suche) und PR #51 (interne Wissensquellen im Chat mit Quellenanzeige) sind **alle gemergt**. Block D0 (kleine Demo-/UI-Schicht "Firmendatenbank") ist implementiert, 1077/1077 Tests grün, PR wird als nächstes erstellt (siehe Abschnitt 8).
 
-**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C5/Websuche, jeweils erst nach expliziter Freigabe).
+**Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent.
 
 ---
 
@@ -14,10 +14,11 @@ Block B (Chat-Anbindung, Export/Löschung DSGVO)       ✅ gemergt
 Block C1 (Wissensquellen-Schema)                      ✅ gemergt (PR #48)
 Block C2 (TXT/Markdown-Ingestion)                     ✅ gemergt (PR #49)
 Block C3 (Lokale Suche)                               ✅ gemergt (PR #50)
-Block C4 (RAG mit Quellen)                            ✅ implementiert, PR folgt (Branch claude/knowledge-rag-with-sources)
+Block C4 (RAG mit Quellen)                            ✅ gemergt (PR #51)
 Block C5 (Optionale Vektorsuche)                      ⏳ nur nach expliziter Freigabe
 Block D (Desktop-Distribution ohne Docker)            ⏳ separater, späterer Auftrag
 Websuche/Internetrecherche                            ⏳ spätere, eigene Capability (siehe Abschnitt 4, Leitplanken)
+Empfohlener Folgeschritt: kleine UI-/Demo-Schicht      ⏳ noch nicht beauftragt (siehe Abschnitt 5)
 ```
 
 ## 2. Block C2 — was gebaut wurde (zur Erinnerung, bereits gemergt)
@@ -76,9 +77,34 @@ Websuche/Internetrecherche                            ⏳ spätere, eigene Capab
 - Kein Admin-Cockpit, kein großes RAG-Redesign
 - `internal_plus_general` (answer_mode) ist im Mapping vorbereitet, aber nicht automatisch von `internal_knowledge` unterschieden — würde erfordern zu erkennen, "wie" das Modell den Kontext genutzt hat; als Follow-up dokumentiert, nicht geraten
 
-**Docker-Test:** nicht möglich (Daemon in der Sandbox nicht erreichbar) — auf echtem PC mit `docker compose up -d` verifizieren.
+**PR #51: gemergt (2026-07-21).** CI grün, `mergeable_state: clean`, 1034/1034 Tests grün — vor dem Merge nochmal lokal gegen die C4-Checkliste geprüft (interne Quellen genutzt, Snippet-/Zeichen-Limit, Re-Klassifikation, keine erfundenen Quellen, kein Standardhinweis bei Nulltreffern, best-effort Fehlerfestigkeit, keine Websuche/pgvector/Embeddings/Wissensgraph/UI/automatische Memory-Erzeugung — alles bestätigt).
 
-**Noch offen:** PR für C4 muss von dir gemerged werden. Nicht mergen ohne Karo-Freigabe.
+**Docker-Test:** In dieser Sandbox nicht möglich (Docker-Daemon nicht erreichbar, `/var/run/docker.sock` fehlt; auch ein direkter `uvicorn`-Start ohne Docker scheitert am Package-Importkontext dieser Sandbox). **Bitte auf echtem PC mit `docker compose up -d` prüfen.**
+
+**Manuelle Demo:** In dieser Sandbox **nicht durchgeführt** (App/Docker nicht lauffähig, keine echten LLM-Provider-Keys verfügbar). Stattdessen Checkliste vorbereitet, siehe unten — bitte auf einem PC mit laufendem Docker und konfiguriertem Provider durchführen.
+
+### C4-Demo-Checkliste (auf echtem PC durchführen)
+
+1. TXT- oder Markdown-Dokument hochladen (über `ingest_txt_or_markdown_source()` bzw. eine spätere Upload-Anbindung — aktuell noch keine UI dafür, siehe Abschnitt 5).
+2. Prüfen: Quelle hat Status `approved` (nicht `pending_review`/`blocked`).
+3. Im Chat nach einem Inhalt aus dem Dokument fragen.
+4. Prüfen:
+   - Antwort nutzt internes Wissen (`answer_mode: "internal_knowledge"` im Response-Body).
+   - `sources`-Liste wird im Response-Body angezeigt.
+   - Jede Quelle enthält `title`, `source_id`, `chunk_id`.
+5. Eine Frage stellen, zu der es keinen Treffer gibt.
+6. Prüfen:
+   - Chat antwortet normal weiter.
+   - Kein Standardhinweis in der Antwort, `answer_mode: "general_ai"`.
+7. Explizit fragen: "Was steht dazu in unseren Dokumenten?"
+8. Wenn kein Treffer:
+   - Antwort enthält wörtlich: "Ich habe in freigegebenen Quellen nichts Passendes gefunden."
+   - `answer_mode: "no_internal_source"`.
+9. Prüfen:
+   - Keine Websuche ausgelöst.
+   - Keine externen Quellen in der Antwort.
+   - Keine automatische Memory-Erzeugung durch diesen Schritt (Memory-Suggestion-Logik aus Block B bleibt unverändert/unabhängig).
+   - Im Server-Log/Request an den LLM-Provider (falls einsehbar) stehen nur Snippets, nie ganze Dokumente oder `storage_path`.
 
 ## 4a. Ursprünglicher C4-Auftrag (bereits umgesetzt, zur Nachvollziehbarkeit archiviert)
 
@@ -206,17 +232,92 @@ Handoff-Dokument nach Umsetzung aktualisieren.
 Nach PR-Erstellung stoppen.
 ```
 
-## 5. Governance-Erinnerung (bleibt für jede Phase bindend)
+## 5. Empfohlener Folgeschritt (umgesetzt als Block D0, siehe Abschnitt 8)
+
+~~Block C (C1–C4) ist jetzt vollständig gemergt, aber es gibt aktuell keine Möglichkeit, das praktisch zu sehen~~ — **erledigt durch Block D0** (Abschnitt 8): kleine Demo-/UI-Schicht "Firmendatenbank" mit Upload, Statusanzeige und Quellenliste im Chat.
+
+## 6. Governance-Erinnerung (bleibt für jede Phase bindend)
 
 - Erst fragen, dann programmieren — bei Unklarheiten NICHT raten, Karo fragen
 - Keine Dokumente/Chunks an externe LLM-Dienste ohne ausdrückliche Freigabe (Kill-Switch-Pipeline gilt auch hier)
-- Jede Antwort aus Dokumentwissen braucht Quellen (ab C4 umzusetzen — Architektur seit C1 darauf ausgelegt)
-- Gelöschte/blockierte Quellen dürfen nie genutzt werden (durchgesetzt über `list_active_chunks_for_source` und jetzt auch direkt in `search_knowledge_chunks`)
+- Jede Antwort aus Dokumentwissen braucht Quellen (ab C4 umgesetzt — siehe Abschnitt 4)
+- Gelöschte/blockierte Quellen dürfen nie genutzt werden (durchgesetzt über `list_active_chunks_for_source` und `search_knowledge_chunks`)
 
-## 6. Modell-Empfehlung
+## 7. Modell-Empfehlung
 
-**Sonnet 5** für C3 war korrekt (iterative Such-Logik, Tests, TDD) — hat gereicht, keine Architektur-Rückfrage nötig.
-**Für C4: Sonnet 5** — alle Architekturfragen sind durch Karo bereits final entschieden (Abschnitt 4), C4 ist jetzt iterative Integration bestehender Bausteine (`search_knowledge_chunks`, Governance-Pipeline), kein offener Architektur-Entwurf mehr. Opus 4.8 wäre nur nötig gewesen, um die jetzt getroffenen Entscheidungen zu erarbeiten — das ist bereits erledigt.
+**Sonnet 5** für C4 war korrekt — alle Architekturfragen waren durch Karo bereits final entschieden, reine Integration bestehender Bausteine, kein offener Architektur-Entwurf.
+**Für Block D0: ebenfalls Sonnet 5** — kleine, klar abgegrenzte Frontend-/API-Anbindung ohne neue Architekturentscheidung (bestätigt sich im Ergebnis).
+
+## 8. Block D0 — Demo-/UI-Schicht "Firmendatenbank" (was gebaut wurde)
+
+**Branch:** `claude/knowledge-demo-ui` · **Tests:** 43 neu (`test_knowledge_demo_view.py`: 13, `test_knowledge_demo_db.py`: 6, `test_knowledge_txt_md_ingestion.py`: +3 Kategorie-Tests, `test_knowledge_demo_api.py`: 21) · **Baseline:** 1077/1077 Tests grün.
+
+### Backend (additiv, keine bestehende Logik verändert)
+
+- **`category`-Spalte** auf `knowledge_sources` (nullable, additive SQLite-Migration analog bestehendem Muster) — rein manuell, feste Whitelist `ALLOWED_DEMO_CATEGORIES` in `apps/backend/knowledge/ingestion.py` (Allgemein, Richtlinie, Projekt, Kunde, Vorlage, Anleitung, Vertrag/Compliance). **Keine automatische Kategorisierung per LLM.**
+- **`list_knowledge_sources_for_tenant()`** (neu in `database.py`) — alle Quellen eines Mandanten inkl. Chunk-Anzahl, ungefiltert nach Status (die UI zeigt bewusst auch blockierte/wartende Quellen, damit der volle Überblick sichtbar ist).
+- **`ingest_txt_or_markdown_source()`** um optionalen `category`-Parameter erweitert (validiert, sonst `KnowledgeIngestionError`).
+- **Neues Modul `apps/backend/knowledge/demo_view.py`** (reine Anzeigelogik, keine DB-Schreibzugriffe):
+  - `usability_label_for_status()` → "Nutzbar im Chat" / "Wartet auf Prüfung" / "Blockiert" / "Nicht aktiv"
+  - `status_explanation()` — nutzerfreundliche Erklärung ohne technische Details
+  - `sort_sources_for_demo()` — approved zuerst, dann wartend, dann blocked/deleted/expired, je Gruppe neueste zuerst
+  - `to_public_source_view()` — Whitelist-Ansicht (`PUBLIC_SOURCE_FIELDS`), **niemals** `storage_path` oder `chunk_text`
+- **Neue Endpunkte in `main.py`** (alle mit Login-Pflicht, `_require_user()`):
+  - `POST /api/knowledge/upload` — nutzt `ingest_txt_or_markdown_source()` direkt, keine Parallel-Logik
+  - `GET /api/knowledge/sources` — sortierte, öffentliche Ansicht aller Quellen des eigenen Mandanten
+  - `GET /api/knowledge/sources/{id}` — Detailansicht, 404 bei fremdem Mandanten oder unbekannter ID
+
+### Frontend (`apps/frontend/index.html`, additiv)
+
+- Neuer Sidebar-Eintrag **"Firmendatenbank"** (eigene View `view-wissensdb`, unabhängig von der bestehenden "Wissensbibliothek" für Prompt-Vorlagen)
+- Upload-Formular (Datei + optionale Kategorie-Auswahl), Status-/Filter-Leiste (Alle/Nutzbar/Wartet auf Prüfung/Blockiert/Nicht aktiv), Suche (Titel/Dateiname/Kategorie/source_id)
+- Karten-Ansicht mit Status-Badge, Klick zeigt Detailbereich (Status-Erklärung, source_id, Kategorie, Sichtbarkeit, Chunk-Anzahl); bei nutzbaren Quellen Button "Frage zu dieser Quelle stellen" (öffnet nur den Chat mit vorbereitetem Text, ändert **nie** direkt einen Datenbankstatus)
+- Chat-Antwort zeigt jetzt zusätzlich (rein additiv, nur wenn vom Backend geliefert): `data.knowledge_notice` (z. B. "Antwort basiert auf: internes Wissen.") und `data.sources` als einfache Liste (Titel, `source_id`, `chunk_id`)
+
+### Sicherheit / Statuslogik (durchgesetzt, nicht nur behauptet)
+
+- `approved` = nutzbar, `pending_review`/`uploaded` = sichtbar, nicht nutzbar, `blocked` = sichtbar, nicht nutzbar, `deleted`/`expired` = nicht aktiv — durch `is_usable_in_chat()` hart codiert, nicht im Frontend entscheidbar
+- Backend gibt **nie** `storage_path` oder rohes `chunk_text` heraus (durch `to_public_source_view()`-Whitelist strukturell ausgeschlossen, per Test abgesichert)
+- Kein neuer externer Dienst, keine Websuche, kein pgvector, keine Embeddings, kein Wissensgraph
+
+### Bewusst nicht gebaut
+
+- Keine Rollenverwaltung, kein Admin-Cockpit
+- Keine Export-/Löschfunktion in D0 (bestehende Export/Löschung aus Block B bleibt unverändert und unabhängig)
+- Keine Memory-Verwaltung, keine automatische Memory-Erzeugung aus Dokumenten
+- Keine PDF/DOCX-Verarbeitung (weiterhin nur `.txt`/`.md`, wie in C2 entschieden)
+- Kein neues Designsystem — bestehende CSS-Klassen (`.card`, `.grid`, `.meta-pill`, `.wissen-cat-btn`) wiederverwendet
+- Keine produktive Kundenfreigabe — D0 ist explizit ein Demo-/Prüfmodus
+
+### Tests
+
+Kein Frontend-Testsystem im Repo vorhanden. Stattdessen durchgeführt:
+- `pytest tests/ -v --tb=short` → **1077/1077 grün**
+- `node --check` auf den extrahierten `<script>`-Inhalt von `index.html` → **kein Syntaxfehler**
+- Python `html.parser` über die gesamte Datei → **keine Parse-Fehler**
+
+### Docker-Test
+
+Nicht möglich — Docker-Daemon in dieser Sandbox nicht erreichbar (`/var/run/docker.sock` fehlt), wie bei C2/C3/C4. **Bitte auf echtem PC mit `docker compose up -d` verifizieren.**
+
+### Manuelle Demo
+
+In dieser Sandbox nicht als Browser-Klickdurchlauf durchführbar (kein Docker, kein Browser). Die Demo-Schritte sind aber **funktional über die neuen API-Tests abgedeckt** (Upload → Statusanzeige → Chat mit Quelle → Chat ohne Treffer → explizite Dokumentenfrage). Checkliste für die echte Durchführung auf einem PC:
+
+1. Firmendatenbank öffnen (Sidebar → "Firmendatenbank").
+2. TXT- oder Markdown-Datei hochladen, optional Kategorie wählen.
+3. Prüfen: Status wird als Badge angezeigt ("Nutzbar im Chat" / "Wartet auf Prüfung" / "Blockiert").
+4. Bei einer `approved`-Quelle: im Chat eine Frage zum Dokumentinhalt stellen (oder über "Frage zu dieser Quelle stellen").
+5. Prüfen: Antwort erscheint, danach ein Hinweis wie "Antwort basiert auf: internes Wissen." und eine Quellenliste mit Titel/`source_id`/`chunk_id`.
+6. Eine Frage ohne Treffer stellen — prüfen: Chat antwortet normal, kein Standardhinweis.
+7. Explizit fragen: "Was steht dazu in unseren Dokumenten?" — bei keinem Treffer erscheint: "Ich habe in freigegebenen Quellen nichts Passendes gefunden."
+8. Prüfen: keine Websuche, keine externen Quellen, keine automatische Memory-Erzeugung, keine ganzen Dokumente im Prompt, kein `storage_path` irgendwo sichtbar.
+
+### Offene Folgepunkte
+
+- Kein automatisiertes Frontend-Testsystem im Repo — falls gewünscht, separater kleiner Auftrag (z. B. Playwright)
+- Manuelle Kategorie kann aktuell nur beim Upload gesetzt werden, kein nachträgliches Bearbeiten (bewusst kleinster Schnitt)
+- Echte Browser-Demo auf einem PC mit Docker steht noch aus
 
 ---
 

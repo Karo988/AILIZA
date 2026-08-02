@@ -66,6 +66,14 @@ _PENDING_REVIEW_MESSAGE = (
 )
 _APPROVED_MESSAGE = "Dein Dokument wurde erfolgreich hinzugefuegt und ist jetzt durchsuchbar."
 
+# Block D0: rein manuelle Demo-Kategorien fuer die Nachschlagewerk-Ansicht.
+# KEINE automatische Kategorisierung per LLM -- der Nutzer waehlt selbst,
+# oder es bleibt None (keine Kategorie).
+ALLOWED_DEMO_CATEGORIES = {
+    "Allgemein", "Richtlinie", "Projekt", "Kunde", "Vorlage",
+    "Anleitung", "Vertrag/Compliance",
+}
+
 
 def _resolve_upload_dir() -> Path:
     """Aufloesung analog zu database._resolve_database_url: /data/uploads ist
@@ -118,7 +126,8 @@ def _split_into_chunks(text: str, max_chars: int = _CHUNK_MAX_CHARS) -> list[str
 
 def ingest_txt_or_markdown_source(*, tenant_id: str, uploaded_by: str,
                                    filename: str, content: bytes,
-                                   title: str | None = None) -> dict[str, Any]:
+                                   title: str | None = None,
+                                   category: str | None = None) -> dict[str, Any]:
     """Sicherer Ingestion-Kern fuer Block C2 (nur TXT + Markdown).
 
     Fail-closed ueber die gesamte Kette: unbekannter Dateityp, leere Datei,
@@ -126,11 +135,19 @@ def ingest_txt_or_markdown_source(*, tenant_id: str, uploaded_by: str,
     KnowledgeIngestionError abgelehnt, BEVOR irgendetwas gespeichert wird.
     Sensible/unklare Inhalte werden gespeichert, aber nicht aktiv freigegeben
     (status=blocked/pending_review, keine Chunks).
+
+    category (Block D0): rein manuell, optional, feste Whitelist
+    (ALLOWED_DEMO_CATEGORIES) -- keine automatische Kategorisierung.
     """
     if not tenant_id:
         raise KnowledgeIngestionError("Tenant fehlt.")
     if not uploaded_by:
         raise KnowledgeIngestionError("Hochladende Person fehlt.")
+    if category is not None and category not in ALLOWED_DEMO_CATEGORIES:
+        raise KnowledgeIngestionError(
+            f"Ungueltige Kategorie. Bitte eine der folgenden waehlen: "
+            f"{', '.join(sorted(ALLOWED_DEMO_CATEGORIES))}."
+        )
 
     sanitized_filename = _sanitize_filename(filename)
     ext = _validate_extension(sanitized_filename)
@@ -197,6 +214,7 @@ def ingest_txt_or_markdown_source(*, tenant_id: str, uploaded_by: str,
         content_hash=content_hash,
         mime_type=_MIME_TYPES[ext],
         status=source_status,
+        category=category,
     )
 
     set_knowledge_source_permission(
