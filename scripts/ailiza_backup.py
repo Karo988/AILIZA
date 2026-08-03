@@ -75,6 +75,26 @@ class BackupError(RuntimeError):
 # Verschluesselung
 # ---------------------------------------------------------------------------
 
+def _nur_eigentuemer(pfad: Path) -> None:
+    """Beschraenkt die Dateirechte auf die Eigentuemerin (0600).
+
+    Betrifft das Sicherungspaket (enthaelt personenbezogene Daten) und die
+    beim Wiederherstellen abgelegte Schluesseldatei (enthaelt den
+    AILIZA_SECRET_KEY im Klartext). Ohne diese Einschraenkung entstehen sie
+    mit 0644 und waeren auf einem Rechner mit mehreren Konten fuer jeden
+    lesbar.
+
+    Unter Windows hat chmod nur begrenzte Wirkung; NTFS-Rechte werden davon
+    nicht veraendert. Der Aufruf schadet dort nicht, ersetzt aber keine
+    ACL-Haertung -- deshalb liegen die Sicherungen unter
+    %LOCALAPPDATA%, das bereits kontogebunden ist.
+    """
+    try:
+        os.chmod(pfad, 0o600)
+    except OSError:
+        pass  # z. B. Dateisysteme ohne Rechteverwaltung -- kein Abbruchgrund
+
+
 def _require_crypto():
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -102,6 +122,7 @@ def _encrypt_to_file(plaintext: bytes, password: str, target: Path) -> None:
     ct = AESGCM(_derive_key(password, salt)).encrypt(nonce, plaintext, _MAGIC)
     tmp = target.with_suffix(target.suffix + ".unfertig")
     tmp.write_bytes(_MAGIC + salt + nonce + ct)
+    _nur_eigentuemer(tmp)
     tmp.replace(target)  # atomar: entweder ganz oder gar nicht
 
 
@@ -376,7 +397,12 @@ def cmd_verify(args) -> int:
             return 2
 
         titel = _decrypt_probe(db, secret)
-        print(f"[5/5] Entschluesselung geprueft -- Beispieltitel lesbar: {titel!r}")
+        # Gekuerzt ausgegeben: ein Chattitel kann personenbezogene Daten
+        # enthalten. Fuer den Nachweis genuegt, dass ueberhaupt lesbarer
+        # Klartext herauskommt -- der vollstaendige Inhalt gehoert nicht in
+        # ein Terminalprotokoll.
+        probe = titel if len(titel) <= 24 else titel[:24] + "..."
+        print(f"[5/5] Entschluesselung geprueft -- Klartext lesbar: {probe!r}")
 
     print()
     print("ABNAHME BESTANDEN: Datenbank und Schluessel wurden auf einer frischen "
@@ -471,6 +497,7 @@ def cmd_restore(args) -> int:
         if env_file.exists():
             env_ziel = ziel.parent / "env-aus-sicherung"
             shutil.copy2(env_file, env_ziel)
+            _nur_eigentuemer(env_ziel)  # enthaelt den Schluessel im Klartext
             print(f"Schluesseldatei abgelegt unter:   {env_ziel}")
             print()
             print("WICHTIG: Diese Datei enthaelt den Schluessel, mit dem die "
