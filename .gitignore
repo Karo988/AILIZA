@@ -24,6 +24,11 @@ apps/backend/.env.*
 apps/**/.env
 apps/**/.env.*
 
+# Ausnahme: die Konfigurationsvorlage enthaelt bewusst KEINE echten Werte
+# und muss versionierbar bleiben (sonst weiss niemand, welche Variablen
+# beim lokalen Start gesetzt werden muessen).
+!apps/backend/.env.example
+
 # Datenbanken (lokale Entwicklung)
 # Alle .db/.sqlite-Dateien ignorieren (auch in Unterverzeichnissen)
 *.db
@@ -66,3 +71,15 @@ secrets/
 # Claude Code interne Daten
 .claude/worktrees/
 
+# Sicherungen und Exporte — enthalten personenbezogene Daten.
+# Hinweis: .gitignore ist KEINE Sperre. "git add -f" umgeht sie, und
+# bereits versionierte Dateien bleiben versioniert. Sicherungen gehoeren
+# deshalb grundsaetzlich AUSSERHALB des Projektordners
+# (backup-local.cmd legt sie unter %LOCALAPPDATA%\AILIZA\backups ab).
+*.ailiza-backup
+*.ailiza-backup.sha256
+*.dump
+*.bak
+*.backup
+*.sqlite.bak
+backups/

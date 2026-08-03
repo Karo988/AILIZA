@@ -7,6 +7,12 @@
 # nicht in dieser Datei vorkonfiguriert, um den Standardfall einfach zu
 # halten).
 
+# Fester Projektname. Ohne ihn leitet Compose den Namen vom Ordner ab --
+# der Volume-Name waere dann z. B. "ailiza-main_ailiza_data" statt
+# "ailiza_ailiza_data". Ordner umbenennen (oder ein ZIP anders entpacken)
+# haette sonst eine scheinbar leere Datenbank zur Folge.
+name: ailiza
+
 services:
   ailiza:
     build:
@@ -15,14 +21,33 @@ services:
       args:
         MODE: core
     ports:
-      - "8000:8000"
+      # Bindung ausdruecklich an 127.0.0.1: AILIZA ist damit NUR auf diesem
+      # Rechner erreichbar. Die Kurzform "8000:8000" wuerde an alle
+      # Netzwerkschnittstellen binden -- jedes Geraet im selben WLAN koennte
+      # dann unverschluesselt auf Chats und Anmeldung zugreifen.
+      # Fuer Zugriff von Laptop/Handy siehe docs/AUTARKER_BETRIEB.md
+      # (Abschnitt "Zugriff von weiteren eigenen Geraeten") -- dort ueber ein
+      # privates Netz mit HTTPS, nicht durch Aufbohren dieser Bindung.
+      - "127.0.0.1:8000:8000"
     environment:
       AILIZA_ENV: production
       AILIZA_DATABASE_URL: sqlite:////data/ailiza.sqlite
       AILIZA_EXTERNAL_LLM_ENABLED: "false"
-      # Weitere Secrets (AILIZA_SECRET_KEY, GROQ_API_KEY, ...) in einer
-      # .env-Datei setzen und hier per env_file einbinden, z. B.:
-      # env_file: .env
+    # Konfiguration aus der .env im Projektstamm. Frueher war diese Zeile nur
+    # auskommentiert -- dadurch erreichte ein gesetzter AILIZA_SECRET_KEY den
+    # Container nie, und die Anmeldung blieb ohne erkennbaren Grund tot.
+    #
+    # Achtung: Werte unter "environment:" haben Vorrang vor "env_file:".
+    # AILIZA_ENV, AILIZA_DATABASE_URL und AILIZA_EXTERNAL_LLM_ENABLED lassen
+    # sich deshalb NICHT ueber die .env aendern. Die externe KI wird bewusst
+    # hier festgehalten, damit sie nicht versehentlich durch einen in die
+    # .env geratenen Eintrag aktiviert wird.
+    #
+    # required: false -- ohne .env startet AILIZA weiterhin (dann allerdings
+    # ohne Anmeldung, siehe Startmeldung im Protokoll).
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ailiza_data:/data
     restart: unless-stopped
