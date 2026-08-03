@@ -99,6 +99,7 @@ def test_xlsx_empty_workbook_yields_no_sections():
 
 
 def test_xlsx_corrupted_content_reports_extraction_error_not_crash():
+    pytest.importorskip("openpyxl")
     result = extract_structured(".xlsx", b"not a real xlsx file")
     assert any(w.startswith("extraction_error:") for w in result.warnings)
     assert result.sections == []
@@ -122,6 +123,7 @@ def test_docx_heading_detected_as_section_title():
 
 
 def test_docx_corrupted_content_reports_extraction_error_not_crash():
+    pytest.importorskip("docx")
     result = extract_structured(".docx", b"definitely not a docx file")
     assert any(w.startswith("extraction_error:") for w in result.warnings)
     assert result.sections == []

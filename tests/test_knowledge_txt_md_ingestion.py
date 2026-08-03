@@ -83,6 +83,7 @@ def test_docx_extension_no_longer_rejected_for_unsupported_type():
     # Eine strukturell ungueltige .docx-Datei (kein echtes ZIP/OOXML) darf
     # trotzdem nicht mit dem alten "Dateityp nicht unterstuetzt"-Fehler
     # abgelehnt werden -- die Extraktion selbst faengt das intern ab.
+    pytest.importorskip("docx")  # ohne python-docx faellt der Upload bewusst fail-closed
     _make_user()
     result = ingest_txt_or_markdown_source(
         tenant_id="default", uploaded_by="alice", filename="dokument.docx",
