@@ -25,22 +25,50 @@ function DiagBlock({ err }) {
 
 function ScanResult({ scan }) {
   if (!scan) return null
+
+  // Antwort von POST /knowledge/upload: entweder gespeichert (stored: true)
+  // oder nur geprüft (stored: false) — je nach Login-Status und Chat-Einstellung.
+  if (scan.stored === true) {
+    const isApproved = scan.status === "approved"
+    const isPending = scan.status === "pending_review"
+    const isBlocked = scan.status === "blocked"
+    const ok = !isBlocked
+    return (
+      <div className={`chat-result ${ok ? "chat-result--ok" : "chat-result--error"}`} style={{ marginTop: "0.75rem" }}>
+        <div className="chat-result-icon">{isBlocked ? "✗" : isPending ? "⏳" : "✓"}</div>
+        <div style={{ width: "100%" }}>
+          <p className="chat-result-label">
+            {isApproved && "Gespeichert — sofort durchsuchbar"}
+            {isPending && "Gespeichert — wird noch geprüft"}
+            {isBlocked && "Nicht gespeichert — blockiert"}
+          </p>
+          <p className="chat-result-text">{scan.message}</p>
+          {scan.duplicate && <p className="chat-result-notice">Hinweis: Diese Datei war bereits gespeichert (Duplikat erkannt).</p>}
+          <table className="diag-table" style={{ marginTop: "0.5rem" }}>
+            <tbody>
+              <tr><td>Status</td><td><code>{scan.status}</code></td></tr>
+              {typeof scan.chunks_created === "number" && (
+                <tr><td>Abschnitte gespeichert</td><td><code>{scan.chunks_created}</code></td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  // stored === false (oder unbekannt): nur geprüft, nicht dauerhaft gespeichert.
   const ok = scan.allowed
   return (
     <div className={`chat-result ${ok ? "chat-result--ok" : "chat-result--error"}`} style={{ marginTop: "0.75rem" }}>
       <div className="chat-result-icon">{ok ? "✓" : "✗"}</div>
       <div style={{ width: "100%" }}>
-        <p className="chat-result-label">Datei-Scan: {ok ? "Zugelassen" : "Blockiert"}</p>
-        <p className="chat-result-text">{scan.reason}</p>
+        <p className="chat-result-label">Datei geprüft — nicht gespeichert</p>
+        <p className="chat-result-text">{scan.message || scan.reason}</p>
         <table className="diag-table" style={{ marginTop: "0.5rem" }}>
           <tbody>
-            <tr><td>Typ</td><td><code>{scan.file_type}</code></td></tr>
-            <tr><td>Größe</td><td><code>{(scan.size_bytes / 1024).toFixed(1)} KB</code></td></tr>
-            <tr><td>Risikoklasse</td><td><code>{scan.highest_risk_class}</code></td></tr>
-            <tr><td>Prompt-Injection</td><td><code>{scan.injection_detected ? "⚠ erkannt" : "keine"}</code></td></tr>
-            {scan.data_classes?.length > 0 && (
-              <tr><td>Datenklassen</td><td><code>{scan.data_classes.join(", ")}</code></td></tr>
-            )}
+            {scan.file_type && <tr><td>Typ</td><td><code>{scan.file_type}</code></td></tr>}
+            {scan.status && <tr><td>Status</td><td><code>{scan.status}</code></td></tr>}
           </tbody>
         </table>
       </div>
@@ -207,7 +235,7 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
     const form = new FormData()
     form.append("file", file)
     try {
-      const resp = await fetch(`${API_BASE}/documents/scan`, {
+      const resp = await fetch(`${API_BASE}/knowledge/upload`, {
         method: "POST",
         credentials: "include",
         body: form,
@@ -304,8 +332,12 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
 
       {/* ── Datei-Upload ── */}
       <div className="upload-section">
-        <p className="upload-label">Datei analysieren</p>
-        <p className="upload-hint">Erlaubt: PDF, TXT, MD, HTML, PNG, JPG, GIF, WebP, CSV, JSON, XML</p>
+        <p className="upload-label">Datei hochladen</p>
+        <p className="upload-hint">
+          Erlaubt: PDF, TXT, MD, HTML, PNG, JPG, GIF, WebP, CSV, JSON, XML. Jede Datei wird zuerst geprüft;
+          ob sie dauerhaft gespeichert wird, hängt automatisch von Ihrem Login-Status und den
+          Chat-Einstellungen ab.
+        </p>
         <label className={`upload-btn${uploadLoading ? " upload-btn--loading" : ""}`}>
           <input
             ref={fileInputRef}
@@ -315,7 +347,7 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
             disabled={uploadLoading}
             hidden
           />
-          {uploadLoading ? <><span className="agent-chat-spinner" aria-hidden="true" /> Wird geprüft …</> : "Datei hochladen & scannen"}
+          {uploadLoading ? <><span className="agent-chat-spinner" aria-hidden="true" /> Wird hochgeladen und geprüft …</> : "Datei hochladen & prüfen"}
         </label>
         <ScanResult scan={scanResult} />
         {uploadError && <DiagBlock err={uploadError} />}

@@ -9,7 +9,7 @@ import os
 import re
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -69,6 +69,13 @@ try:
         build_knowledge_context, sanitize_answer_citations,
         build_sources_list, answer_mode_user_text,
     )
+    from .knowledge.ingestion import (
+        ingest_document_source, KnowledgeIngestionError, allowed_knowledge_extensions,
+    )
+    from .database import (
+        get_chat_document_retention, set_chat_document_retention,
+        ChatRetentionValidationError, DEFAULT_DOCUMENT_RETENTION_DAYS,
+    )
 except ImportError:
     from apps.backend.agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from apps.backend.database import (
@@ -110,6 +117,13 @@ except ImportError:
     from apps.backend.knowledge.rag_context import (
         build_knowledge_context, sanitize_answer_citations,
         build_sources_list, answer_mode_user_text,
+    )
+    from apps.backend.knowledge.ingestion import (
+        ingest_document_source, KnowledgeIngestionError, allowed_knowledge_extensions,
+    )
+    from apps.backend.database import (
+        get_chat_document_retention, set_chat_document_retention,
+        ChatRetentionValidationError, DEFAULT_DOCUMENT_RETENTION_DAYS,
     )
 
 
@@ -2358,6 +2372,104 @@ async def documents_scan(request: Request, file: UploadFile = File(...)) -> dict
         "needs_review": scan.classification.needs_review,
         "injection_detected": scan.injection_detected,
         "injection_pattern_count": scan.injection_pattern_count,
+    }
+
+
+@app.post("/knowledge/upload")
+@_limiter.limit("10/minute")
+async def knowledge_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    chat_id: str | None = Form(None),
+    title: str | None = Form(None),
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    """
+    Dauerhafter Wissens-Upload -- verbindet den bestehenden Scan-Pfad mit
+    der durchsuchbaren Wissensdatenbank (bisher tat /documents/scan nur den
+    Scan-Teil, ohne je etwas zu speichern).
+
+    Kein Login-Zwang zum Aufrufen: ohne Konto wird nur gescannt (wie bisher),
+    NICHTS wird gespeichert. Erst mit Konto wird tatsaechlich gespeichert --
+    gesteuert durch die Chat-Aufbewahrungs-Einstellung (Standard: behalten,
+    14 Tage). Kein zweiter Button/Endpunkt fuer "nur speichern" -- die
+    Entscheidung faellt automatisch anhand von Login-Status und Einstellung
+    (Karo-Entscheidung 2026-08-03).
+    """
+    content = await file.read()
+    filename = file.filename or ""
+
+    if token is None:
+        scan = scan_document(filename, content)
+        write_audit_entry(
+            action="knowledge.upload.scan_only",
+            metadata={"file_type": scan.file_type, "decision": scan.decision,
+                      "size_bytes": scan.size_bytes},
+        )
+        return {
+            "stored": False,
+            "status": scan.decision,
+            "allowed": scan.allowed,
+            "file_type": scan.file_type,
+            "message": (
+                "Die Datei wurde nur geprueft, nicht gespeichert. Bitte "
+                "einloggen, um Dokumente dauerhaft in der Wissensdatenbank "
+                "abzulegen."
+            ),
+        }
+
+    tenant_id = token.tenant_id
+    retention = (
+        get_chat_document_retention(chat_id=chat_id, tenant_id=tenant_id, user_id=token.user_id)
+        if chat_id else {"keep_documents": True, "retention_days": DEFAULT_DOCUMENT_RETENTION_DAYS}
+    )
+
+    if not retention["keep_documents"]:
+        scan = scan_document(filename, content)
+        write_audit_entry(
+            action="knowledge.upload.scan_only",
+            tenant_id=tenant_id,
+            metadata={"file_type": scan.file_type, "decision": scan.decision,
+                      "size_bytes": scan.size_bytes, "chat_id": chat_id},
+        )
+        return {
+            "stored": False,
+            "status": scan.decision,
+            "allowed": scan.allowed,
+            "file_type": scan.file_type,
+            "message": (
+                "In diesem Chat werden Dokumente laut Einstellung nicht "
+                "aufbewahrt. Die Datei wurde nur geprueft, nicht gespeichert."
+            ),
+        }
+
+    expires_at = datetime.now(timezone.utc) + timedelta(days=retention["retention_days"])
+
+    try:
+        result = ingest_document_source(
+            tenant_id=tenant_id, uploaded_by=token.user_id,
+            filename=filename, content=content, title=title,
+            expires_at=expires_at,
+        )
+    except KnowledgeIngestionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    write_audit_entry(
+        action="knowledge.upload.stored",
+        tenant_id=tenant_id,
+        metadata={
+            "status": result["status"], "chunks_created": result["chunks_created"],
+            "duplicate": result["duplicate"], "chat_id": chat_id,
+        },
+    )
+
+    return {
+        "stored": True,
+        "status": result["status"],
+        "message": result["message"],
+        "chunks_created": result["chunks_created"],
+        "duplicate": result["duplicate"],
+        "source_id": result["source"]["id"],
     }
 
 

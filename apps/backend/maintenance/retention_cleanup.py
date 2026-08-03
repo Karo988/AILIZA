@@ -29,7 +29,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,43 @@ def run_cleanup() -> dict[str, Any]:
     results: dict[str, int] = {}
 
     with engine.begin() as conn:
+        # ── Schritt 0: abgelaufene Wissensquellen (Dokument-Upload-Retention,
+        # Karo-Entscheidung 2026-08-03) -- Kind-Tabellen zuerst wegen FK auf
+        # source_id, dann die Quelle selbst.
+        try:
+            expired_source_ids = [
+                row[0] for row in conn.execute(
+                    text(
+                        "SELECT id FROM knowledge_sources "
+                        "WHERE expires_at IS NOT NULL AND expires_at < :now"
+                    ),
+                    {"now": now_iso},
+                ).all()
+            ]
+            if expired_source_ids:
+                conn.execute(
+                    text("DELETE FROM knowledge_chunks WHERE source_id IN :ids").bindparams(
+                        bindparam("ids", expand=True)
+                    ),
+                    {"ids": expired_source_ids},
+                )
+                conn.execute(
+                    text("DELETE FROM knowledge_source_permissions WHERE source_id IN :ids").bindparams(
+                        bindparam("ids", expand=True)
+                    ),
+                    {"ids": expired_source_ids},
+                )
+                conn.execute(
+                    text("DELETE FROM knowledge_sources WHERE id IN :ids").bindparams(
+                        bindparam("ids", expand=True)
+                    ),
+                    {"ids": expired_source_ids},
+                )
+            results["knowledge_sources__expired"] = len(expired_source_ids)
+        except Exception as exc:
+            logger.warning("expires_at-Cleanup fuer knowledge_sources fehlgeschlagen: %s", exc)
+            results["knowledge_sources__expired"] = -1
+
         # ── Schritt 1: expires_at-basierte Loeschung ─────────────────────
         for table in ("security_logs", "performance_logs", "cost_logs", "reflection_facts"):
             try:

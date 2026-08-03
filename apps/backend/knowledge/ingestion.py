@@ -189,7 +189,8 @@ def _split_structured_sections(
 
 def ingest_document_source(*, tenant_id: str, uploaded_by: str,
                             filename: str, content: bytes,
-                            title: str | None = None) -> dict[str, Any]:
+                            title: str | None = None,
+                            expires_at: Any | None = None) -> dict[str, Any]:
     """Sicherer Ingestion-Kern -- TXT/MD (reiner Text) sowie PDF/DOCX/XLSX/
     CSV (strukturierte Extraktion) und Bilder (nur bei lokal verfuegbarem
     OCR).
@@ -201,6 +202,11 @@ def ingest_document_source(*, tenant_id: str, uploaded_by: str,
     werden gespeichert, aber nicht aktiv freigegeben (status=blocked/
     pending_review, keine Chunks). Identischer content_hash im selben Tenant
     liefert die bestehende Quelle zurueck statt eines neuen Eintrags.
+
+    expires_at: optionales Ablaufdatum (datetime), aus der Chat-
+    Aufbewahrungs-Einstellung berechnet (siehe database.
+    get_chat_document_retention()) -- wird unveraendert an
+    create_knowledge_source() durchgereicht, keine eigene Logik hier.
     """
     if not tenant_id:
         raise KnowledgeIngestionError("Tenant fehlt.")
@@ -296,6 +302,7 @@ def ingest_document_source(*, tenant_id: str, uploaded_by: str,
         content_hash=content_hash,
         mime_type=_MIME_TYPES[ext],
         status=source_status,
+        expires_at=expires_at,
     )
 
     set_knowledge_source_permission(
