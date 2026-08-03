@@ -87,15 +87,42 @@ REM  aktuelle Nutzer, SYSTEM und die Administratorengruppe.
 REM  Die Gruppen werden ueber ihre bekannten Sicherheitskennungen (SID)
 REM  angesprochen, damit es auch auf nicht-deutschen Windows-Fassungen
 REM  funktioniert: S-1-5-18 = SYSTEM, S-1-5-32-544 = Administratoren.
-icacls "%ZIEL%" /inheritance:r >nul 2>&1
-icacls "%ZIEL%" /grant:r "%USERNAME%":(OI)(CI)F >nul 2>&1
-icacls "%ZIEL%" /grant:r *S-1-5-18:(OI)(CI)F >nul 2>&1
-icacls "%ZIEL%" /grant:r *S-1-5-32-544:(OI)(CI)F >nul 2>&1
-if errorlevel 1 (
-    echo  HINWEIS: Die Zugriffsrechte des Sicherungsordners konnten nicht
-    echo  eingeschraenkt werden. Die Sicherung wird trotzdem erstellt, ist
-    echo  aber moeglicherweise fuer andere Konten auf diesem Rechner lesbar.
+REM  Reihenfolge ist wesentlich: die Rechte werden gesetzt, BEVOR die erste
+REM  sensible Datei entsteht. Umgekehrt gaebe es ein Zeitfenster, in dem
+REM  das Paket fuer jedes Konto lesbar waere.
+set "ACLFEHLER="
+icacls "%ZIEL%" /inheritance:r >nul 2>&1 || set "ACLFEHLER=1"
+icacls "%ZIEL%" /grant:r "%USERNAME%":(OI)(CI)F >nul 2>&1 || set "ACLFEHLER=1"
+icacls "%ZIEL%" /grant:r *S-1-5-18:(OI)(CI)F >nul 2>&1 || set "ACLFEHLER=1"
+icacls "%ZIEL%" /grant:r *S-1-5-32-544:(OI)(CI)F >nul 2>&1 || set "ACLFEHLER=1"
+
+REM  Ergebnis nachpruefen statt nur setzen. Zwei Dinge muessen stimmen:
+REM  keine Vererbung mehr aktiv, und kein Zugriff fuer "Jeder"
+REM  (S-1-1-0) oder "Authentifizierte Benutzer" (S-1-5-11).
+icacls "%ZIEL%" 2>nul | findstr /C:"(I)" >nul && set "ACLFEHLER=1"
+icacls "%ZIEL%" 2>nul | findstr /R /C:"Everyone" /C:"Jeder" /C:"S-1-1-0" /C:"S-1-5-11" >nul && set "ACLFEHLER=1"
+
+if defined ACLFEHLER (
     echo.
+    echo  ================================================================
+    echo   WARNUNG: Die Zugriffsrechte des Sicherungsordners konnten nicht
+    echo   zuverlaessig eingeschraenkt werden.
+    echo.
+    echo   Der Ordner  %ZIEL%
+    echo   ist moeglicherweise fuer andere Konten auf diesem Rechner
+    echo   lesbar. Die Sicherung enthaelt personenbezogene Daten UND den
+    echo   Verschluesselungsschluessel.
+    echo.
+    echo   Aktuelle Rechte:
+    icacls "%ZIEL%"
+    echo  ================================================================
+    echo.
+    choice /C JN /N /M "  Trotzdem fortfahren? [J/N] "
+    if errorlevel 2 (
+        echo  Abgebrochen. Keine Sicherung erstellt.
+        pause
+        exit /b 1
+    )
 )
 
 echo  Ziel: %ZIEL%

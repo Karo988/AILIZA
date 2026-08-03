@@ -40,44 +40,72 @@ Aufrufe
 Verschluesselung des Sicherungspakets
 -------------------------------------
 Verfahren: **AES-256-GCM** (authentifizierte Verschluesselung, AEAD).
-  * Schluessel: 32 Byte, abgeleitet mit **scrypt** (n=2^15, r=8, p=1) aus dem
-    Passwort und einem je Sicherung neu gezogenen 16-Byte-Salt
-    (`os.urandom`). Die Parameter sind bewusst kostspielig (~100 ms, ~32 MB),
-    damit ein schwaches Passwort nicht schnell durchprobiert werden kann.
-  * Nonce: 12 Byte, je Sicherung neu aus `os.urandom`. Salt und Nonce werden
-    im Klartext vorangestellt -- das ist beabsichtigt und unbedenklich, beide
-    sind keine Geheimnisse.
-  * Zusatzdaten (AAD): die Dateikennung, damit ein abgeschnittenes oder
-    umetikettiertes Paket auffaellt.
+  * Schluessel: 32 Byte, abgeleitet mit **scrypt** aus dem Passwort und
+    einem je Sicherung neu gezogenen 16-Byte-Salt (`os.urandom`).
+    Vorgabe beim Erzeugen: n=2^15, r=8, p=1 (~100 ms, ~33 MB) -- bewusst
+    kostspielig, damit ein schwaches Passwort nicht schnell durchprobiert
+    werden kann.
+  * Nonce: 12 Byte, je Sicherung neu aus `os.urandom`.
+  * Zusatzdaten (AAD): der **vollstaendige Paketkopf** -- Dateikennung,
+    Kopflaenge, Formatversion, KDF-Kennung, KDF-Parameter (n, r, p) und
+    Salt. Damit ist jede Aenderung an diesen Feldern erkennbar. Waeren die
+    Parameter nicht authentifiziert, koennte ein Angreifer sie durch
+    schwaechere ersetzen.
+
+Paketaufbau:
+
+    "AILIZABK2" | Kopflaenge (2 Byte) | Kopf (JSON) | Nonce (12) | Chiffrat
+    |________________________ AAD ________________________|
+
+Schranken beim Lesen: n, r und p werden **vor** der Schluesselableitung
+gegen feste Grenzen geprueft (n = 2^14..2^17 und Zweierpotenz, r = 1..32,
+p = 1..4, Speicherbedarf 128*n*r hoechstens 256 MiB). Ohne diese Pruefung
+koennte ein praepariertes Paket allein durch das Oeffnen beliebig viel
+Rechenzeit und Arbeitsspeicher binden.
 
 Wichtig -- Echtheit kommt aus GCM, nicht aus der Pruefsummendatei:
-Die begleitende `.sha256`-Datei erkennt nur zufaellige Beschaedigung. Ein
-Angreifer koennte Paket und Pruefsumme gemeinsam austauschen. Die
-eigentliche Manipulationserkennung leistet das Authentifizierungsmerkmal
-von AES-GCM: ohne das Passwort laesst sich kein Paket erzeugen, das sich
-entschluesseln laesst. Ein veraendertes Byte fuehrt zum Abbruch -- auch
-wenn keine `.sha256`-Datei vorhanden ist.
+Die begleitende `.sha256`-Datei erkennt nur zufaellige Beschaedigung und
+Uebertragungsfehler. Ein Angreifer koennte Paket und Pruefsumme gemeinsam
+austauschen. Die eigentliche Manipulationserkennung leistet das
+Authentifizierungsmerkmal von AES-GCM: ohne das Passwort laesst sich kein
+Paket erzeugen, das sich entschluesseln laesst.
+
+Arbeitsspeicher: Das Paket wird als Ganzes im Speicher ver- und
+entschluesselt -- AES-GCM arbeitet in dieser Form nicht stromweise. Der
+Bedarf betraegt grob das Zwei- bis Dreifache der Datenbankgroesse. Deshalb
+gilt eine Obergrenze von 1 GiB je Paket; darueber bricht das Skript mit
+einer verstaendlichen Meldung ab, statt den Rechner in den Speichermangel
+zu treiben.
 
 Umgang mit Geheimnissen
 -----------------------
-Das Passwort wird interaktiv abgefragt oder ueber die Umgebungsvariable
-AILIZA_BACKUP_PASSWORD uebergeben -- **niemals als Befehlszeilenargument**.
-Argumente sind auf demselben Rechner in der Prozessliste sichtbar und landen
-im Verlauf der Kommandozeile.
+Das Sicherungspasswort wird **ausschliesslich ueber die Standardeingabe**
+entgegengenommen -- am Terminal verdeckt (getpass), sonst als Zeile von
+stdin. Bewusst NICHT als Umgebungsvariable: die wird an Kindprozesse
+vererbt, erscheint bei `docker run -e` dauerhaft in `docker inspect` und
+ist auf manchen Systemen ueber /proc lesbar. Bewusst NICHT als
+Befehlszeilenargument: das steht in der Prozessliste.
 
-Im Containerbetrieb (backup-local.cmd) wird das Passwort ueber die
-Standardeingabe erfragt und **nicht** per `docker run -e` gesetzt: Werte aus
-`-e` erscheinen dauerhaft in `docker inspect`. Der AILIZA_SECRET_KEY gelangt
-ausschliesslich als eingebundene Datei in den Container, nie als
-Umgebungsvariable.
+Der AILIZA_SECRET_KEY gelangt ausschliesslich als eingebundene Datei in den
+Container, nie als Umgebungsvariable.
 
 Ausgaben enthalten niemals Chattitel, Chatinhalte, den AILIZA_SECRET_KEY
 oder das Sicherungspasswort. Die Abnahme meldet nur, ob die Entschluesselung
-gelungen ist -- nicht, was dabei herauskam.
+gelungen ist -- nicht, was dabei herauskam. Fremde Prozessausgaben werden
+nicht durchgereicht, weil eine Stapelverfolgung Bruchstuecke enthalten
+koennte.
+
+Exitcodes
+---------
+    0   Erfolg
+    1   Abbruch (falsches Passwort, Manipulation, fehlende Voraussetzung)
+    2   Abnahme unvollstaendig (z. B. kein Schluessel im Paket)
+    130 durch Nutzerin abgebrochen
 """
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
 import hashlib
 import json
@@ -92,22 +120,55 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ARCHIVE_SUFFIX = ".ailiza-backup"
-FORMAT_VERSION = 1
-_MAGIC = b"AILIZABK1"
-_SALT_LEN = 16
+
+# Formatversion 2. Version 1 authentifizierte nur die Dateikennung und hatte
+# die KDF-Parameter fest im Code -- ein Paket konnte damit nicht aussagen,
+# womit es erzeugt wurde, und der Kopf war nicht gegen Veraenderung
+# geschuetzt. Version 2 legt alle Ableitungsparameter in einen Kopf, der
+# vollstaendig als AAD in die AES-GCM-Authentifizierung eingeht.
+FORMAT_VERSION = 2
+_MAGIC = b"AILIZABK2"
+_LEN_BYTES = 2          # Laenge des Kopfes, big-endian
 _NONCE_LEN = 12
-# scrypt-Parameter: bewusst kostspielig, damit ein schwaches Passwort nicht
-# trivial durchprobiert werden kann. n=2**15 braucht ~100 ms und ~32 MB.
+_SALT_LEN = 16
+_MAX_HEADER = 4096      # Obergrenze, damit ein manipulierter Wert nicht
+                        # zu einer riesigen Speicheranforderung fuehrt
+
+# scrypt-Vorgaben beim Erzeugen: bewusst kostspielig (~100 ms, ~33 MB),
+# damit ein schwaches Passwort nicht schnell durchprobiert werden kann.
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 15, 8, 1
+
+# Zulaessiger Bereich beim LESEN. Ohne diese Schranken koennte ein
+# praepariertes Paket ueber n/r/p beliebig viel Rechenzeit und
+# Arbeitsspeicher anfordern (scrypt braucht rund 128*n*r Byte) -- ein
+# Denial-of-Service allein durch das Oeffnen einer Datei.
+_KDF_GRENZEN = {
+    "n": (2 ** 14, 2 ** 17),
+    "r": (1, 32),
+    "p": (1, 4),
+}
+_MAX_KDF_SPEICHER = 256 * 1024 * 1024   # 256 MiB
+
+# Groessengrenzen. Das Paket wird als Ganzes im Arbeitsspeicher
+# ver- und entschluesselt (AESGCM arbeitet nicht stromweise). Der Bedarf
+# betraegt grob das Zwei- bis Dreifache der Datenbankgroesse. Die Grenze
+# schuetzt davor, dass eine sehr grosse Datenbank oder ein praepariertes
+# Paket den Rechner in den Speichermangel treibt.
+_MAX_PAKET_BYTES = 1024 * 1024 * 1024        # 1 GiB
+_MAX_EINTRAG_BYTES = 1024 * 1024 * 1024      # je Eintrag im Archiv
+_MAX_EINTRAEGE = 64
+
+# Exitcodes -- damit Aufrufer die Ursache unterscheiden koennen, ohne
+# Meldungstexte auswerten zu muessen.
+EXIT_OK = 0
+EXIT_FEHLER = 1          # allgemeiner Abbruch
+EXIT_UNVOLLSTAENDIG = 2  # Abnahme nicht abschliessbar (z. B. kein Schluessel im Paket)
+EXIT_ABGEBROCHEN = 130
 
 
 class BackupError(RuntimeError):
     """Verstaendlicher Abbruchgrund -- wird ohne Stapelverfolgung ausgegeben."""
 
-
-# ---------------------------------------------------------------------------
-# Verschluesselung
-# ---------------------------------------------------------------------------
 
 def _nur_eigentuemer(pfad: Path) -> None:
     """Beschraenkt die Dateirechte auf die Eigentuemerin (0600).
@@ -119,9 +180,8 @@ def _nur_eigentuemer(pfad: Path) -> None:
     lesbar.
 
     Unter Windows hat chmod nur begrenzte Wirkung; NTFS-Rechte werden davon
-    nicht veraendert. Der Aufruf schadet dort nicht, ersetzt aber keine
-    ACL-Haertung -- deshalb liegen die Sicherungen unter
-    %LOCALAPPDATA%, das bereits kontogebunden ist.
+    nicht veraendert. Dort setzt backup-local.cmd die Rechte des
+    Zielordners per icacls, BEVOR die erste sensible Datei entsteht.
     """
     try:
         os.chmod(pfad, 0o600)
@@ -142,55 +202,193 @@ def _require_crypto():
     return AESGCM, Scrypt
 
 
-def _derive_key(password: str, salt: bytes) -> bytes:
+def _pruefe_kdf_parameter(n: int, r: int, p: int) -> None:
+    """Begrenzt die aus dem Paket gelesenen Ableitungsparameter.
+
+    Ohne diese Pruefung koennte ein praepariertes Paket ueber grosse Werte
+    beliebig viel Rechenzeit und Arbeitsspeicher anfordern -- ein
+    Denial-of-Service allein durch das Oeffnen einer Datei. Die Pruefung
+    laeuft VOR der Schluesselableitung.
+    """
+    for name, wert in (("n", n), ("r", r), ("p", p)):
+        if not isinstance(wert, int) or isinstance(wert, bool):
+            raise BackupError(f"Ungueltiger Ableitungsparameter {name}.")
+        unten, oben = _KDF_GRENZEN[name]
+        if not unten <= wert <= oben:
+            raise BackupError(
+                f"Ableitungsparameter {name}={wert} liegt ausserhalb des "
+                f"zulaessigen Bereichs ({unten}..{oben}). Paket abgelehnt."
+            )
+    if n & (n - 1) != 0:
+        raise BackupError("Ableitungsparameter n muss eine Zweierpotenz sein.")
+    bedarf = 128 * n * r
+    if bedarf > _MAX_KDF_SPEICHER:
+        raise BackupError(
+            f"Die Ableitungsparameter wuerden rund {bedarf // (1024*1024)} MiB "
+            "Arbeitsspeicher anfordern. Paket abgelehnt."
+        )
+
+
+def _derive_key(password: str, salt: bytes, n: int, r: int, p: int) -> bytes:
+    # Schranken ZUERST -- vor jedem Rechenaufwand. Liefe die Pruefung
+    # spaeter, waere der Denial-of-Service bereits eingetreten.
+    _pruefe_kdf_parameter(n, r, p)
     _, Scrypt = _require_crypto()
-    return Scrypt(salt=salt, length=32, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P).derive(
+    return Scrypt(salt=salt, length=32, n=n, r=r, p=p).derive(
         password.encode("utf-8")
     )
 
 
+def _baue_kopf(salt: bytes, n: int, r: int, p: int) -> bytes:
+    """Erzeugt den Paketkopf. Er geht vollstaendig als AAD in die
+    Authentifizierung ein -- jede Aenderung an Version, Verfahren,
+    Parametern oder Salt laesst das Entschluesseln fehlschlagen."""
+    kopf = {
+        "v": FORMAT_VERSION,
+        "kdf": "scrypt",
+        "n": n, "r": r, "p": p,
+        "salt": base64.b64encode(salt).decode("ascii"),
+    }
+    return json.dumps(kopf, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 def _encrypt_to_file(plaintext: bytes, password: str, target: Path) -> None:
+    """Verschluesselt und schreibt atomar.
+
+    Die temporaere Datei entsteht im ZIELVERZEICHNIS (nicht in /tmp), damit
+    das abschliessende Umbenennen auf demselben Dateisystem stattfindet und
+    damit atomar ist. Vor dem Umbenennen wird fsync ausgefuehrt: ohne das
+    koennte nach einem Stromausfall ein Paket existieren, dessen Inhalt noch
+    im Schreibpuffer stand. Ein unvollstaendiges Paket darf nie wie ein
+    gueltiges aussehen.
+    """
     AESGCM, _ = _require_crypto()
+    if len(plaintext) > _MAX_PAKET_BYTES:
+        raise BackupError(
+            f"Die Daten sind mit {len(plaintext) // (1024*1024)} MiB groesser "
+            f"als die Grenze von {_MAX_PAKET_BYTES // (1024*1024)} MiB. "
+            "Das Paket wird als Ganzes im Arbeitsspeicher verschluesselt; "
+            "eine hoehere Grenze braeuchte entsprechend mehr RAM."
+        )
     salt = os.urandom(_SALT_LEN)
     nonce = os.urandom(_NONCE_LEN)
-    ct = AESGCM(_derive_key(password, salt)).encrypt(nonce, plaintext, _MAGIC)
-    tmp = target.with_suffix(target.suffix + ".unfertig")
-    tmp.write_bytes(_MAGIC + salt + nonce + ct)
-    _nur_eigentuemer(tmp)
-    tmp.replace(target)  # atomar: entweder ganz oder gar nicht
+    kopf = _baue_kopf(salt, _SCRYPT_N, _SCRYPT_R, _SCRYPT_P)
+    aad = _MAGIC + len(kopf).to_bytes(_LEN_BYTES, "big") + kopf
+    ct = AESGCM(_derive_key(password, salt, _SCRYPT_N, _SCRYPT_R, _SCRYPT_P)).encrypt(
+        nonce, plaintext, aad
+    )
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Kollisionsfreier Name: verhindert, dass zwei gleichzeitig laufende
+    # Sicherungen dieselbe temporaere Datei beschreiben.
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=".unfertig-", suffix=ARCHIVE_SUFFIX
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(aad)
+            fh.write(nonce)
+            fh.write(ct)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _nur_eigentuemer(tmp)
+        os.replace(tmp, target)      # atomar
+        _sync_verzeichnis(target.parent)
+    except BaseException:
+        tmp.unlink(missing_ok=True)  # auch bei Abbruch nichts liegen lassen
+        raise
+
+
+def _sync_verzeichnis(ordner: Path) -> None:
+    """Sorgt dafuer, dass der Verzeichniseintrag selbst dauerhaft ist."""
+    try:
+        fd = os.open(str(ordner), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except (OSError, AttributeError):
+        pass  # unter Windows nicht verfuegbar -- dort ist replace bereits atomar
 
 
 def _decrypt_file(source: Path, password: str) -> bytes:
     AESGCM, _ = _require_crypto()
+    groesse = source.stat().st_size
+    if groesse > _MAX_PAKET_BYTES + _MAX_HEADER + 1024:
+        raise BackupError(
+            f"Das Paket ist mit {groesse // (1024*1024)} MiB groesser als die "
+            "zulaessige Grenze. Abgelehnt, bevor etwas eingelesen wird."
+        )
     blob = source.read_bytes()
     if not blob.startswith(_MAGIC):
         raise BackupError(
-            f"{source.name} ist kein AILIZA-Sicherungspaket (Kennung fehlt)."
+            f"{source.name} ist kein AILIZA-Sicherungspaket (Kennung fehlt "
+            "oder stammt aus einer aelteren Formatversion)."
         )
     off = len(_MAGIC)
-    salt = blob[off:off + _SALT_LEN]
-    nonce = blob[off + _SALT_LEN:off + _SALT_LEN + _NONCE_LEN]
-    ct = blob[off + _SALT_LEN + _NONCE_LEN:]
+    if len(blob) < off + _LEN_BYTES:
+        raise BackupError("Paket ist abgeschnitten (Kopf unvollstaendig).")
+    kopf_len = int.from_bytes(blob[off:off + _LEN_BYTES], "big")
+    if not 0 < kopf_len <= _MAX_HEADER:
+        raise BackupError("Paketkopf hat eine unzulaessige Laenge.")
+    off += _LEN_BYTES
+    kopf_bytes = blob[off:off + kopf_len]
+    if len(kopf_bytes) != kopf_len:
+        raise BackupError("Paket ist abgeschnitten (Kopf unvollstaendig).")
+    aad = _MAGIC + kopf_len.to_bytes(_LEN_BYTES, "big") + kopf_bytes
+    off += kopf_len
+
     try:
-        return AESGCM(_derive_key(password, salt)).decrypt(nonce, ct, _MAGIC)
+        kopf = json.loads(kopf_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise BackupError("Paketkopf ist nicht lesbar.") from exc
+    if not isinstance(kopf, dict):
+        raise BackupError("Paketkopf hat ein unerwartetes Format.")
+    if kopf.get("v") != FORMAT_VERSION:
+        raise BackupError(
+            f"Nicht unterstuetzte Formatversion: {kopf.get('v')!r}. "
+            f"Erwartet: {FORMAT_VERSION}."
+        )
+    if kopf.get("kdf") != "scrypt":
+        raise BackupError(f"Unbekanntes Ableitungsverfahren: {kopf.get('kdf')!r}.")
+    try:
+        salt = base64.b64decode(kopf["salt"], validate=True)
+    except (KeyError, ValueError) as exc:
+        raise BackupError("Salt im Paketkopf fehlt oder ist ungueltig.") from exc
+    if len(salt) != _SALT_LEN:
+        raise BackupError("Salt im Paketkopf hat eine unzulaessige Laenge.")
+
+    # Schranken VOR der Ableitung -- sonst waere schon das Oeffnen angreifbar.
+    _pruefe_kdf_parameter(kopf.get("n"), kopf.get("r"), kopf.get("p"))
+
+    nonce = blob[off:off + _NONCE_LEN]
+    ct = blob[off + _NONCE_LEN:]
+    if len(nonce) != _NONCE_LEN or not ct:
+        raise BackupError("Paket ist abgeschnitten (Daten fehlen).")
+
+    schluessel = _derive_key(password, salt, kopf["n"], kopf["r"], kopf["p"])
+    try:
+        return AESGCM(schluessel).decrypt(nonce, ct, aad)
     except Exception as exc:
         # AES-GCM prueft beim Entschluesseln zugleich die Echtheit (AEAD).
-        # Ein Fehlschlag bedeutet deshalb: falsches Passwort ODER das Paket
-        # wurde veraendert. Beides fuehrt zum Abbruch -- welcher der beiden
-        # Faelle vorliegt, ist absichtlich nicht unterscheidbar, sonst waere
-        # das ein Hinweis fuer Angreifer.
+        # Der Kopf geht als AAD mit ein: eine Aenderung an Version,
+        # Verfahren, Parametern oder Salt faellt hier ebenso auf wie eine
+        # Aenderung am Inhalt.
+        #
+        # Ein Fehlschlag bedeutet: falsches Passwort ODER Manipulation.
+        # Welcher der beiden Faelle vorliegt, wird absichtlich nicht
+        # unterschieden -- das waere ein Hinweis fuer Angreifer.
         raise BackupError(
             "Paket konnte nicht geoeffnet werden.\n"
-            "Entweder ist das Passwort falsch, oder der Inhalt wurde "
+            "Entweder ist das Passwort falsch, oder das Paket wurde "
             "veraendert. Die Echtheitspruefung von AES-256-GCM hat "
-            "angeschlagen -- das erkennt auch eine Manipulation, bei der "
-            "Paket und Pruefsummendatei gemeinsam ausgetauscht wurden."
+            "angeschlagen -- sie umfasst Inhalt UND Kopf (Formatversion, "
+            "Verfahren, Ableitungsparameter, Salt) und erkennt auch eine "
+            "Manipulation, bei der Paket und Pruefsummendatei gemeinsam "
+            "ausgetauscht wurden."
         ) from exc
 
-
-# ---------------------------------------------------------------------------
-# SQLite
-# ---------------------------------------------------------------------------
 
 def _sqlite_backup(src: Path, dst: Path) -> None:
     """Konsistente Sicherung ueber die SQLite-Backup-Schnittstelle.
@@ -426,7 +624,7 @@ def cmd_verify(args) -> int:
         if not env_file.exists():
             print("[5/5] UNVOLLSTAENDIG: Kein Schluessel im Paket -- "
                   "verschluesselte Inhalte koennen nicht geprueft werden.")
-            return 2
+            return EXIT_UNVOLLSTAENDIG
         if verschluesselt == 0:
             print("[5/5] Kein verschluesselter Inhalt vorhanden -- "
                   "Entschluesselungstest entfaellt (leere Datenbank).")
@@ -436,7 +634,7 @@ def cmd_verify(args) -> int:
         if not secret:
             print("[5/5] UNVOLLSTAENDIG: AILIZA_SECRET_KEY steht nicht in der "
                   "mitgesicherten Konfigurationsdatei.")
-            return 2
+            return EXIT_UNVOLLSTAENDIG
 
         _decrypt_probe(db, secret)
         print("[5/5] Entschluesselung geprueft -- der mitgesicherte "
@@ -498,20 +696,55 @@ def _read_secret_from_env(path: Path) -> str | None:
 
 
 def _safe_extract(tar: tarfile.TarFile, dest: Path) -> None:
-    """Entpackt ohne Pfadausbruch (Schutz gegen praeparierte Archive)."""
+    """Entpackt nur, was ein AILIZA-Paket enthalten darf.
+
+    Ein Sicherungspaket ist zwar authentifiziert -- ohne das Passwort laesst
+    sich keines erzeugen. Diese Pruefungen greifen trotzdem, weil das
+    Passwort kompromittiert sein kann und weil ein Fehler hier Dateien
+    ausserhalb des Zielordners ueberschreiben wuerde. Verteidigung in der
+    Tiefe.
+
+    Abgewiesen werden: Pfadausbruch ueber "..", absolute Pfade,
+    Laufwerksangaben, symbolische und harte Verknuepfungen, Geraetedateien,
+    zu viele Eintraege und zu grosse Eintraege (Dekompressionsbombe).
+    """
     dest = dest.resolve()
-    for member in tar.getmembers():
-        ziel = (dest / member.name).resolve()
-        if not str(ziel).startswith(str(dest)):
-            raise BackupError(f"Unzulaessiger Pfad im Archiv: {member.name}")
-        if member.issym() or member.islnk():
-            raise BackupError(f"Verknuepfung im Archiv abgelehnt: {member.name}")
+    mitglieder = tar.getmembers()
+    if len(mitglieder) > _MAX_EINTRAEGE:
+        raise BackupError(
+            f"Paket enthaelt {len(mitglieder)} Eintraege, erlaubt sind "
+            f"hoechstens {_MAX_EINTRAEGE}. Abgelehnt."
+        )
+
+    gesamt = 0
+    for m in mitglieder:
+        name = m.name
+        if name.startswith("/") or name.startswith("\\"):
+            raise BackupError(f"Absoluter Pfad im Archiv abgelehnt: {name}")
+        if len(name) > 1 and name[1] == ":":
+            raise BackupError(f"Laufwerksangabe im Archiv abgelehnt: {name}")
+        if ".." in Path(name).parts:
+            raise BackupError(f"Pfadausbruch im Archiv abgelehnt: {name}")
+        if m.issym() or m.islnk():
+            raise BackupError(f"Verknuepfung im Archiv abgelehnt: {name}")
+        if not (m.isfile() or m.isdir()):
+            raise BackupError(f"Unzulaessiger Eintragstyp im Archiv: {name}")
+        if m.size > _MAX_EINTRAG_BYTES:
+            raise BackupError(
+                f"Eintrag {name} ist mit {m.size // (1024*1024)} MiB zu gross."
+            )
+        gesamt += m.size
+        if gesamt > _MAX_PAKET_BYTES:
+            raise BackupError(
+                "Der entpackte Inhalt waere groesser als die zulaessige "
+                "Grenze (moegliche Dekompressionsbombe). Abgelehnt."
+            )
+        ziel = (dest / name).resolve()
+        if ziel != dest and dest not in ziel.parents:
+            raise BackupError(f"Unzulaessiger Pfad im Archiv: {name}")
+
     tar.extractall(dest)
 
-
-# ---------------------------------------------------------------------------
-# Befehl: restore
-# ---------------------------------------------------------------------------
 
 def cmd_restore(args) -> int:
     archive = Path(args.archive).expanduser().resolve()
@@ -574,19 +807,38 @@ def cmd_restore(args) -> int:
 # ---------------------------------------------------------------------------
 
 def _get_password(*, confirm: bool) -> str:
-    pw = os.environ.get("AILIZA_BACKUP_PASSWORD", "")
-    if pw:
+    """Liest das Sicherungspasswort -- ausschliesslich ueber die Standardeingabe.
+
+    Bewusst KEINE Umgebungsvariable: Umgebungsvariablen werden an
+    Kindprozesse vererbt, erscheinen bei `docker run -e` dauerhaft in
+    `docker inspect` und sind auf manchen Systemen ueber /proc lesbar.
+    Bewusst KEIN Befehlszeilenargument: Argumente stehen in der Prozessliste
+    und im Verlauf der Kommandozeile.
+
+    Am Terminal wird verdeckt abgefragt (getpass). Ohne Terminal -- etwa im
+    Container mit `docker run -i` oder in Tests -- wird eine Zeile von der
+    Standardeingabe gelesen.
+    """
+    if sys.stdin is not None and sys.stdin.isatty():
+        pw = getpass.getpass("Passwort fuer das Sicherungspaket: ")
+        if len(pw) < 12:
+            raise BackupError("Passwort zu kurz -- mindestens 12 Zeichen.")
+        if confirm and pw != getpass.getpass("Passwort wiederholen: "):
+            raise BackupError("Die Passwoerter stimmen nicht ueberein.")
         return pw
-    if not sys.stdin.isatty():
+
+    zeile = sys.stdin.readline()
+    if not zeile:
         raise BackupError(
-            "Kein Passwort. Entweder AILIZA_BACKUP_PASSWORD setzen oder das "
-            "Skript in einem Terminal ausfuehren."
+            "Kein Passwort empfangen. Das Passwort wird ueber die "
+            "Standardeingabe erwartet, z. B.:\n"
+            "  echo GEHEIM | python3 scripts/ailiza_backup.py verify --archive ...\n"
+            "Es wird bewusst weder als Argument noch als Umgebungsvariable "
+            "entgegengenommen."
         )
-    pw = getpass.getpass("Passwort fuer das Sicherungspaket: ")
+    pw = zeile.rstrip("\r\n")
     if len(pw) < 12:
         raise BackupError("Passwort zu kurz -- mindestens 12 Zeichen.")
-    if confirm and pw != getpass.getpass("Passwort wiederholen: "):
-        raise BackupError("Die Passwoerter stimmen nicht ueberein.")
     return pw
 
 
@@ -622,11 +874,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except BackupError as exc:
+        # Verstaendliche Meldung ohne Stapelverfolgung. BackupError-Texte
+        # sind bewusst frei von Geheimnissen und Nutzerinhalten.
         print(f"\nFEHLER: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_FEHLER
     except KeyboardInterrupt:
         print("\nAbgebrochen.", file=sys.stderr)
-        return 130
+        return EXIT_ABGEBROCHEN
 
 
 if __name__ == "__main__":
