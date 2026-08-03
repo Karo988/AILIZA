@@ -128,7 +128,12 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        from apps.backend.database import audit_memory_scope_invariants
+        from apps.backend.database import audit_memory_scope_invariants, init_db
+        # Eigenstaendiger CLI-Einstiegspunkt (kein main.py/FastAPI-Lifespan
+        # davor) -- Schema-Bootstrap deshalb hier explizit, analog zum
+        # Anwendungsstart. init_db() ist idempotent (checkfirst) und
+        # veraendert keine vorhandenen Audit-/Fachdaten.
+        init_db()
         report = audit_memory_scope_invariants()
     except Exception as exc:
         print(f"❌ Audit fehlgeschlagen: {type(exc).__name__}: {exc}", file=sys.stderr)
