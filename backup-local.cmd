@@ -78,6 +78,26 @@ if not exist ".env" (
 
 if not exist "%ZIEL%" mkdir "%ZIEL%" >nul 2>&1
 
+REM --- NTFS-Berechtigungen einschraenken -----------------------------
+REM  Die Sicherungen enthalten personenbezogene Daten und den
+REM  Verschluesselungsschluessel. Unter Windows sind NTFS-Rechte
+REM  massgeblich; das chmod im Python-Skript wirkt hier nicht.
+REM  /inheritance:r entfernt geerbte Rechte, danach nur noch der
+REM  aktuelle Nutzer, SYSTEM und die Administratorengruppe.
+REM  Die Gruppen werden ueber ihre bekannten Sicherheitskennungen (SID)
+REM  angesprochen, damit es auch auf nicht-deutschen Windows-Fassungen
+REM  funktioniert: S-1-5-18 = SYSTEM, S-1-5-32-544 = Administratoren.
+icacls "%ZIEL%" /inheritance:r >nul 2>&1
+icacls "%ZIEL%" /grant:r "%USERNAME%":(OI)(CI)F >nul 2>&1
+icacls "%ZIEL%" /grant:r *S-1-5-18:(OI)(CI)F >nul 2>&1
+icacls "%ZIEL%" /grant:r *S-1-5-32-544:(OI)(CI)F >nul 2>&1
+if errorlevel 1 (
+    echo  HINWEIS: Die Zugriffsrechte des Sicherungsordners konnten nicht
+    echo  eingeschraenkt werden. Die Sicherung wird trotzdem erstellt, ist
+    echo  aber moeglicherweise fuer andere Konten auf diesem Rechner lesbar.
+    echo.
+)
+
 echo  Ziel: %ZIEL%
 echo.
 echo  Gleich wird ein Passwort fuer das Sicherungspaket abgefragt.

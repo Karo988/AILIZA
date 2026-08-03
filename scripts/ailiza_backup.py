@@ -37,9 +37,43 @@ Aufrufe
     python3 scripts/ailiza_backup.py verify   --archive DATEI [...]
     python3 scripts/ailiza_backup.py restore  --archive DATEI [...]
 
-Das Passwort wird ueber die Umgebungsvariable AILIZA_BACKUP_PASSWORD
-uebergeben oder interaktiv abgefragt -- niemals als Befehlszeilenargument
-(dort waere es in der Prozessliste und im Verlauf sichtbar).
+Verschluesselung des Sicherungspakets
+-------------------------------------
+Verfahren: **AES-256-GCM** (authentifizierte Verschluesselung, AEAD).
+  * Schluessel: 32 Byte, abgeleitet mit **scrypt** (n=2^15, r=8, p=1) aus dem
+    Passwort und einem je Sicherung neu gezogenen 16-Byte-Salt
+    (`os.urandom`). Die Parameter sind bewusst kostspielig (~100 ms, ~32 MB),
+    damit ein schwaches Passwort nicht schnell durchprobiert werden kann.
+  * Nonce: 12 Byte, je Sicherung neu aus `os.urandom`. Salt und Nonce werden
+    im Klartext vorangestellt -- das ist beabsichtigt und unbedenklich, beide
+    sind keine Geheimnisse.
+  * Zusatzdaten (AAD): die Dateikennung, damit ein abgeschnittenes oder
+    umetikettiertes Paket auffaellt.
+
+Wichtig -- Echtheit kommt aus GCM, nicht aus der Pruefsummendatei:
+Die begleitende `.sha256`-Datei erkennt nur zufaellige Beschaedigung. Ein
+Angreifer koennte Paket und Pruefsumme gemeinsam austauschen. Die
+eigentliche Manipulationserkennung leistet das Authentifizierungsmerkmal
+von AES-GCM: ohne das Passwort laesst sich kein Paket erzeugen, das sich
+entschluesseln laesst. Ein veraendertes Byte fuehrt zum Abbruch -- auch
+wenn keine `.sha256`-Datei vorhanden ist.
+
+Umgang mit Geheimnissen
+-----------------------
+Das Passwort wird interaktiv abgefragt oder ueber die Umgebungsvariable
+AILIZA_BACKUP_PASSWORD uebergeben -- **niemals als Befehlszeilenargument**.
+Argumente sind auf demselben Rechner in der Prozessliste sichtbar und landen
+im Verlauf der Kommandozeile.
+
+Im Containerbetrieb (backup-local.cmd) wird das Passwort ueber die
+Standardeingabe erfragt und **nicht** per `docker run -e` gesetzt: Werte aus
+`-e` erscheinen dauerhaft in `docker inspect`. Der AILIZA_SECRET_KEY gelangt
+ausschliesslich als eingebundene Datei in den Container, nie als
+Umgebungsvariable.
+
+Ausgaben enthalten niemals Chattitel, Chatinhalte, den AILIZA_SECRET_KEY
+oder das Sicherungspasswort. Die Abnahme meldet nur, ob die Entschluesselung
+gelungen ist -- nicht, was dabei herauskam.
 """
 from __future__ import annotations
 
@@ -140,9 +174,17 @@ def _decrypt_file(source: Path, password: str) -> bytes:
     try:
         return AESGCM(_derive_key(password, salt)).decrypt(nonce, ct, _MAGIC)
     except Exception as exc:
+        # AES-GCM prueft beim Entschluesseln zugleich die Echtheit (AEAD).
+        # Ein Fehlschlag bedeutet deshalb: falsches Passwort ODER das Paket
+        # wurde veraendert. Beides fuehrt zum Abbruch -- welcher der beiden
+        # Faelle vorliegt, ist absichtlich nicht unterscheidbar, sonst waere
+        # das ein Hinweis fuer Angreifer.
         raise BackupError(
-            "Entschluesselung fehlgeschlagen. Falsches Passwort, oder die "
-            "Datei ist beschaedigt."
+            "Paket konnte nicht geoeffnet werden.\n"
+            "Entweder ist das Passwort falsch, oder der Inhalt wurde "
+            "veraendert. Die Echtheitspruefung von AES-256-GCM hat "
+            "angeschlagen -- das erkennt auch eine Manipulation, bei der "
+            "Paket und Pruefsummendatei gemeinsam ausgetauscht wurden."
         ) from exc
 
 
@@ -396,13 +438,9 @@ def cmd_verify(args) -> int:
                   "mitgesicherten Konfigurationsdatei.")
             return 2
 
-        titel = _decrypt_probe(db, secret)
-        # Gekuerzt ausgegeben: ein Chattitel kann personenbezogene Daten
-        # enthalten. Fuer den Nachweis genuegt, dass ueberhaupt lesbarer
-        # Klartext herauskommt -- der vollstaendige Inhalt gehoert nicht in
-        # ein Terminalprotokoll.
-        probe = titel if len(titel) <= 24 else titel[:24] + "..."
-        print(f"[5/5] Entschluesselung geprueft -- Klartext lesbar: {probe!r}")
+        _decrypt_probe(db, secret)
+        print("[5/5] Entschluesselung geprueft -- der mitgesicherte "
+              "Schluessel passt zu dieser Datenbank.")
 
     print()
     print("ABNAHME BESTANDEN: Datenbank und Schluessel wurden auf einer frischen "
@@ -410,11 +448,20 @@ def cmd_verify(args) -> int:
     return 0
 
 
-def _decrypt_probe(db: Path, secret: str) -> str:
-    """Liest einen verschluesselten Titel und entschluesselt ihn.
+def _decrypt_probe(db: Path, secret: str) -> None:
+    """Prueft, ob der mitgesicherte Schluessel zu dieser Datenbank passt.
+
+    Gibt den entschluesselten Klartext NICHT zurueck und schreibt ihn nirgends
+    hin. Der Unterprozess meldet ausschliesslich "OK" oder scheitert -- ein
+    Chattitel kann personenbezogene Daten enthalten und gehoert weder in ein
+    Terminalprotokoll noch in eine Rueckgabe, die versehentlich ausgegeben
+    werden koennte.
 
     Laeuft in einem Unterprozess, weil field_crypto den Schluessel beim Import
     aus der Umgebung liest -- ein spaeteres Setzen wuerde nicht mehr greifen.
+    Der Schluessel wird ueber die Umgebung des Unterprozesses uebergeben, nicht
+    als Befehlszeilenargument: Argumente sind auf demselben Rechner in der
+    Prozessliste sichtbar, die Umgebung eines fremden Prozesses ist es nicht.
     """
     repo = Path(__file__).resolve().parent.parent
     code = (
@@ -423,19 +470,23 @@ def _decrypt_probe(db: Path, secret: str) -> str:
         "from apps.backend.governance.field_crypto import decrypt_field;"
         "c=sqlite3.connect('file:%s?mode=ro',uri=True);" % db.as_posix() +
         "r=c.execute(\"SELECT title FROM user_chats WHERE title LIKE 'enc:v1:%' LIMIT 1\").fetchone();"
-        "print(decrypt_field(r[0]))"
+        "t=decrypt_field(r[0]);"
+        # Nur eine Zusicherung ausgeben, niemals den Klartext selbst.
+        "sys.exit(0 if isinstance(t,str) and t else 3)"
     )
     env = dict(os.environ, AILIZA_SECRET_KEY=secret)
     env.pop("AILIZA_FIELD_ENCRYPTION_KEY", None)
     res = subprocess.run([sys.executable, "-c", code], capture_output=True,
                          text=True, env=env, cwd=str(repo))
     if res.returncode != 0:
+        # Bewusst ohne stderr des Unterprozesses: eine Stapelverfolgung koennte
+        # Bruchstuecke des Inhalts oder des Schluessels enthalten.
         raise BackupError(
-            "Der Schluessel im Paket passt NICHT zu dieser Datenbank -- "
-            "die Inhalte waeren nach einer Wiederherstellung unlesbar.\n"
-            f"{res.stderr.strip().splitlines()[-1] if res.stderr.strip() else ''}"
+            "Der Schluessel im Paket passt NICHT zu dieser Datenbank. Die "
+            "Inhalte waeren nach einer Wiederherstellung unlesbar. "
+            "Wahrscheinliche Ursache: Die .env stammt aus einer anderen "
+            "AILIZA-Installation als die Datenbank."
         )
-    return res.stdout.strip()
 
 
 def _read_secret_from_env(path: Path) -> str | None:
@@ -468,13 +519,26 @@ def cmd_restore(args) -> int:
 
     if ziel.exists() and not args.force:
         raise BackupError(
-            f"Zieldatei existiert bereits: {ziel}\n"
-            "Ueberschreiben wuerde den aktuellen Datenbestand vernichten. "
-            "Wenn das gewollt ist: --force ergaenzen. Vorher unbedingt eine "
-            "Sicherung des aktuellen Standes anlegen."
+            f"Zieldatei existiert bereits: {ziel}\n\n"
+            "Der vorgesehene Weg ist eine Wiederherstellung in ein NEUES, "
+            "leeres Ziel -- danach pruefen, und erst dann bewusst umschalten. "
+            "Ein direktes Ueberschreiben vernichtet den aktuellen Datenbestand.\n\n"
+            "Falls das Ueberschreiben wirklich gewollt ist: --force ergaenzen. "
+            "Der bestehende Stand wird dann zuvor automatisch daneben "
+            "gesichert."
         )
 
     password = _get_password(confirm=False)
+
+    # Zwangssicherung vor dem Ueberschreiben. Auch mit --force darf ein
+    # bestehender Datenbestand nicht ersatzlos verschwinden -- eine falsche
+    # Wiederherstellung waere sonst nicht mehr rueckgaengig zu machen.
+    if ziel.exists():
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        vorher = ziel.with_name(f"{ziel.stem}_vor-restore_{stamp}{ziel.suffix}")
+        _sqlite_backup(ziel, vorher)
+        _nur_eigentuemer(vorher)
+        print(f"Bisheriger Stand gesichert: {vorher}")
     payload = _decrypt_file(archive, password)
 
     with tempfile.TemporaryDirectory() as tmp:
