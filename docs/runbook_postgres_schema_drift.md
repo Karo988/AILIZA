@@ -216,12 +216,46 @@ Erweiterung koennte dort ansetzen.
 
 ---
 
-## 5. Bekannte Einschraenkung der Testabdeckung
+## 5. Stand der Testabdeckung
 
-`tests/test_postgres_drift_repair.py` laeuft ausschliesslich gegen temporaere
-SQLite-Datenbanken. Der urspruengliche Fehler war jedoch **genau** eine
-Abweichung zwischen SQLite und PostgreSQL. Vor dem Produktionseinsatz ist der
-Ablauf daher zusaetzlich gegen eine echte PostgreSQL-Instanz zu pruefen --
-Schritt 1 (Wiederherstellung in eine isolierte Testdatenbank) deckt genau das
-ab. `tests/test_database_migrations.py` enthaelt bereits Postgres-Tests, die
-uebersprungen werden, solange `AILIZA_TEST_POSTGRES_URL` nicht gesetzt ist.
+`tests/test_postgres_drift_repair.py` enthaelt 13 Tests: 11 laufen gegen
+temporaere SQLite-Datenbanken, 2 gegen eine echte PostgreSQL-Instanz. Die
+beiden PostgreSQL-Tests werden uebersprungen, solange
+`AILIZA_TEST_POSTGRES_URL` nicht gesetzt ist.
+
+### PostgreSQL-Nachweis (erbracht am 2026-08-03, PostgreSQL 16.13)
+
+Der Ablauf wurde vollstaendig gegen eine lokale PostgreSQL-16-Instanz
+durchgespielt: Baseline aufbauen, die betroffenen Spalten entfernen, eine
+Bestandszeile einfuegen, dann Dry-Run -> Stempeln mit Toleranz ->
+`upgrade head` -> Verifikation ohne Toleranz.
+
+| Nachweis | Ergebnis |
+|---|---|
+| Strukturvergleich repariert vs. frisch (286 Spalten, inkl. `column_default`, `data_type`, `is_nullable`) | identisch, keine Abweichung |
+| `column_default` der sechs mit Backfill ergaenzten `NOT NULL`-Spalten | leer -- `_drop_server_defaults()` greift auf PostgreSQL |
+| Bestandszeile nach Reparatur | erhalten; `tenant_id` auf `default` vorbefuellt, `owner_user_id` korrekt `NULL` |
+| Verifikation ohne Toleranz-Flag | `Schema entspricht exakt der erwarteten Baseline (Revision 0001).` |
+
+Beide PostgreSQL-Tests wurden gegenprobiert: bei testweise deaktiviertem
+`_drop_server_defaults()` schlagen sie fehl
+(`audit_logs.tenant_id hat nach der Reparatur noch eine DEFAULT-Klausel
+("'default'::character varying")`). Sie erkennen die Regression also
+tatsaechlich und sind keine Schoenwetter-Tests.
+
+Lokale PostgreSQL-Instanz fuer diese Tests:
+
+```bash
+initdb -D <datadir> -U postgres --auth=trust
+pg_ctl -D <datadir> -o '-p 55432' start
+export AILIZA_TEST_POSTGRES_URL="postgresql+psycopg://postgres@127.0.0.1:55432/postgres"
+python3 -m pytest tests/test_postgres_drift_repair.py -v
+```
+
+### Weiterhin offen
+
+Der Nachweis erfolgte gegen ein **leeres, frisch aufgebautes** PostgreSQL-Schema
+mit einer einzelnen Testzeile -- nicht gegen eine Kopie der echten
+Produktionsdatenbank mit ihrem realen Datenbestand und Datenvolumen. Schritt 1
+des Ablaufs (Backup-Restore in eine isolierte Testdatenbank) bleibt daher
+zwingend erforderlich und ist durch diesen Nachweis nicht ersetzt.

@@ -50,16 +50,22 @@ DRIFT_COLUMNS = [
 ]
 
 
-def _run(code: str, db_path: str) -> subprocess.CompletedProcess:
+def _run(
+    code: str, db_path: str | None = None, url: str | None = None
+) -> subprocess.CompletedProcess:
     """Fuehrt Python-Code in einem Subprozess gegen eine Wegwerf-DB aus.
 
     Subprozess statt In-Process, weil apps.backend.database die Engine beim
     Import an AILIZA_DATABASE_URL bindet -- ein spaeterer Wechsel der URL
     wuerde sonst nicht greifen.
+
+    Entweder `db_path` (temporaere SQLite-Datei) oder `url` (vollstaendige
+    Datenbank-URL, fuer die PostgreSQL-Tests) angeben.
     """
+    assert (db_path is None) != (url is None), "genau eines von db_path/url"
     env = dict(os.environ)
     env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
-    env["AILIZA_DATABASE_URL"] = f"sqlite:///{db_path}"
+    env["AILIZA_DATABASE_URL"] = url if url is not None else f"sqlite:///{db_path}"
     return subprocess.run(
         [sys.executable, "-c", code],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=180,
@@ -370,6 +376,200 @@ def test_full_repair_sequence_ends_with_exact_schema_match():
             + after.stdout + after.stderr
         )
         assert "entspricht exakt" in after.stdout, after.stdout
+
+
+# ---------------------------------------------------------------------------
+# 4. PostgreSQL-Nachweis (uebersprungen ohne AILIZA_TEST_POSTGRES_URL)
+# ---------------------------------------------------------------------------
+#
+# Die Tests oben laufen ausschliesslich gegen SQLite. Der urspruengliche Fehler
+# war jedoch genau eine Abweichung zwischen SQLite und PostgreSQL -- eine reine
+# SQLite-Abdeckung kann ihn daher nicht ausschliessen. Zusaetzlich wird
+# `_drop_server_defaults()` unter SQLite bewusst uebersprungen, sodass dort
+# gerade NICHT belegt ist, dass die DEFAULT-Klauseln wirklich entfernt werden.
+#
+# Die folgenden Tests schliessen diese Luecke, benoetigen aber eine erreichbare
+# PostgreSQL-Instanz. Sie werden uebersprungen, solange
+# AILIZA_TEST_POSTGRES_URL nicht gesetzt ist.
+#
+# Lokal starten (Beispiel):
+#   initdb -D <datadir> -U postgres --auth=trust
+#   pg_ctl -D <datadir> -o '-p 55432' start
+#   export AILIZA_TEST_POSTGRES_URL="postgresql+psycopg://postgres@127.0.0.1:55432/postgres"
+
+POSTGRES_URL = os.environ.get("AILIZA_TEST_POSTGRES_URL")
+requires_postgres = pytest.mark.skipif(
+    not POSTGRES_URL,
+    reason="AILIZA_TEST_POSTGRES_URL nicht gesetzt -- PostgreSQL-Nachweis uebersprungen",
+)
+
+_COLUMN_QUERY = """
+SELECT table_name, column_name, data_type, is_nullable,
+       coalesce(column_default, '<kein>')
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name <> 'alembic_version'
+ORDER BY table_name, column_name
+"""
+
+# Genau die Spalten, die in Migration 0003 mit server_default ergaenzt und
+# anschliessend wieder bereinigt werden.
+_BACKFILLED_NOT_NULL_COLUMNS = [
+    ("audit_logs", "tenant_id"),
+    ("approval_requests", "tenant_id"),
+    ("agent_runs", "tenant_id"),
+    ("users", "failed_login_attempts"),
+    ("user_projects", "version"),
+    ("user_chats", "version"),
+]
+
+
+@pytest.fixture
+def postgres_databases():
+    """Legt zwei frische PostgreSQL-Datenbanken an und raeumt sie wieder ab."""
+    import uuid
+
+    import sqlalchemy as sa
+
+    suffix = uuid.uuid4().hex[:10]
+    repaired = f"ailiza_test_repaired_{suffix}"
+    fresh = f"ailiza_test_fresh_{suffix}"
+
+    admin = sa.create_engine(POSTGRES_URL, isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        for name in (repaired, fresh):
+            conn.execute(sa.text(f'CREATE DATABASE "{name}"'))
+
+    def url_for(name: str) -> str:
+        base, _, _ = POSTGRES_URL.rpartition("/")
+        return f"{base}/{name}"
+
+    try:
+        yield url_for(repaired), url_for(fresh)
+    finally:
+        with admin.connect() as conn:
+            for name in (repaired, fresh):
+                conn.execute(
+                    sa.text(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = :n AND pid <> pg_backend_pid()"
+                    ),
+                    {"n": name},
+                )
+                conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{name}"'))
+        admin.dispose()
+
+
+def _alembic_upgrade(url: str, target: str) -> None:
+    """Fuehrt `alembic upgrade` gegen die angegebene URL aus.
+
+    Bewusst als Subprozess: apps/backend/alembic/env.py importiert DATABASE_URL
+    aus apps.backend.database und ueberschreibt damit `sqlalchemy.url` der
+    Config beim Import. Ein in-process gesetztes set_main_option() haette also
+    keine Wirkung -- die Migration liefe gegen die Standard-Entwicklungs-DB.
+    Die URL muss deshalb ueber AILIZA_DATABASE_URL gesetzt werden, bevor
+    apps.backend.database importiert wird.
+    """
+    result = _run(_UPGRADE_SNIPPET.format(target=target), db_path=None, url=url)
+    assert "UPGRADE_OK" in result.stdout, result.stdout + result.stderr
+
+
+@requires_postgres
+def test_postgres_repaired_schema_is_structurally_identical_to_fresh(postgres_databases):
+    """Kernnachweis auf echtem PostgreSQL.
+
+    Eine reparierte Datenbank muss Spalte fuer Spalte identisch zu einer frisch
+    migrierten sein -- einschliesslich `column_default`. Genau dieser Vergleich
+    ist unter SQLite nicht moeglich und war zuvor unbelegt.
+    """
+    import sqlalchemy as sa
+
+    repaired_url, fresh_url = postgres_databases
+
+    # Frische Datenbank: kompletter Migrationsweg.
+    _alembic_upgrade(fresh_url, "head")
+
+    # Reparierte Datenbank: Baseline, dann Drift erzeugen, dann reparieren.
+    _alembic_upgrade(repaired_url, BASELINE_REVISION)
+    engine = sa.create_engine(repaired_url)
+    with engine.begin() as conn:
+        for table, column in DRIFT_COLUMNS:
+            conn.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {column}"))
+        # Bestandszeile, damit der NOT-NULL-Backfill echt geprueft wird.
+        conn.execute(
+            sa.text(
+                "INSERT INTO agent_runs (id, created_at, updated_at, task, "
+                "status, run_metadata, result) VALUES ('run-1', now(), now(), "
+                "'bestandsauftrag', 'done', '{}', '{}')"
+            )
+        )
+    _alembic_upgrade(repaired_url, "head")
+
+    def columns_of(url: str) -> list[tuple]:
+        eng = sa.create_engine(url)
+        try:
+            with eng.connect() as conn:
+                return [tuple(row) for row in conn.execute(sa.text(_COLUMN_QUERY))]
+        finally:
+            eng.dispose()
+
+    fresh_cols = columns_of(fresh_url)
+    repaired_cols = columns_of(repaired_url)
+
+    assert fresh_cols, "Frische Datenbank lieferte keine Spalten"
+    assert repaired_cols == fresh_cols, (
+        "Reparierte Datenbank weicht strukturell von einer frischen ab.\n"
+        f"nur in repariert: {sorted(set(repaired_cols) - set(fresh_cols))}\n"
+        f"nur in frisch:    {sorted(set(fresh_cols) - set(repaired_cols))}"
+    )
+    engine.dispose()
+
+
+@requires_postgres
+def test_postgres_server_defaults_are_removed_after_repair(postgres_databases):
+    """`_drop_server_defaults()` wird unter SQLite uebersprungen -- hier wird
+    direkt in den PostgreSQL-Metadaten geprueft, dass keine DEFAULT-Klausel
+    zurueckbleibt und die Bestandszeile trotzdem korrekt befuellt wurde."""
+    import sqlalchemy as sa
+
+    repaired_url, _ = postgres_databases
+
+    _alembic_upgrade(repaired_url, BASELINE_REVISION)
+    engine = sa.create_engine(repaired_url)
+    with engine.begin() as conn:
+        for table, column in DRIFT_COLUMNS:
+            conn.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {column}"))
+        conn.execute(
+            sa.text(
+                "INSERT INTO agent_runs (id, created_at, updated_at, task, "
+                "status, run_metadata, result) VALUES ('run-1', now(), now(), "
+                "'bestandsauftrag', 'done', '{}', '{}')"
+            )
+        )
+    _alembic_upgrade(repaired_url, "head")
+
+    with engine.connect() as conn:
+        for table, column in _BACKFILLED_NOT_NULL_COLUMNS:
+            default = conn.execute(
+                sa.text(
+                    "SELECT column_default FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name=:t AND column_name=:c"
+                ),
+                {"t": table, "c": column},
+            ).scalar_one()
+            assert default is None, (
+                f"{table}.{column} hat nach der Reparatur noch eine "
+                f"DEFAULT-Klausel ({default!r}) -- eine frisch angelegte "
+                "Datenbank hat dort keine."
+            )
+
+        # Bestandsdaten unversehrt, NOT-NULL-Spalte korrekt vorbefuellt.
+        row = conn.execute(
+            sa.text("SELECT task, tenant_id, owner_user_id FROM agent_runs")
+        ).one()
+        assert row[0] == "bestandsauftrag", "Bestandsdaten gingen verloren"
+        assert row[1] == "default", "NOT-NULL-Spalte wurde nicht vorbefuellt"
+        assert row[2] is None, "Nullable-Spalte haette leer bleiben muessen"
+    engine.dispose()
 
 
 def test_no_production_database_is_used_by_these_tests():
