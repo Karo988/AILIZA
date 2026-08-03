@@ -145,6 +145,11 @@ _BASELINE_REQUIREMENTS = {
     "python-multipart==0.0.9", "cryptography>=42.0.0",
     # Neon/Postgres-Persistenz (bereits in main via requirements-core.txt)
     "psycopg[binary]>=3.1",
+    # Formales SQLAlchemy-Migrationssystem (Arbeitspaket 3,
+    # feat/formal-database-migrations) -- bewusste, freigegebene Ergaenzung,
+    # kein versehentlicher Dependency-Zuwachs innerhalb des urspruenglichen
+    # Dual-Gate-PR-2-Scopes dieser Datei.
+    "alembic==1.13.1",
 }
 
 

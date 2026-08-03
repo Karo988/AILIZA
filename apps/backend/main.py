@@ -178,6 +178,17 @@ def _check_non_production_modules() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # ── Datenbankstart MUSS vor jedem write_audit_entry()-Aufruf laufen ──────
+    # (Regressions-Fund CI-Run 30787567646, PR #76): seit database.py keine
+    # Tabellen mehr automatisch beim Modulimport anlegt (siehe db_schema.py),
+    # scheiterte der allererste write_audit_entry()-Aufruf weiter unten
+    # (Secret-Key-/CORS-Warnung) mit "no such table: audit_logs", weil
+    # init_db() vorher erst spaeter im Lifespan stand. init_db() ist
+    # idempotent (checkfirst) -- unabhaengig vom Gate-10-Ergebnis sicher
+    # ganz vorne aufrufbar.
+    init_db()
+    # ── Ende Datenbankstart ───────────────────────────────────────────────────
+
     # ── Gate 10: Config Integrity — muss als ERSTES laufen ───────────────────
     # AILIZA darf niemals normal starten wenn Governance-Dateien fehlen,
     # beschädigt oder unautorisiert verändert sind.
@@ -273,8 +284,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ── B7: Nicht-produktionsreife Module (P-C minimal) ──────────────────────
     _check_non_production_modules()
     # ── Ende B7 ──────────────────────────────────────────────────────────────
-
-    init_db()
 
     # ── Seed-Admin beim ersten Start ─────────────────────────────────────────
     _seed_user = os.getenv("AILIZA_ADMIN_USER", "admin")
