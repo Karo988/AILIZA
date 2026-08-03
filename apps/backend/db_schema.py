@@ -515,5 +515,13 @@ user_chats = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("retention_until", DateTime(timezone=True), nullable=True),
     Column("version", Integer, nullable=False, default=1),
+    # Minimale Aufbewahrungs-Einstellung fuer hochgeladene Dokumente dieses
+    # Chats (Karo-Entscheidung 2026-08-03, Grundlage fuer das spaeter
+    # geplante vollstaendige Eigenschaftsfenster mit allen drei Kategorien
+    # Dokumente/Zusammenfassung/Original-Chat). NULL = Systemstandard
+    # (behalten, DEFAULT_DOCUMENT_RETENTION_DAYS Tage) -- siehe
+    # database.get_chat_document_retention().
+    Column("keep_uploaded_documents", Integer, nullable=True),
+    Column("document_retention_days", Integer, nullable=True),
     Index("ix_user_chats_tenant_user", "tenant_id", "user_id"),
 )

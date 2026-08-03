@@ -1316,6 +1316,40 @@ async function scanFileForUpload(file){
 // Karo-Wunsch 2026-07-15: Dateien werden nicht mehr im Browser als Text
 // ausgelesen. PDF, DOCX, XLSX, TXT und CSV gehen nach dem Pflicht-Scan
 // direkt an den sicheren Backend-Endpunkt /documents/agent-run.
+// Karo-Entscheidung 2026-08-03: KEIN zweiter Button. Dieselbe Datei wird
+// zusaetzlich (best effort, blockiert die Task-Verarbeitung nicht) an
+// /knowledge/upload gemeldet. Ob dauerhaft gespeichert wird, entscheidet
+// automatisch Login-Status + Chat-Einstellung im Backend - keine weitere
+// Nutzer-Auswahl beim Klick.
+function showChatKnowledgeUploadStatus(message,type=""){
+  const label=document.getElementById("kI-preview-label");
+  if(!label||!message)return;
+  const icon=type==="approved"?"✅":type==="pending_review"?"🕒":type==="blocked"?"⛔":"ℹ️";
+  label.textContent=`${icon} ${message}`;
+}
+async function uploadFileToKnowledgeBase(file){
+  const form=new FormData();
+  form.append("file",file,file.name);
+  if(currentChatId)form.append("chat_id",String(currentChatId));
+  try{
+    const response=await fetch(`${API}/knowledge/upload`,{method:"POST",headers:documentUploadHeaders(),body:form});
+    let body=null;
+    try{body=await response.json()}catch{}
+    if(!response.ok){
+      const msg=(body&&typeof body.detail==="string"&&body.detail.trim())?body.detail.trim():"Datei konnte nicht dauerhaft gespeichert werden.";
+      showChatKnowledgeUploadStatus(msg,"blocked");
+      return;
+    }
+    if(body&&body.stored===true){
+      showChatKnowledgeUploadStatus(body.message||"Datei gespeichert.",body.status);
+    }else if(body&&body.stored===false){
+      showChatKnowledgeUploadStatus(body.message||"Datei wurde nicht dauerhaft gespeichert.","");
+    }
+  }catch{
+    // Speichern in der Wissensbasis ist best effort - die Task-Verarbeitung
+    // ueber /documents/agent-run laeuft unabhaengig davon weiter.
+  }
+}
 const CHAT_FILE_MAX_BYTES=10*1024*1024;
 const CHAT_FILE_EXTENSIONS=[".pdf",".docx",".xlsx",".txt",".csv",".md",".html",".htm",".rtf",".json",".xml",".yaml",".yml",".sql",".js",".ts",".py",".css",".php"];
 let pendingChatFile=null;
@@ -1371,6 +1405,8 @@ async function handleChatFileUpload(e){
 
   pendingChatFile=file;
   showPendingChatFile(file);
+
+  uploadFileToKnowledgeBase(file).catch(()=>{});
 
   const el=document.getElementById("chat-input");
 

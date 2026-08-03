@@ -194,6 +194,9 @@ def ensure_sqlite_schema() -> None:
         # alle Bestandsdatensaetze -- kein Backfill, keine Vermutung.
         _add_column_if_missing(connection, "agent_runs", "owner_user_id", "VARCHAR(64)")
         _add_column_if_missing(connection, "approval_requests", "owner_user_id", "VARCHAR(64)")
+        # Minimale Aufbewahrungs-Einstellung pro Chat (Karo-Entscheidung 2026-08-03)
+        _add_column_if_missing(connection, "user_chats", "keep_uploaded_documents", "INTEGER")
+        _add_column_if_missing(connection, "user_chats", "document_retention_days", "INTEGER")
 
 
 def get_kill_switch_flag() -> bool | None:
@@ -1739,7 +1742,7 @@ class KnowledgeValidationError(ValueError):
     """Eine Wissensquelle/-Chunk/-Berechtigung verletzt eine Pflichtregel."""
 
 
-_VALID_SOURCE_TYPES = {"pdf", "docx", "txt", "md", "csv", "manual", "url_reference"}
+_VALID_SOURCE_TYPES = {"pdf", "docx", "xlsx", "txt", "md", "csv", "image", "manual", "url_reference"}
 _VALID_SOURCE_STATUS = {"uploaded", "pending_review", "approved", "blocked", "deleted", "expired"}
 _INACTIVE_SOURCE_STATUS = {"blocked", "deleted", "expired"}
 _VALID_CHUNK_STATUS = {"active", "deleted", "blocked"}
@@ -1787,6 +1790,26 @@ def get_knowledge_source(source_id: int) -> dict[str, Any] | None:
     with engine.begin() as conn:
         row = conn.execute(
             select(knowledge_sources).where(knowledge_sources.c.id == source_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def get_knowledge_source_by_hash(*, tenant_id: str, content_hash: str) -> dict[str, Any] | None:
+    """Sucht eine nicht geloeschte/abgelaufene Quelle mit identischem
+    content_hash im selben Tenant -- Grundlage fuer den Duplikat-Check beim
+    Upload (Karo-Entscheidung 2026-08-03: bestehende Quelle wiederverwenden,
+    kein Fehler, kein zweiter Eintrag). "blocked" wird bewusst NICHT
+    ausgeschlossen, damit ein frueher geblockter Upload erkennbar bleibt,
+    statt endlos erneut hochgeladen und neu geprueft zu werden."""
+    if not tenant_id or not content_hash:
+        return None
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(knowledge_sources)
+            .where(knowledge_sources.c.tenant_id == tenant_id)
+            .where(knowledge_sources.c.content_hash == content_hash)
+            .where(knowledge_sources.c.status.notin_({"deleted", "expired"}))
+            .order_by(knowledge_sources.c.created_at.desc())
         ).mappings().first()
     return dict(row) if row else None
 
@@ -2636,3 +2659,57 @@ def delete_user_chat(chat_id: str, tenant_id: str, user_id: str) -> int:
             .where(user_chats.c.user_id == user_id)
         )
     return result.rowcount
+
+
+# ── Minimale Aufbewahrungs-Einstellung fuer hochgeladene Dokumente pro Chat
+# (Karo-Entscheidung 2026-08-03) -- Grundlage fuer das spaeter geplante
+# vollstaendige Eigenschaftsfenster (Dokumente/Zusammenfassung/Original-Chat,
+# 1 Tag bis 12 Jahre). Hier bewusst nur EINE Kategorie (Dokumente) mit
+# Behalten-ja/nein + Tageszahl.
+DEFAULT_DOCUMENT_RETENTION_DAYS = 14
+MIN_DOCUMENT_RETENTION_DAYS = 1
+MAX_DOCUMENT_RETENTION_DAYS = 4380  # 12 Jahre -- Obergrenze aus Karo-Vorgabe
+
+
+class ChatRetentionValidationError(ValueError):
+    """Ungueltiger Wert fuer die Chat-Aufbewahrungs-Einstellung."""
+
+
+def get_chat_document_retention(*, chat_id: str, tenant_id: str, user_id: str) -> dict[str, Any]:
+    """Liest die Aufbewahrungs-Einstellung fuer Dokument-Uploads eines Chats.
+    Fehlt der Chat oder ist ein Feld NULL, gelten die Systemstandards
+    (behalten=True, DEFAULT_DOCUMENT_RETENTION_DAYS Tage) -- kein heimliches
+    Verwerfen von Uploads ohne explizite Nutzer-Entscheidung."""
+    chat = get_user_chat(chat_id, tenant_id, user_id) if chat_id else None
+    keep = True
+    days = DEFAULT_DOCUMENT_RETENTION_DAYS
+    if chat is not None:
+        if chat.get("keep_uploaded_documents") is not None:
+            keep = bool(chat["keep_uploaded_documents"])
+        if chat.get("document_retention_days") is not None:
+            days = int(chat["document_retention_days"])
+    return {"keep_documents": keep, "retention_days": days}
+
+
+def set_chat_document_retention(*, chat_id: str, tenant_id: str, user_id: str,
+                                keep_documents: bool, retention_days: int) -> dict[str, Any]:
+    if not (MIN_DOCUMENT_RETENTION_DAYS <= retention_days <= MAX_DOCUMENT_RETENTION_DAYS):
+        raise ChatRetentionValidationError(
+            f"retention_days muss zwischen {MIN_DOCUMENT_RETENTION_DAYS} und "
+            f"{MAX_DOCUMENT_RETENTION_DAYS} liegen (erhalten: {retention_days})."
+        )
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(user_chats)
+            .where(user_chats.c.id == chat_id)
+            .where(user_chats.c.tenant_id == tenant_id)
+            .where(user_chats.c.user_id == user_id)
+            .values(
+                keep_uploaded_documents=1 if keep_documents else 0,
+                document_retention_days=retention_days,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        if result.rowcount == 0:
+            raise ChatRetentionValidationError(f"Chat nicht gefunden (id={chat_id}).")
+    return get_chat_document_retention(chat_id=chat_id, tenant_id=tenant_id, user_id=user_id)

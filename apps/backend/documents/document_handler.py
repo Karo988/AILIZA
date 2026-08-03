@@ -21,27 +21,59 @@ try:
     from ..governance.data_governance import ClassificationResult, DataClass, classify
     from ..governance.data_matrix import PolicyDecision, check_data_target
     from ..governance.data_governance import DataTarget
+    from .extraction import extract_structured, supported_structured_extensions
 except ImportError:  # pragma: no cover
     from governance.data_governance import ClassificationResult, DataClass, classify, DataTarget
     from governance.data_matrix import PolicyDecision, check_data_target
+    from documents.extraction import extract_structured, supported_structured_extensions  # type: ignore
 
 
-# Karo-Wunsch 2026-07-15: Formaterweiterung in zwei Stufen.
-# Stufe 1 (jetzt): reine Text-/Code-/Daten-Formate ohne neue Abhaengigkeit -
-# werden wie .txt/.csv per einfachem UTF-8-Decode gelesen.
-# Stufe 2 (spaeter, noch offen): .xls/.tsv/.ods und .pptx/.ppt/.odt brauchen
-# je ein zusaetzliches Python-Paket (z.B. xlrd, odfpy, python-pptx) -
-# bewusst noch NICHT ergaenzt, da neue Abhaengigkeiten erst nach Ruecksprache.
-# Bilder (.png/.jpg/.jpeg/.webp/.gif) brauchen OCR/Vision-Pipeline, komplett
-# eigener Auftrag. .zip bewusst ausgeschlossen (Zip-Bomben/Pfad-Traversal-
-# Risiko, eigenes Sicherheitskonzept noetig).
+# Karo-Wunsch 2026-07-15 (Stufe 1) + 2026-08-03 (Struktur-Extraktion +
+# Bilder/OCR): reine Text-/Code-/Daten-Formate werden per UTF-8-Decode
+# gelesen; PDF/DOCX/XLSX/CSV werden strukturiert extrahiert (siehe
+# documents/extraction.py). Bilder (.png/.jpg/.jpeg) sind NUR erlaubt, wenn
+# OCR zur Laufzeit tatsaechlich verfuegbar ist (lokale Installation mit
+# gesetztem AILIZA_LOCAL_OCR_ENABLED=true UND installierten Paketen) --
+# sonst gelten sie als nicht unterstuetzt (fail-closed). .xls/.tsv/.ods/
+# .pptx/.ppt/.odt bewusst noch NICHT ergaenzt, neue Abhaengigkeiten erst
+# nach Ruecksprache. .zip bewusst ausgeschlossen (Zip-Bomben/Pfad-
+# Traversal-Risiko, eigenes Sicherheitskonzept noetig).
 _PLAINTEXT_EXTENSIONS = {
     ".txt", ".csv",
     ".md", ".html", ".htm", ".rtf",
     ".json", ".xml", ".yaml", ".yml", ".sql",
     ".js", ".ts", ".py", ".css", ".php",
 }
-ALLOWED_EXTENSIONS = _PLAINTEXT_EXTENSIONS | {".pdf", ".docx", ".xlsx"}
+_STRUCTURED_EXTENSIONS = {".pdf", ".docx", ".xlsx"}
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+
+
+def _current_allowed_extensions() -> set[str]:
+    """Dynamisch, weil Bild-Formate nur bei tatsaechlich verfuegbarem
+    lokalem OCR erlaubt sind (siehe extraction.supported_structured_extensions)."""
+    allowed = _PLAINTEXT_EXTENSIONS | _STRUCTURED_EXTENSIONS
+    if supported_structured_extensions() & _IMAGE_EXTENSIONS:
+        allowed |= _IMAGE_EXTENSIONS
+    return allowed
+
+
+class _DynamicAllowedExtensions(set):
+    """Verhaelt sich wie ein normales set (bestehende `in ALLOWED_EXTENSIONS`-
+    Aufrufe/Tests funktionieren unveraendert), wertet den OCR-Verfuegbarkeits-
+    Status aber bei jeder Mitgliedschaftspruefung frisch aus, statt ihn beim
+    Modulimport einmalig einzufrieren."""
+
+    def __contains__(self, item: object) -> bool:  # type: ignore[override]
+        return item in _current_allowed_extensions()
+
+    def __iter__(self):  # type: ignore[override]
+        return iter(_current_allowed_extensions())
+
+    def __len__(self) -> int:  # type: ignore[override]
+        return len(_current_allowed_extensions())
+
+
+ALLOWED_EXTENSIONS = _DynamicAllowedExtensions()
 MAX_FILE_SIZE_MB = 10
 _RETENTION_DAYS = int(os.getenv("AILIZA_DOCUMENT_RETENTION_DAYS", "30"))
 
@@ -108,50 +140,16 @@ class DocumentScanResult:
 
 
 def _extract_text(ext: str, content: bytes) -> str:
+    """Rueckwaertskompatible String-Schnittstelle (wird von bestehenden
+    Aufrufern/Tests genutzt). Fuer neue Aufrufer, die auch wissen muessen,
+    ob eine Bibliothek fehlt (statt stillem Leertext), siehe scan_document(),
+    das direkt extract_structured() aus documents/extraction.py nutzt."""
     if ext in _PLAINTEXT_EXTENSIONS:
         try:
             return content.decode("utf-8", errors="ignore")
         except Exception:
             return ""
-
-    if ext == ".pdf":
-        try:
-            import io
-            import pdfplumber
-            with pdfplumber.open(io.BytesIO(content)) as pdf:
-                return "\n".join(page.extract_text() or "" for page in pdf.pages)
-        except ImportError:
-            pass  # pdfplumber nicht installiert — Fallback
-        except Exception:
-            return ""
-
-    if ext == ".docx":
-        try:
-            import io
-            from docx import Document
-            doc = Document(io.BytesIO(content))
-            return "\n".join(p.text for p in doc.paragraphs)
-        except ImportError:
-            pass  # python-docx nicht installiert — Fallback
-        except Exception:
-            return ""
-
-    if ext == ".xlsx":
-        try:
-            import io
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-            parts: list[str] = []
-            for ws in wb.worksheets:
-                for row in ws.iter_rows(values_only=True):
-                    parts.append(" ".join(str(c) for c in row if c is not None))
-            return "\n".join(parts)
-        except ImportError:
-            pass  # openpyxl nicht installiert — Fallback
-        except Exception:
-            return ""
-
-    return ""
+    return extract_structured(ext, content).full_text
 
 
 def scan_document(filename: str, content: bytes) -> DocumentScanResult:
@@ -173,8 +171,24 @@ def scan_document(filename: str, content: bytes) -> DocumentScanResult:
             classification=classify(""), decision="block",
             reason=f"Datei groesser als {MAX_FILE_SIZE_MB} MB.", expires_at=expires_at)
 
-    # 3. Text extrahieren
-    text = _extract_text(ext, content)
+    # 3. Text extrahieren -- bei fehlender Bibliothek FAIL-CLOSED blockieren
+    # statt still leeren Text durchzuwinken (sonst wuerde ein ungeprueftes
+    # Dokument faelschlich als "keine Risikoklasse gefunden" durchgehen).
+    if ext in _PLAINTEXT_EXTENSIONS:
+        text = _extract_text(ext, content)
+    else:
+        extraction = extract_structured(ext, content)
+        if extraction.library_missing:
+            return DocumentScanResult(
+                allowed=False, file_type=ext, size_bytes=size,
+                classification=classify(""), decision="block",
+                reason=(
+                    "Dieser Dateityp kann auf diesem Server aktuell nicht "
+                    "verarbeitet werden (fehlende Verarbeitungs-Bibliothek). "
+                    "Bitte an eine Administratorin bzw. einen Administrator wenden."
+                ),
+                expires_at=expires_at)
+        text = extraction.full_text
 
     # 4. Gate 6 — Prompt-Injection-Erkennung (vor Klassifikation)
     injection = _scan_for_injection(text)

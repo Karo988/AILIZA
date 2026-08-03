@@ -77,7 +77,9 @@ class TestAgentChatUnchanged:
         assert "local_only" in AGENT_CHAT
 
     def test_upload_section_still_present(self):
-        assert "documents/scan" in AGENT_CHAT
+        # Karo-Entscheidung 2026-08-03: Upload-Button ruft jetzt /knowledge/upload
+        # auf (verbindet Scan + dauerhafte Speicherung), nicht mehr nur /documents/scan.
+        assert "knowledge/upload" in AGENT_CHAT
         assert "FormData" in AGENT_CHAT
 
     def test_deep_research_still_present(self):

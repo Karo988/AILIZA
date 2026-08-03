@@ -5,3 +5,14 @@ cryptography>=42.0.0
 spacy>=3.7.0
 # Nach Installation ausführen: python -m spacy download de_core_news_sm
 slowapi==0.1.9
+# Dokument-Extraktion (Wissensdatenbank-Upload PDF/DOCX/XLSX, siehe
+# apps/backend/documents/extraction.py) -- CSV/TXT/MD brauchen keine
+# zusaetzliche Bibliothek.
+pdfplumber>=0.11.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+# Bilder/OCR -- NUR fuer lokale Installationen mit gesetztem
+# AILIZA_LOCAL_OCR_ENABLED=true wirksam (System-Abhaengigkeit tesseract-ocr
+# noetig, auf dem aktuellen Server-Hosting nicht verfuegbar).
+pytesseract>=0.3.10
+Pillow>=10.0.0

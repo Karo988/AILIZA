@@ -77,16 +77,26 @@ def test_pdf_file_rejected():
         )
 
 
-def test_docx_file_rejected():
+def test_docx_extension_no_longer_rejected_for_unsupported_type():
+    # Karo-Entscheidung 2026-08-03: PDF/DOCX/XLSX/CSV sind jetzt Teil des
+    # unterstuetzten Formatsumfangs (siehe apps/backend/documents/extraction.py).
+    # Eine strukturell ungueltige .docx-Datei (kein echtes ZIP/OOXML) darf
+    # trotzdem nicht mit dem alten "Dateityp nicht unterstuetzt"-Fehler
+    # abgelehnt werden -- die Extraktion selbst faengt das intern ab.
+    pytest.importorskip("docx")  # ohne python-docx faellt der Upload bewusst fail-closed
     _make_user()
-    with pytest.raises(KnowledgeIngestionError):
-        ingest_txt_or_markdown_source(
-            tenant_id="default", uploaded_by="alice", filename="dokument.docx",
-            content=b"PK\x03\x04 ...",
-        )
+    result = ingest_txt_or_markdown_source(
+        tenant_id="default", uploaded_by="alice", filename="dokument.docx",
+        content=b"PK\x03\x04 offensichtlich kein echtes docx",
+    )
+    assert result["duplicate"] is False
+    assert result["status"] in {"approved", "pending_review", "blocked"}
 
 
 def test_allowed_extensions_constant_is_exactly_txt_and_md():
+    # Rueckwaertskompatible, statische Konstante bleibt unveraendert -- fuer
+    # den aktuell tatsaechlich gueltigen Umfang (inkl. PDF/DOCX/XLSX/CSV/
+    # ggf. Bilder) siehe allowed_knowledge_extensions().
     assert ALLOWED_KNOWLEDGE_EXTENSIONS == {".txt", ".md"}
 
 
