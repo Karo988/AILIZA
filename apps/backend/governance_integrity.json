@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0",
-  "generated_at": "2026-08-02T20:17:33.147330+00:00",
+  "generated_at": "2026-08-03T06:08:46.202291+00:00",
   "governance_files": {
     "approval.py": "bfd26b95c04b5a4214559c10cb099703656f8da4f269d1e7a4b0f0db5aa1826b",
     "kill_switch.py": "20663bc70d6b207a903a0e6449ee1eb77c669d69c247905214aedb95f321ec16",
@@ -9,6 +9,6 @@
     "policy.py": "51472ef090cf99835c721e3c8f9151a92fc24303294127a7f1a77d5eb0abd2c5",
     "governance/data_governance.py": "bc353927b7039c90aed782795a82d45f7ff92271adeedd3ba35670736e386541",
     "governance/redaction.py": "864a5235f73e71e40f2816a35eaddb75518d19ab9d76c89f089d6daef92d3db2",
-    "documents/document_handler.py": "5c36a481bc26e42efecbad0dc338664560670c0a8044f1f09ecc2c1c4ef5dde1"
+    "documents/document_handler.py": "770cb5be8b57135431b685f03004f443c5c8be9ce5bbc4f673bc8ab98281cb92"
   }
 }

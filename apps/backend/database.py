@@ -2199,7 +2199,7 @@ class KnowledgeValidationError(ValueError):
     """Eine Wissensquelle/-Chunk/-Berechtigung verletzt eine Pflichtregel."""
 
 
-_VALID_SOURCE_TYPES = {"pdf", "docx", "txt", "md", "csv", "manual", "url_reference"}
+_VALID_SOURCE_TYPES = {"pdf", "docx", "xlsx", "txt", "md", "csv", "image", "manual", "url_reference"}
 _VALID_SOURCE_STATUS = {"uploaded", "pending_review", "approved", "blocked", "deleted", "expired"}
 _INACTIVE_SOURCE_STATUS = {"blocked", "deleted", "expired"}
 _VALID_CHUNK_STATUS = {"active", "deleted", "blocked"}
@@ -2247,6 +2247,26 @@ def get_knowledge_source(source_id: int) -> dict[str, Any] | None:
     with engine.begin() as conn:
         row = conn.execute(
             select(knowledge_sources).where(knowledge_sources.c.id == source_id)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def get_knowledge_source_by_hash(*, tenant_id: str, content_hash: str) -> dict[str, Any] | None:
+    """Sucht eine nicht geloeschte/abgelaufene Quelle mit identischem
+    content_hash im selben Tenant -- Grundlage fuer den Duplikat-Check beim
+    Upload (Karo-Entscheidung 2026-08-03: bestehende Quelle wiederverwenden,
+    kein Fehler, kein zweiter Eintrag). "blocked" wird bewusst NICHT
+    ausgeschlossen, damit ein frueher geblockter Upload erkennbar bleibt,
+    statt endlos erneut hochgeladen und neu geprueft zu werden."""
+    if not tenant_id or not content_hash:
+        return None
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(knowledge_sources)
+            .where(knowledge_sources.c.tenant_id == tenant_id)
+            .where(knowledge_sources.c.content_hash == content_hash)
+            .where(knowledge_sources.c.status.notin_({"deleted", "expired"}))
+            .order_by(knowledge_sources.c.created_at.desc())
         ).mappings().first()
     return dict(row) if row else None
 
