@@ -9,6 +9,15 @@ if ROOT not in sys.path:
 # Use an isolated in-memory DB for tests.
 os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
 
+# database.py legt Tabellen nicht mehr automatisch beim Import an (siehe
+# apps/backend/db_schema.py-Docstring) -- der Datenbankstart erfolgt sonst
+# explizit beim Anwendungsstart (FastAPI-Lifespan in main.py). Fuer die
+# Testsuite uebernimmt diese Stelle die Rolle des Anwendungsstarts, damit
+# bestehende Tests, die apps.backend.database direkt importieren (ohne
+# main.py zu importieren), unveraendert funktionieren.
+import apps.backend.database as _db  # noqa: E402
+_db.init_db()
+
 
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():

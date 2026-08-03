@@ -5,8 +5,13 @@ Definition ueberschrieb die erste und rief ensure_sqlite_schema() NIE auf.
 Auf einer bestehenden SQLite-Datei ohne neuere Spalten (z. B. "version" aus
 der serverseitigen Speicherung) fuehrte das beim Zugriff zu "no such column".
 Dieser Test legt bewusst eine SQLite-Datei im ALTEN Schema (ohne version-Spalte)
-an und prueft, dass ein frischer Prozess-Start (Modul-Import) die fehlende
-Spalte automatisch nachzieht.
+an und prueft, dass ein Anwendungsstart (expliziter init_db()-Aufruf) die
+fehlende Spalte automatisch nachzieht.
+
+Seit der Trennung von Schema-Import und Datenbankstart (Karo-Entscheidung
+2026-08-02, apps/backend/db_schema.py) loest der reine Modulimport von
+apps.backend.database KEINE Migration mehr aus -- init_db() muss
+ausdruecklich aufgerufen werden (z. B. beim FastAPI-Lifespan in main.py).
 """
 import os
 import sqlite3
@@ -43,7 +48,8 @@ def test_missing_version_column_is_migrated_on_fresh_import():
         env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
         env["AILIZA_DATABASE_URL"] = f"sqlite:///{db_path}"
         code = (
-            "from apps.backend.database import list_user_projects\n"
+            "from apps.backend.database import init_db, list_user_projects\n"
+            "init_db()\n"
             "rows = list_user_projects('default', 'karo')\n"
             "assert len(rows) == 1, rows\n"
             "assert rows[0]['version'] == 1, rows\n"
