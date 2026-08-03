@@ -200,11 +200,56 @@ Projektnamen fest auf `ailiza` setzt. Ohne diese Festlegung leitet Compose
 ihn vom Ordnernamen ab — ein umbenannter Ordner hätte dann ein anderes,
 leeres Volume zur Folge.
 
+### Zweite Kopie auf externem Datenträger — Pflicht, nicht Kür
+
+`%LOCALAPPDATA%\AILIZA\backups` liegt üblicherweise auf **derselben
+Festplatte** wie AILIZA. Das schützt vor versehentlichem Löschen — nicht vor
+Festplattendefekt, Diebstahl oder einem Verschlüsselungstrojaner, der alle
+erreichbaren Laufwerke befällt.
+
+Das Sicherungspaket ist bereits mit scrypt + AES-256-GCM verschlüsselt und
+kann deshalb ohne weitere Vorkehrung kopiert werden:
+
+```
+copy "%LOCALAPPDATA%\AILIZA\backups\ailiza_*.ailiza-backup*" E:\AILIZA-Sicherung\
+```
+
+Beide Dateien mitnehmen — das Paket **und** die `.sha256`-Prüfsummendatei.
+Ohne sie entfällt bei der Abnahme die Manipulationsprüfung.
+
+Den externen Datenträger nach dem Kopieren **abziehen**. Ein dauerhaft
+angestecktes Laufwerk wird von Schadsoftware genauso verschlüsselt wie die
+interne Platte.
+
+Die Abnahme läuft auch auf der Kopie:
+
+```bash
+python3 scripts/ailiza_backup.py verify --archive E:\AILIZA-Sicherung\ailiza_….ailiza-backup
+```
+
 ### Regelmäßigkeit
 
 AILIZA bringt keinen automatischen Sicherungsauftrag mit — das ist bewusst
 Sache der Betreiberin. Mindestens zwei Ablageorte, einer davon getrennt vom
-Rechner (externe Platte). Vor jedem Update eine Sicherung.
+Rechner. Vor jedem Update eine Sicherung.
+
+### Geprüfte Randfälle
+
+Die Sicherung wurde gegen die Fälle geprüft, die eine Dateikopie scheitern
+lassen würden:
+
+| Fall | Ergebnis |
+|---|---|
+| `.db`, `-wal` und `-shm` vorhanden, Verzeichnis schreibgeschützt | vollständig gesichert |
+| Schreibvorgang **während** der Sicherung | konsistent, laufende Änderungen enthalten |
+| `-shm` fehlt (AILIZA sauber gestoppt) | funktioniert |
+| `-wal` vorhanden, `-shm` fehlt (Absturzfall) | funktioniert, **kein stiller Datenverlust** — nur im WAL liegende Änderungen sind enthalten |
+| Pfad mit Leerzeichen und Umlauten (`C:\Karo Müller\…`) | funktioniert |
+| Falsches Passwort / manipuliertes Paket / falscher Schlüssel | jeweils erkennbar abgelehnt |
+
+Der vierte Fall ist der heikelste: Läge der WAL-Inhalt nicht in der
+Sicherung, wären die letzten Änderungen unbemerkt verloren — die Sicherung
+sähe trotzdem fehlerfrei aus.
 
 ## Zugriff von weiteren eigenen Geräten (Laptop, Handy)
 
