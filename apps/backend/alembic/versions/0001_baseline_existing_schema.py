@@ -479,6 +479,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("retention_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("version", sa.Integer, nullable=False),
+        sa.Column("keep_uploaded_documents", sa.Integer(), nullable=True),
+        sa.Column("document_retention_days", sa.Integer(), nullable=True),
     )
     op.create_index("ix_user_chats_tenant_user", "user_chats", ["tenant_id", "user_id"])
 
