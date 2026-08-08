@@ -23,9 +23,39 @@ cd apps/backend && uvicorn main:app --port 8001
 
 ## Testbefehle
 ```bash
-pytest tests/                 # neue konsolidierte Tests
-pytest apps/backend/tests/    # Bestands-Tests
+pytest tests/                 # neue konsolidierte Tests — DAS ist die CI-Suite
+PYTHONPATH=. pytest apps/backend/tests/   # Bestands-Tests, in CI derzeit deaktiviert
 ```
+Massgeblich ist `tests/` — nur dieser Pfad laeuft in `.github/workflows/ci.yml`.
+`apps/backend/tests/` enthaelt eigene, klassenbasierte Tests (keine Duplikate),
+hat aber keine eigene `conftest.py`; die Fixtures liegen unter `tests/`.
+Standardmaessig nur `pytest tests/` laufen lassen — die zweite Suite nur auf
+ausdrueckliche Anforderung.
+
+## Kontext-Disziplin (Token-Budget)
+
+Drei Dateien dominieren das Repo und sind zugleich die am haeufigsten
+geaenderten. Ein vollstaendiger Read kostet jeweils ein Vielfaches einer
+normalen Datei und bleibt danach in **jedem** weiteren Turn im Kontext:
+
+| Datei | Zeilen | ~Token bei Vollread |
+|---|---|---|
+| `apps/backend/main.py` | 4.292 | ~52.000 |
+| `apps/frontend/index.html` | 2.528 | ~42.000 |
+| `apps/backend/database.py` | 2.715 | ~34.000 |
+
+**Regeln fuer diese drei Dateien:**
+- NIE vollstaendig lesen. Erst `Grep` nach Symbol/Endpunkt/Tabellenname,
+  dann gezielt mit `offset`/`limit` nur den relevanten Bereich lesen.
+- Fuer Uebersichten Struktur statt Inhalt abfragen, z. B.
+  `grep -nE '^@app\.(get|post|put|delete|patch)|^(def|class) ' apps/backend/main.py`.
+- Breite Suchen ueber das Repo an den `Explore`-Subagenten geben, damit die
+  Fundstellen nicht im Hauptkontext landen.
+- Testlaeufe ueber den `test-runner`-Subagenten, damit nur Fehlschlaege
+  zurueckkommen und nicht die volle pytest-Ausgabe.
+
+Historische Status- und Planungsdokumente liegen unter `docs/archiv/` und
+sind fuer den aktuellen Systemzustand **nicht** heranzuziehen.
 
 ## Arbeitsregeln (IMMER einhalten)
 
