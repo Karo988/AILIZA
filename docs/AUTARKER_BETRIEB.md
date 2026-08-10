@@ -25,22 +25,28 @@ anlegen (siehe `apps/backend/.env.example` falls vorhanden) und in
 
 ## Backup
 
-SQLite ist eine einzelne Datei — Backup heißt: Datei konsistent kopieren.
+`scripts/ailiza_backup.py` sichert die SQLite-Datenbank konsistent über
+die SQLite-Backup-API (nicht per Dateikopie — sonst fehlen Daten, die noch
+in der `-wal`-Datei liegen) und verschlüsselt die Sicherung anschließend
+(AES-256-GCM, Schlüssel per scrypt aus einem Passwort abgeleitet, das nur
+über stdin/maskierte Eingabe entgegengenommen wird — nie als Argument).
 
-**Variante A — Container läuft weiter (empfohlen, konsistent via SQLite-Backup-API):**
+**Achtung:** `sqlite3` ist im Container NICHT installiert (Dockerfile
+installiert nur `libsqlite3-dev`). Das Skript läuft daher gegen das
+gemountete Docker-Volume, ohne den Container selbst zu benutzen:
 
 ```bash
-docker compose exec ailiza sqlite3 /data/ailiza.sqlite ".backup /data/backup_$(date +%Y%m%d_%H%M%S).sqlite"
-docker cp $(docker compose ps -q ailiza):/data/backup_<timestamp>.sqlite ./backups/
+python3 scripts/ailiza_backup.py backup \
+  --datenbank /var/lib/docker/volumes/ailiza_ailiza_data/_data/ailiza.sqlite \
+  --ausgabe ./backups/ailiza_$(date +%Y%m%d_%H%M%S).bak
+# Passwort wird interaktiv abgefragt (zweimal zur Bestätigung).
 ```
 
-**Variante B — Container kurz stoppen:**
+Danach immer prüfen, dass die Sicherung tatsächlich lesbar und inhaltlich
+nicht leer ist:
 
 ```bash
-docker compose stop ailiza
-docker run --rm -v ailiza_ailiza_data:/data -v $(pwd)/backups:/backup alpine \
-  cp /data/ailiza.sqlite /backup/ailiza_$(date +%Y%m%d).sqlite
-docker compose start ailiza
+python3 scripts/ailiza_backup.py verify --paket ./backups/ailiza_<datum>.bak
 ```
 
 Backups regelmäßig (z. B. täglich per Cron) an einen zweiten Ort kopieren
@@ -52,10 +58,16 @@ eingebaut — das ist bewusst Betreiber-Verantwortung.
 
 ```bash
 docker compose stop ailiza
-docker run --rm -v ailiza_ailiza_data:/data -v $(pwd)/backups:/backup alpine \
-  cp /backup/ailiza_<datum>.sqlite /data/ailiza.sqlite
+python3 scripts/ailiza_backup.py restore \
+  --paket ./backups/ailiza_<datum>.bak \
+  --ziel /var/lib/docker/volumes/ailiza_ailiza_data/_data/ailiza.sqlite \
+  --force
 docker compose start ailiza
 ```
+
+`--force` erst setzen, nachdem die aktuelle (womöglich beschädigte)
+Datenbank selbst gesichert wurde — das Skript überschreibt ohne
+`--force` keine vorhandene Zieldatei.
 
 ## DSGVO-Hinweise
 
