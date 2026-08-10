@@ -47,6 +47,11 @@ audit_logs = Table(
     # Audit-Vault Stufe 2: Hash-Chain (append-only Integritätssicherung)
     Column("previous_hash", String(64), nullable=False, default="0" * 64),
     Column("entry_hash", String(64), nullable=False, default=""),
+    # list_audit_entries()/query_audit_events() filtern nach tenant_id und
+    # sortieren nach timestamp DESC -- ohne Index ein Volltabellen-Scan, der
+    # mit wachsendem (append-only) Audit-Log immer teurer wird.
+    Index("ix_audit_logs_tenant_timestamp", "tenant_id", "timestamp"),
+    Index("ix_audit_logs_action", "action"),
 )
 
 approval_requests = Table(
@@ -68,6 +73,10 @@ approval_requests = Table(
     # PR 1 (Identitaets-/RBAC-Grundlage): Besitzer des zugrundeliegenden Runs.
     # NULL fuer historische Datensaetze -- niemals rueckwirkend geraten/befuellt.
     Column("owner_user_id", String(64), nullable=True),
+    # list_approval_requests() filtert nach status, sortiert nach created_at
+    # DESC. Beides ungenutzt (Volltabellen-Scan + Sortierung im Speicher).
+    Index("ix_approval_requests_status", "status"),
+    Index("ix_approval_requests_tenant_created", "tenant_id", "created_at"),
 )
 
 agent_runs = Table(
@@ -85,6 +94,10 @@ agent_runs = Table(
     # PR 1: NULL fuer anonyme Runs UND fuer historische Datensaetze ohne Owner.
     # Kein Backfill, keine Vermutung.
     Column("owner_user_id", String(64), nullable=True),
+    # list_agent_runs() filtert nach status/tenant_id, sortiert nach
+    # updated_at DESC.
+    Index("ix_agent_runs_status", "status"),
+    Index("ix_agent_runs_tenant_updated", "tenant_id", "updated_at"),
 )
 
 # ── PR 1 (Identitaets-/RBAC-Grundlage): Fachzustaendigkeiten und gezielte
