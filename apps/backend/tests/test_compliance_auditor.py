@@ -3,7 +3,7 @@ Tests für ComplianceAuditor
 """
 
 import pytest
-from compliance_auditor import ComplianceAuditor, Severity
+from apps.backend.compliance_auditor import ComplianceAuditor, Severity
 
 
 @pytest.fixture

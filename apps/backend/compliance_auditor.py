@@ -18,6 +18,21 @@ class Severity(str, Enum):
     OK = "ok"              # 🟢 Konform
 
 
+# Indiz, dass ein KI-/Automatisierungs-System im Text tatsächlich vorkommt.
+# EU-AI-Act-Hochrisiko-Tatbestände (Titel III, Art. 11-14) betreffen den
+# Einsatz eines solchen Systems -- nicht die beiläufige Erwähnung eines
+# Hochrisiko-Bereichs (z.B. "Bewerbung") ohne jeden Automatisierungsbezug.
+_AUTOMATION_KEYWORDS = [
+    "ki-system", "ki system", "künstliche intelligenz", "automatisiert",
+    "automatisch", "algorithmus", "algorithmisch", "scoring", "score",
+    "ai-system", "automatisierte entscheidung",
+]
+
+
+def _hat_automatisierungsbezug(text: str) -> bool:
+    return any(re.search(rf"\b{kw}\b", text, re.I) for kw in _AUTOMATION_KEYWORDS)
+
+
 @dataclass
 class Violation:
     """Eine einzelne Compliance-Violation"""
@@ -369,13 +384,22 @@ class ComplianceAuditor:
         self._check_documentation(text)
 
     def _check_high_risk_application(self, text: str) -> None:
-        """KI-Anwendungen für Bewerbung/Kredite/etc. sind Hochrisiko"""
+        """KI-Systeme für Bewerbung/Kredite/etc. sind Hochrisiko (EU-AI-Act Titel III).
+
+        Der Tatbestand betrifft den Einsatz eines KI-/Automatisierungs-Systems
+        in diesen Bereichen — nicht jede beiläufige Erwähnung des Bereichs
+        selbst. Ein reiner Bewerbungseingangsbestätigungstext ohne jeden
+        Automatisierungsbezug ist kein Hochrisiko-KI-Einsatz und darf nicht
+        blockiert werden. Beide Bedingungen müssen daher zutreffen: ein
+        Hochrisiko-Bereich UND ein Automatisierungs-/KI-Indiz im Text.
+        """
         high_risk_keywords = [
             "bewerbung", "personalentscheidung", "einstellung",
             "bonitätsbewertung", "kreditvergabe", "versicherung",
             "risikovollzug", "entlassung"
         ]
-        if any(re.search(rf"\b{kw}\b", text, re.I) for kw in high_risk_keywords):
+        hat_hochrisiko_bereich = any(re.search(rf"\b{kw}\b", text, re.I) for kw in high_risk_keywords)
+        if hat_hochrisiko_bereich and _hat_automatisierungsbezug(text):
             self.violations.append(Violation(
                 severity=Severity.BLOCK,
                 article="Titel III",
@@ -473,7 +497,18 @@ class ComplianceAuditor:
             ))
 
     def _check_documentation(self, text: str) -> None:
-        """EU-AI-Act fordert technische Dokumentation und Audit-Trail"""
+        """EU-AI-Act fordert technische Dokumentation und Audit-Trail.
+
+        Die Dokumentationspflicht (Art. 11-14) betrifft Anbieter von
+        Hochrisiko-KI-Systemen — nicht jeden beliebigen Text. Ohne
+        Automatisierungs-/KI-Indiz im Text (z.B. eine normale
+        Bewerbungseingangsbestätigung ohne KI-Bezug) greift Art. 11-14
+        gar nicht; die Prüfung würde sonst auf praktisch jedem kurzen
+        Geschäftstext REVIEW auslösen (fehlende Doku ist die Regel, nicht
+        die Ausnahme, wenn gar kein KI-System involviert ist).
+        """
+        if not _hat_automatisierungsbezug(text):
+            return
         if "dokumentation" not in text.lower() and "audit" not in text.lower() and \
            "protokollierung" not in text.lower():
             self.violations.append(Violation(

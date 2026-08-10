@@ -6,19 +6,60 @@ Tests für den neuen /api/policy-redact Endpoint mit:
 - security_block vs technical_block Trennung
 - admin_only serverseitig gefiltert
 - Keine Originaldaten in Response
+
+Auth: /api/policy-redact akzeptiert current_user als Optional
+(Depends(get_current_user)) — ein fehlendes Token ist also kein 401.
+Ein VORHANDENES Token muss aber ein gueltiges JWT sein, sonst wirft
+get_current_user() bewusst 401 (siehe apps/backend/auth/rbac.py). Die
+frei erfundenen Strings "test-user-token"/"user-token" der urspruenglichen
+Tests waren keine gueltigen JWTs und loesten deshalb den 401 aus -- das
+ist korrektes, gewolltes Verhalten des Endpoints, kein Bug. Fix: echte
+Tokens per create_token() erzeugen, wie es test_approval_requires_login.py
+bereits vormacht.
 """
+
+import os
+
+os.environ.setdefault("AILIZA_SECRET_KEY", "test-secret-key-minimum-32-chars-ok")
+os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("AILIZA_EXTERNAL_LLM_ENABLED", "false")
 
 import pytest
 from fastapi.testclient import TestClient
-from main import app
 
-client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def fresh_db():
+    from apps.backend.database import init_db, metadata_obj, engine
+    metadata_obj.drop_all(engine)
+    init_db()
+    yield
+
+
+@pytest.fixture
+def client():
+    from apps.backend.main import app
+    return TestClient(app, raise_server_exceptions=True, cookies={})
+
+
+def _user_token() -> str:
+    from apps.backend.auth.jwt_handler import create_token
+    return create_token("betroffene1", "default", "user")
+
+
+def _admin_token() -> str:
+    from apps.backend.auth.jwt_handler import create_token
+    return create_token("admin1", "default", "admin")
+
+
+def _auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Test 1: Amun-Brief (Schwarz-Level, requires_human_review)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_amun_brief_requires_human_review():
+def test_amun_brief_requires_human_review(client):
     """Amun-Brief: Schwarz-Level, menschliche Prüfung erforderlich"""
 
     amun_text = """
@@ -38,7 +79,7 @@ def test_amun_brief_requires_human_review():
     response = client.post(
         "/api/policy-redact",
         json={"text": amun_text},
-        headers={"Authorization": "Bearer test-user-token"}
+        headers=_auth_headers(_user_token())
     )
 
     assert response.status_code == 200
@@ -73,7 +114,7 @@ def test_amun_brief_requires_human_review():
 # Test 2: Security Block (Geheimnis erkannt)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_security_block_api_key():
+def test_security_block_api_key(client):
     """Geheimnis erkannt → security_block (nicht technical_block)"""
 
     text_with_secret = "Mein OpenAI API Key ist sk-proj-abc123def456ghi789jkl012mno345pqr"
@@ -81,7 +122,7 @@ def test_security_block_api_key():
     response = client.post(
         "/api/policy-redact",
         json={"text": text_with_secret},
-        headers={"Authorization": "Bearer test-user-token"}
+        headers=_auth_headers(_user_token())
     )
 
     assert response.status_code == 200
@@ -109,7 +150,7 @@ def test_security_block_api_key():
 # Test 3: Technical Block (Backend Fehler)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_technical_block_backend_error():
+def test_technical_block_backend_error(client):
     """Backend nicht verfügbar → technical_block (nicht security_block)"""
 
     # Simuliere Backend-Fehler durch unerwartete Exception
@@ -118,7 +159,7 @@ def test_technical_block_backend_error():
     response = client.post(
         "/api/policy-redact",
         json={"text": ""},  # Leerer Text könnte Fehler auslösen
-        headers={"Authorization": "Bearer test-user-token"}
+        headers=_auth_headers(_user_token())
     )
 
     # Selbst bei leerem Text sollte Response ok sein
@@ -142,7 +183,7 @@ def test_technical_block_backend_error():
 # Test 4: Admin-Only (Serverseitig gefiltert)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_admin_only_filtered_server_side():
+def test_admin_only_filtered_server_side(client):
     """admin_only wird nur an Admin gesendet (serverseitig, nicht Frontend)"""
 
     text = "Ich heiße Paula Ronder"
@@ -151,7 +192,7 @@ def test_admin_only_filtered_server_side():
     response_user = client.post(
         "/api/policy-redact",
         json={"text": text},
-        headers={"Authorization": "Bearer user-token"}
+        headers=_auth_headers(_user_token())
     )
     data_user = response_user.json()
 
@@ -172,7 +213,7 @@ def test_admin_only_filtered_server_side():
 # Test 5: Keine "block" Decision
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_no_decision_block_value():
+def test_no_decision_block_value(client):
     """decision="block" wird nicht verwendet (nur 5 erlaubte Werte)"""
 
     test_cases = [
@@ -185,7 +226,7 @@ def test_no_decision_block_value():
         response = client.post(
             "/api/policy-redact",
             json={"text": text},
-            headers={"Authorization": "Bearer test-user-token"}
+            headers=_auth_headers(_user_token())
         )
         data = response.json()
 
@@ -211,7 +252,7 @@ def test_no_decision_block_value():
 # Test 6: Keine Originaldaten in Response
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_no_original_data_in_response():
+def test_no_original_data_in_response(client):
     """Originaldaten dürfen nicht in Response vorkommen"""
 
     original_name = "Paula Ronder"
@@ -222,7 +263,7 @@ def test_no_original_data_in_response():
     response = client.post(
         "/api/policy-redact",
         json={"text": text},
-        headers={"Authorization": "Bearer test-user-token"}
+        headers=_auth_headers(_user_token())
     )
 
     data = response.json()
@@ -244,13 +285,13 @@ def test_no_original_data_in_response():
 # Test 7: Response-Struktur
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_response_structure():
+def test_response_structure(client):
     """Alle Pflichtfelder sind vorhanden"""
 
     response = client.post(
         "/api/policy-redact",
         json={"text": "Normale Frage"},
-        headers={"Authorization": "Bearer test-user-token"}
+        headers=_auth_headers(_user_token())
     )
 
     assert response.status_code == 200
@@ -277,7 +318,7 @@ def test_response_structure():
 # Test 8: Yellow Level (normale PII mit Redaction)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_yellow_level_safe_output_with_redactions():
+def test_yellow_level_safe_output_with_redactions(client):
     """Yellow: PII geschwärzt, aber weitermachen"""
 
     text = "Mein Name ist Paula Ronder"
@@ -285,7 +326,7 @@ def test_yellow_level_safe_output_with_redactions():
     response = client.post(
         "/api/policy-redact",
         json={"text": text},
-        headers={"Authorization": "Bearer test-user-token"}
+        headers=_auth_headers(_user_token())
     )
 
     assert response.status_code == 200

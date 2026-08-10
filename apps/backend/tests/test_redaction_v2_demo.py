@@ -6,7 +6,7 @@ Zeigt, wie die neue regelkonorme Redaction-Engine den Amun-Brief korrekt behande
 Status: DEMO NUR - Nicht in Produktion aktiv
 """
 
-from governance.redaction_v2 import RedactionEngineV2, RedactionLevel
+from apps.backend.governance.redaction_v2 import RedactionEngineV2, RedactionLevel
 
 
 def test_amun_brief_with_redaction_v2():
