@@ -58,12 +58,13 @@ def test_empty_database_migrates_to_current_schema(tmp_path):
 
     tables = _table_names(db_path)
     assert "alembic_version" in tables
-    # Bekannte Kern-Tabellen (nicht alle 27 einzeln, aber ein Querschnitt
+    # Bekannte Kern-Tabellen (nicht alle 28 einzeln, aber ein Querschnitt
     # ueber AILIZA-Kern/Benutzer/Memory/Audit/Fachanwendung):
     for expected in ("users", "audit_logs", "memory_items", "memory_visibility",
                       "knowledge_sources", "totp_secrets", "user_settings"):
         assert expected in tables, f"Tabelle {expected} fehlt nach Baseline-Migration"
-    assert len(tables) == 28  # 27 AILIZA-Tabellen + alembic_version
+    # 27 -> 28 AILIZA-Tabellen: Migration 0005 (Phase 1, customers).
+    assert len(tables) == 29  # 28 AILIZA-Tabellen + alembic_version
 
 
 # ── 1b. Import vs. Datenbankstart sind sauber getrennt ───────────────────────
@@ -185,8 +186,13 @@ def _run_adopt(*args: str, database_url: str) -> subprocess.CompletedProcess:
 
 
 def test_existing_database_migrates_without_data_loss(tmp_path):
-    # "Bestehende" DB simulieren: erst ganz normal ueber init_db() aufbauen
-    # (wie es die Anwendung heute schon tut), dann eine Zeile einfuegen.
+    # "Bestehende" DB simulieren: NICHT ueber init_db() (das baut das
+    # HEUTIGE Schema -- inkl. customers, PR-85-Indizes, user_chats-Spalten
+    # aus Migration 0006 -- und ist damit KEINE echte 0001-Datenbank mehr,
+    # siehe Nachpruefungs-Handoff "vollstaendige 0001-Baseline-Pruefung").
+    # Stattdessen die echte Baseline-Migration 0001 direkt ausfuehren --
+    # das legt exakt das historische Schema an, unabhaengig davon, wie weit
+    # sich database.py/db_schema.py seither weiterentwickelt haben.
     #
     # WICHTIG: Das Aufbauen der "bestehenden" DB laeuft bewusst in einem
     # eigenen Subprozess (nicht per importlib.reload(apps.backend.database)
@@ -203,19 +209,17 @@ def test_existing_database_migrates_without_data_loss(tmp_path):
     # korrekte Weg fuer eine bestehende Datenbank ist das Stempeln nach
     # erfolgreicher Schema-Pruefung.
     db_path = tmp_path / "existing.db"
-    setup = subprocess.run(
-        [sys.executable, "-c", (
-            "import apps.backend.database as dbmod; "
-            "dbmod.init_db(); "
-            "dbmod.create_user(user_id='alice', tenant_id='default', role='user', hashed_password='hash'); "
-            "dbmod.engine.dispose()"
-        )],
-        cwd=str(REPO_ROOT),
-        env={**os.environ, "AILIZA_SECRET_KEY": "test-secret-key-minimum-32-chars-ok",
-             "AILIZA_DATABASE_URL": f"sqlite:///{db_path}"},
-        capture_output=True, text=True, timeout=30,
+    result_upgrade = _run_alembic("upgrade", "6165ff33e9ee", database_url=f"sqlite:///{db_path}")
+    assert result_upgrade.returncode == 0, result_upgrade.stderr
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP TABLE alembic_version")  # echter Alt-Bestand: nie von Alembic getrackt
+    conn.execute(
+        "INSERT INTO users (user_id, tenant_id, role, hashed_password, created_at, active, failed_login_attempts) "
+        "VALUES ('alice', 'default', 'user', 'hash', '2025-01-01T00:00:00+00:00', 1, 0)"
     )
-    assert setup.returncode == 0, setup.stderr
+    conn.commit()
+    conn.close()
 
     result = _run_adopt("--revision", "0001", database_url=f"sqlite:///{db_path}")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -283,17 +287,15 @@ def test_existing_database_with_missing_column_is_rejected(tmp_path):
 
 
 def test_stamping_matching_database_is_idempotent(tmp_path):
+    # Echte 0001-Datenbank -- nicht init_db() (heutiges Schema, siehe
+    # Kommentar bei test_existing_database_migrates_without_data_loss).
     db_path = tmp_path / "idempotent_existing.db"
-    setup = subprocess.run(
-        [sys.executable, "-c", (
-            "import apps.backend.database as dbmod; dbmod.init_db(); dbmod.engine.dispose()"
-        )],
-        cwd=str(REPO_ROOT),
-        env={**os.environ, "AILIZA_SECRET_KEY": "test-secret-key-minimum-32-chars-ok",
-             "AILIZA_DATABASE_URL": f"sqlite:///{db_path}"},
-        capture_output=True, text=True, timeout=30,
-    )
+    setup = _run_alembic("upgrade", "6165ff33e9ee", database_url=f"sqlite:///{db_path}")
     assert setup.returncode == 0, setup.stderr
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP TABLE alembic_version")
+    conn.commit()
+    conn.close()
 
     r1 = _run_adopt("--revision", "0001", database_url=f"sqlite:///{db_path}")
     assert r1.returncode == 0, r1.stdout + r1.stderr
