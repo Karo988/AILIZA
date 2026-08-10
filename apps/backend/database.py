@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy import (
     Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text,
-    and_, create_engine, delete, exists, insert, literal, or_, select, text, update,
+    and_, create_engine, delete, event, exists, insert, literal, or_, select, text, update,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -153,6 +153,32 @@ if not DATABASE_URL.startswith("sqlite"):
     engine_options["pool_recycle"] = 1800
 
 engine: Engine = create_engine(DATABASE_URL, **engine_options)
+
+# SQLite-Performance/Nebenlaeufigkeit: WAL erlaubt gleichzeitige Leser waehrend
+# ein Schreiber aktiv ist (statt des Standard-Rollback-Journals, das Leser
+# blockiert). busy_timeout laesst SQLite bei einem kurzen Sperrkonflikt bis zu
+# 5s auf Freigabe warten, statt sofort mit "database is locked" abzubrechen --
+# relevant, weil sonst jeder Konflikt (auch ein kurzer WAL-Checkpoint) eine
+# OperationalError auf Anwendungsebene ausloest. Rein additiv: keine
+# Schema-/Datenaenderung, betrifft nur das Transaktionsverhalten der
+# Verbindung. WAL ist fuer ":memory:"-Datenbanken wirkungslos (SQLite ignoriert
+# es dort), busy_timeout bleibt in dem Fall trotzdem sinnvoll (mehrere Threads
+# teilen sich ueber StaticPool dieselbe rohe Verbindung, siehe
+# _sql_write_lock oben). Bestaetigt kompatibel mit der SQLite-Backup-API aus
+# scripts/ailiza_backup.py (test_backup_captures_wal_committed_writes deckt
+# WAL-Faelle bereits ab, siehe PR #82).
+if DATABASE_URL.startswith("sqlite"):
+    _IS_MEMORY_DB = DATABASE_URL in {"sqlite:///:memory:", "sqlite://"}
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas_on_connect(dbapi_connection, connection_record) -> None:  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        try:
+            if not _IS_MEMORY_DB:
+                cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+        finally:
+            cursor.close()
 
 _UNSET = object()
 
