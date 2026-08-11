@@ -58,12 +58,14 @@ def test_empty_database_migrates_to_current_schema(tmp_path):
 
     tables = _table_names(db_path)
     assert "alembic_version" in tables
-    # Bekannte Kern-Tabellen (nicht alle 27 einzeln, aber ein Querschnitt
+    # Bekannte Kern-Tabellen (nicht alle 29 einzeln, aber ein Querschnitt
     # ueber AILIZA-Kern/Benutzer/Memory/Audit/Fachanwendung):
     for expected in ("users", "audit_logs", "memory_items", "memory_visibility",
                       "knowledge_sources", "totp_secrets", "user_settings"):
         assert expected in tables, f"Tabelle {expected} fehlt nach Baseline-Migration"
-    assert len(tables) == 28  # 27 AILIZA-Tabellen + alembic_version
+    # 27 -> 29 AILIZA-Tabellen: Migration 0005b (Paket A, model_candidates
+    # + routing_decisions).
+    assert len(tables) == 30  # 29 AILIZA-Tabellen + alembic_version
 
 
 # ── 1b. Import vs. Datenbankstart sind sauber getrennt ───────────────────────

@@ -123,7 +123,7 @@ try:
         users, user_settings, memory_sources, memory_items, memory_visibility,
         memory_suggestions, messenger_bindings, totp_secrets, totp_backup_codes,
         skills, knowledge_sources, knowledge_chunks, knowledge_source_permissions,
-        user_projects, user_chats,
+        user_projects, user_chats, model_candidates, routing_decisions,
     )
 except ImportError:
     from db_schema import (  # type: ignore
@@ -134,7 +134,7 @@ except ImportError:
         users, user_settings, memory_sources, memory_items, memory_visibility,
         memory_suggestions, messenger_bindings, totp_secrets, totp_backup_codes,
         skills, knowledge_sources, knowledge_chunks, knowledge_source_permissions,
-        user_projects, user_chats,
+        user_projects, user_chats, model_candidates, routing_decisions,
     )
 
 engine_options: dict[str, Any] = {}
@@ -2531,6 +2531,136 @@ def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
                 version=new_version, **values))
     return {"id": project_id, "created_at": created_at, "updated_at": now,
             "version": new_version}
+
+
+# ── Model Intelligence (Paket A): reine Empfehlungsschicht ──────────────────
+# GRUNDREGEL: kein Aufruf hier setzt jemals status="approved" fuer einen neu
+# angelegten Kandidaten. Freigabe ist ausdruecklich ein separater,
+# menschlicher Schritt (approve_model_candidate()), niemals Teil des
+# Anlegens oder des Routings selbst.
+
+def create_model_candidate(provider: str, model_id: str, *,
+                            modalities: list[str], capabilities: list[str],
+                            context_window: int, regions: list[str] | None = None,
+                            evidence_urls: list[str] | None = None) -> dict[str, Any]:
+    """Legt einen neuen Modell-Kandidaten an -- IMMER mit status="candidate".
+    Kein Upsert: (provider, model_id) ist unique, ein zweiter Aufruf mit
+    derselben Kombination wirft IntegrityError."""
+    now = _now_utc()
+    with engine.begin() as conn:
+        conn.execute(insert(model_candidates).values(
+            provider=provider, model_id=model_id,
+            modalities=list(modalities), capabilities=list(capabilities),
+            context_window=context_window, regions=list(regions or []),
+            status="candidate", benchmark_version="unbenchmarked",
+            evidence_urls=list(evidence_urls or []),
+            created_at=now, updated_at=now,
+        ))
+    return {
+        "provider": provider, "model_id": model_id, "status": "candidate",
+        "modalities": modalities, "capabilities": capabilities,
+        "context_window": context_window, "regions": regions or [],
+        "created_at": now, "updated_at": now,
+    }
+
+
+def approve_model_candidate(provider: str, model_id: str, *,
+                             approved_by: str,
+                             quality_score: float, latency_score: float,
+                             cost_score: float, privacy_score: float,
+                             benchmark_version: str) -> dict[str, Any] | None:
+    """Setzt status="approved" -- der einzige Weg, wie ein Kandidat waehlbar
+    wird. Verlangt Benchmark-Scores UND eine ausfuehrende Person
+    (approved_by); kein stiller Automatismus. Gibt None zurueck, wenn
+    (provider, model_id) nicht existiert (kein stilles Anlegen)."""
+    now = _now_utc()
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(model_candidates)
+            .where(model_candidates.c.provider == provider)
+            .where(model_candidates.c.model_id == model_id)
+            .values(
+                status="approved", approved_by=approved_by, approved_at=now,
+                quality_score=quality_score, latency_score=latency_score,
+                cost_score=cost_score, privacy_score=privacy_score,
+                benchmark_version=benchmark_version, updated_at=now,
+            )
+        )
+        if result.rowcount == 0:
+            return None
+        row = conn.execute(
+            select(model_candidates)
+            .where(model_candidates.c.provider == provider)
+            .where(model_candidates.c.model_id == model_id)
+        ).mappings().first()
+    return dict(row)
+
+
+def list_model_candidates(status: str | None = None) -> list[dict[str, Any]]:
+    """Plattformweite Liste -- kein tenant_id-Filter (siehe db_schema.py:
+    welche Modelle existieren duerfen, ist keine Mandantenentscheidung)."""
+    query = select(model_candidates).order_by(model_candidates.c.provider, model_candidates.c.model_id)
+    if status is not None:
+        query = query.where(model_candidates.c.status == status)
+    with engine.begin() as conn:
+        rows = conn.execute(query).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def recommend_model(tenant_id: str, *, modality: str, task: str,
+                     required_capabilities: list[str] | None = None,
+                     min_context_window: int = 0,
+                     allowed_providers: list[str] | None = None,
+                     required_region: str | None = None,
+                     local_only: bool = False,
+                     data_risk: str = "low") -> dict[str, Any]:
+    """Liefert NUR eine Empfehlung -- ruft selbst keinen Provider auf und
+    veraendert keine Freigabe. Schreibt einen Audit-Eintrag ueber das
+    bestehende Audit-Vault (write_audit_entry), keine separate Logdatei."""
+    try:
+        from .intelligence.model_router import ModelRouter
+        from .intelligence.models import ModelCandidate, RoutingRequest
+    except ImportError:  # pragma: no cover - Fallback bei Ausfuehrung aus apps/backend/
+        from intelligence.model_router import ModelRouter  # type: ignore
+        from intelligence.models import ModelCandidate, RoutingRequest  # type: ignore
+
+    approved_rows = list_model_candidates(status="approved")
+    candidates = [ModelCandidate.from_row(row) for row in approved_rows]
+
+    request = RoutingRequest(
+        modality=modality, task=task,
+        required_capabilities=frozenset(required_capabilities or []),
+        min_context_window=min_context_window,
+        allowed_providers=frozenset(allowed_providers) if allowed_providers is not None else None,
+        required_region=required_region, local_only=local_only,
+        data_risk=data_risk,  # type: ignore[arg-type]
+    )
+    decision = ModelRouter(candidates).route(request)
+
+    now = _now_utc()
+    with engine.begin() as conn:
+        conn.execute(insert(routing_decisions).values(
+            tenant_id=tenant_id, modality=modality, task=task, data_risk=data_risk,
+            selected=decision.selected, fallback=decision.fallback, score=decision.score,
+            reason=decision.reason, considered=list(decision.considered),
+            benchmark_version=decision.benchmark_version, created_at=now,
+        ))
+
+    write_audit_entry(
+        action="model.routing.recommended",
+        metadata={
+            "modality": modality, "task": task, "data_risk": data_risk,
+            "selected": decision.selected, "fallback": decision.fallback,
+            "considered_count": len(decision.considered),
+        },
+        tenant_id=tenant_id,
+    )
+
+    return {
+        "selected": decision.selected, "fallback": decision.fallback,
+        "score": decision.score, "reason": decision.reason,
+        "considered": decision.considered, "benchmark_version": decision.benchmark_version,
+    }
 
 
 def migrate_encrypt_existing_records() -> dict[str, int]:

@@ -538,3 +538,58 @@ user_chats = Table(
     Column("document_retention_days", Integer, nullable=True),
     Index("ix_user_chats_tenant_user", "tenant_id", "user_id"),
 )
+
+# ── Model Intelligence (Paket A): reine Empfehlungsschicht ──────────────────
+# Waehlt NUR aus bereits im Provider-Orchestrator/der Registry freigegebenen
+# Providern/Modellen. Kein eigenes Freigaberecht -- ein Modell mit
+# status="candidate" wird vom Router (apps/backend/intelligence/model_router.py)
+# nie ausgewaehlt, unabhaengig von seinen Scores. Plattformweite Konfiguration
+# (wie provider_registry.yaml), daher KEIN tenant_id/owner_user_id -- die
+# Entscheidung, welche Modelle ueberhaupt existieren duerfen, ist keine
+# Mandantenentscheidung.
+model_candidates = Table(
+    "model_candidates",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("provider", String(64), nullable=False),
+    Column("model_id", String(128), nullable=False),
+    Column("modalities", JSON, nullable=False, default=list),
+    Column("capabilities", JSON, nullable=False, default=list),
+    Column("context_window", Integer, nullable=False, default=0),
+    Column("regions", JSON, nullable=False, default=list),
+    # candidate | approved | blocked | retired -- nur "approved" ist waehlbar.
+    Column("status", String(32), nullable=False, default="candidate"),
+    Column("quality_score", Float, nullable=True),
+    Column("latency_score", Float, nullable=True),
+    Column("cost_score", Float, nullable=True),
+    Column("privacy_score", Float, nullable=True),
+    Column("benchmark_version", String(64), nullable=False, default="unbenchmarked"),
+    Column("evidence_urls", JSON, nullable=False, default=list),
+    Column("approved_by", String(64), nullable=True),
+    Column("approved_at", DateTime(timezone=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_model_candidates_provider_model", "provider", "model_id", unique=True),
+    Index("ix_model_candidates_status", "status"),
+)
+
+# Append-only Protokoll jeder Routing-Empfehlung -- fuer Nachvollziehbarkeit,
+# nicht fuer Freigabeentscheidungen. Enthaelt bewusst KEINEN Prompt-/
+# Antwortinhalt (nur die Anfrage-Metadaten, wie im Audit-Vault ueblich).
+routing_decisions = Table(
+    "routing_decisions",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("modality", String(32), nullable=False),
+    Column("task", String(64), nullable=False),
+    Column("data_risk", String(16), nullable=False),
+    Column("selected", String(192), nullable=True),
+    Column("fallback", String(192), nullable=True),
+    Column("score", Float, nullable=True),
+    Column("reason", Text, nullable=False),
+    Column("considered", JSON, nullable=False, default=list),
+    Column("benchmark_version", String(64), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ix_routing_decisions_tenant_created", "tenant_id", "created_at"),
+)
