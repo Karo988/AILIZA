@@ -102,15 +102,24 @@ apps/backend/
 ├── governance/          — Klassifikation, Datenziel-Matrix, Redaction
 ├── providers/           — LLMProvider-Interface, Groq/Anthropic, Orchestrator
 ├── routing/             — Token-Budget, Routing (SIMPLE..RISKY)
+├── intelligence/        — Modell-Empfehlung, routet nur freigegebene Modelle
 ├── audit/               — Audit-Vault (Stufe 1 + 2)
 ├── auth/                — JWT, RBAC
 ├── reflection/          — Memory & Reflection (Opt-in, Governance)
+├── memory/              — technischer Prototyp, QUARANTÄNE (nicht der Memory-Kern)
 ├── documents/           — Dokument-Scan vor Upload
 └── streaming/           — gepuffertes Streaming
 apps/frontend/           — React/Vite Dashboard
 policies/governance/     — TOM-Katalog, Provider-DPA, AI-Act, Incident, Review
 docs/                    — v1.0-Blaupause und weitere Dokumente
 ```
+
+Der fachliche **Memory-Kern** sind die Tabellen `memory_items`,
+`memory_sources`, `memory_visibility` und `memory_suggestions` in
+`apps/backend/db_schema.py` — **nicht** der Ordner `apps/backend/memory/`.
+
+Governance-relevante Module im Detail:
+[`docs/architecture/module_overview.md`](docs/architecture/module_overview.md)
 
 ---
 
