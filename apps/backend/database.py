@@ -2568,11 +2568,21 @@ def approve_model_candidate(provider: str, model_id: str, *,
                              approved_by: str,
                              quality_score: float, latency_score: float,
                              cost_score: float, privacy_score: float,
-                             benchmark_version: str) -> dict[str, Any] | None:
+                             benchmark_version: str,
+                             reviewer_role: str = "user") -> dict[str, Any] | None:
     """Setzt status="approved" -- der einzige Weg, wie ein Kandidat waehlbar
     wird. Verlangt Benchmark-Scores UND eine ausfuehrende Person
     (approved_by); kein stiller Automatismus. Gibt None zurueck, wenn
-    (provider, model_id) nicht existiert (kein stilles Anlegen)."""
+    (provider, model_id) nicht existiert (kein stilles Anlegen).
+
+    Freigabeberechtigung folgt demselben Rollenmodell wie
+    confirm_memory_suggestion(): nur admin/manager duerfen ein Modell fuer
+    das Routing freischalten."""
+    if reviewer_role not in ("admin", "manager"):
+        raise ValueError(
+            "Modellfreigabe erfordert Rolle admin oder manager "
+            f"(erhalten: {reviewer_role!r})."
+        )
     now = _now_utc()
     with engine.begin() as conn:
         result = conn.execute(
@@ -2607,22 +2617,48 @@ def list_model_candidates(status: str | None = None) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+_MODEL_ROUTING_BLOCKED_CLASSES = {"credentials", "special_category", "hr", "legal"}
+
+
 def recommend_model(tenant_id: str, *, modality: str, task: str,
                      required_capabilities: list[str] | None = None,
                      min_context_window: int = 0,
                      allowed_providers: list[str] | None = None,
                      required_region: str | None = None,
                      local_only: bool = False,
-                     data_risk: str = "low") -> dict[str, Any]:
+                     data_risk: str = "low",
+                     data_classes: list[str] | None = None) -> dict[str, Any]:
     """Liefert NUR eine Empfehlung -- ruft selbst keinen Provider auf und
     veraendert keine Freigabe. Schreibt einen Audit-Eintrag ueber das
-    bestehende Audit-Vault (write_audit_entry), keine separate Logdatei."""
+    bestehende Audit-Vault (write_audit_entry), keine separate Logdatei.
+
+    data_classes bindet an dieselbe harte Sperre wie reflection_skill.py
+    (classify()): CREDENTIALS/SPECIAL_CATEGORY/HR/LEGAL fuehren immer zu
+    "kein Modell zulaessig", unabhaengig vom privacy_score -- der Router
+    bewertet diese Klassen nicht selbst, sondern uebernimmt AILIZAs
+    verbindliche Sperrliste."""
     try:
         from .intelligence.model_router import ModelRouter
         from .intelligence.models import ModelCandidate, RoutingRequest
     except ImportError:  # pragma: no cover - Fallback bei Ausfuehrung aus apps/backend/
         from intelligence.model_router import ModelRouter  # type: ignore
         from intelligence.models import ModelCandidate, RoutingRequest  # type: ignore
+
+    blocked = _MODEL_ROUTING_BLOCKED_CLASSES & set(data_classes or [])
+    if blocked:
+        write_audit_entry(
+            action="model.routing.blocked",
+            metadata={
+                "modality": modality, "task": task,
+                "blocked_classes": sorted(blocked),
+            },
+            tenant_id=tenant_id,
+        )
+        return {
+            "selected": None, "fallback": None, "score": None,
+            "reason": "Datenklasse darf nicht extern geroutet werden (CREDENTIALS/SPECIAL_CATEGORY/HR/LEGAL).",
+            "considered": (), "benchmark_version": None,
+        }
 
     approved_rows = list_model_candidates(status="approved")
     candidates = [ModelCandidate.from_row(row) for row in approved_rows]

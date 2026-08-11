@@ -49,7 +49,7 @@ def test_approved_candidate_is_recommended():
         "groq", "llama-test", modalities=["text"], capabilities=["chat"], context_window=8000,
     )
     approved = approve_model_candidate(
-        "groq", "llama-test", approved_by="admin1",
+        "groq", "llama-test", approved_by="admin1", reviewer_role="admin",
         quality_score=0.8, latency_score=0.7, cost_score=0.9, privacy_score=0.75,
         benchmark_version="2026-08-bench-1",
     )
@@ -68,7 +68,7 @@ def test_high_risk_data_requires_privacy_score_above_threshold():
         "groq", "low-privacy", modalities=["text"], capabilities=[], context_window=8000,
     )
     approve_model_candidate(
-        "groq", "low-privacy", approved_by="admin1",
+        "groq", "low-privacy", approved_by="admin1", reviewer_role="admin",
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=0.5,
         benchmark_version="v1",
     )
@@ -80,7 +80,7 @@ def test_approve_unknown_candidate_returns_none_no_silent_create():
     from apps.backend.database import approve_model_candidate
 
     result = approve_model_candidate(
-        "unknown", "ghost", approved_by="admin1",
+        "unknown", "ghost", approved_by="admin1", reviewer_role="admin",
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
@@ -101,7 +101,7 @@ def test_recommend_model_writes_audit_entry_without_prompt_content():
 
     create_model_candidate("groq", "audited", modalities=["text"], capabilities=[], context_window=1000)
     approve_model_candidate(
-        "groq", "audited", approved_by="admin1",
+        "groq", "audited", approved_by="admin1", reviewer_role="admin",
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
@@ -122,7 +122,7 @@ def test_recommend_model_persists_routing_decision():
 
     create_model_candidate("groq", "logged", modalities=["text"], capabilities=[], context_window=1000)
     approve_model_candidate(
-        "groq", "logged", approved_by="admin1",
+        "groq", "logged", approved_by="admin1", reviewer_role="admin",
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
@@ -136,13 +136,45 @@ def test_recommend_model_persists_routing_decision():
     assert rows[0]["selected"] == "groq:logged"
 
 
+def test_approve_requires_admin_or_manager_role():
+    from apps.backend.database import create_model_candidate, approve_model_candidate
+
+    create_model_candidate("groq", "role-check", modalities=["text"], capabilities=[], context_window=1000)
+    with pytest.raises(ValueError):
+        approve_model_candidate(
+            "groq", "role-check", approved_by="user1", reviewer_role="user",
+            quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
+            benchmark_version="v1",
+        )
+    approved = approve_model_candidate(
+        "groq", "role-check", approved_by="admin1", reviewer_role="manager",
+        quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
+        benchmark_version="v1",
+    )
+    assert approved["status"] == "approved"
+
+
+def test_recommend_model_blocks_hard_restricted_data_classes():
+    from apps.backend.database import create_model_candidate, approve_model_candidate, recommend_model
+
+    create_model_candidate("groq", "blocked-check", modalities=["text"], capabilities=[], context_window=1000)
+    approve_model_candidate(
+        "groq", "blocked-check", approved_by="admin1", reviewer_role="admin",
+        quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
+        benchmark_version="v1",
+    )
+    result = recommend_model("default", modality="text", task="chat", data_classes=["hr"])
+    assert result["selected"] is None
+    assert "nicht extern geroutet" in result["reason"]
+
+
 def test_list_model_candidates_filters_by_status():
     from apps.backend.database import create_model_candidate, approve_model_candidate, list_model_candidates
 
     create_model_candidate("groq", "c1", modalities=["text"], capabilities=[], context_window=1000)
     create_model_candidate("groq", "c2", modalities=["text"], capabilities=[], context_window=1000)
     approve_model_candidate(
-        "groq", "c1", approved_by="admin1",
+        "groq", "c1", approved_by="admin1", reviewer_role="admin",
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
