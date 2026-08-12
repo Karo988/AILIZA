@@ -252,8 +252,8 @@ def test_confirm_creates_source_item_and_visibility():
         suggested_title="Kurze Antworten", suggested_content="Nutzer bevorzugt kurze Antworten.",
         suggested_purpose="Antwortstil", source_type="user_confirmation",
     )
-    result = confirm_memory_suggestion(s["id"], confirmed_by="alice")
-    item = get_memory_item(result["memory_item_id"])
+    result = confirm_memory_suggestion(s["id"], confirmed_by="alice", tenant_id="default")
+    item = get_memory_item(result["memory_item_id"], tenant_id="default")
     assert item is not None
     assert item["status"] == "active"
     assert item["source_id"] is not None
@@ -277,7 +277,7 @@ def test_reject_creates_no_item():
         suggested_title="Abgelehnt", suggested_content="x",
         suggested_purpose="z", source_type="user_confirmation",
     )
-    reject_memory_suggestion(s["id"], reviewed_by="alice")
+    reject_memory_suggestion(s["id"], reviewed_by="alice", tenant_id="default")
     with engine.begin() as conn:
         rows = conn.execute(select(memory_items)).mappings().all()
     assert len(rows) == 0
@@ -295,10 +295,10 @@ def test_company_memory_needs_admin_before_confirm():
     )
     # Ohne Admin-Rolle: Bestaetigung schlaegt fehl.
     with pytest.raises(MemoryValidationError):
-        confirm_memory_suggestion(s["id"], confirmed_by="alice", reviewer_role="user")
+        confirm_memory_suggestion(s["id"], confirmed_by="alice", reviewer_role="user", tenant_id="default")
     # Mit Admin-Rolle: klappt und erzeugt memory_item.
-    result = confirm_memory_suggestion(s["id"], confirmed_by="karo-admin", reviewer_role="admin")
-    item = get_memory_item(result["memory_item_id"])
+    result = confirm_memory_suggestion(s["id"], confirmed_by="karo-admin", reviewer_role="admin", tenant_id="default")
+    item = get_memory_item(result["memory_item_id"], tenant_id="default")
     assert item["scope"] == "company_memory"
     assert item["status"] == "active"
 
@@ -310,6 +310,6 @@ def test_confirm_rejected_suggestion_fails():
         suggested_title="x", suggested_content="y",
         suggested_purpose="z", source_type="user_confirmation",
     )
-    reject_memory_suggestion(s["id"], reviewed_by="alice")
+    reject_memory_suggestion(s["id"], reviewed_by="alice", tenant_id="default")
     with pytest.raises(MemoryValidationError):
-        confirm_memory_suggestion(s["id"], confirmed_by="alice")
+        confirm_memory_suggestion(s["id"], confirmed_by="alice", tenant_id="default")

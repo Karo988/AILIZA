@@ -201,7 +201,7 @@ def test_external_limited_requires_explicit_visibility_call():
     )
     # Default ist "organization", nicht "external_limited" (Test 3 oben deckt das
     # bereits ab). Hier: explizites Setzen ist moeglich und ueberschreibt Default.
-    set_memory_visibility(item["id"], visibility_scope="external_limited",
+    set_memory_visibility(item["id"], tenant_id="default", visibility_scope="external_limited",
                           allowed_user_ids=["kunde_z_kontakt"])
     with engine.begin() as conn:
         from sqlalchemy import select
@@ -241,7 +241,7 @@ def test_deleted_and_outdated_excluded_from_active_listing():
         content="y", purpose="Testzweck", source_id=source_id,
         owner_user_id="alice", status="active",
     )
-    mark_memory_item_deleted(deleted_item["id"])
+    mark_memory_item_deleted(deleted_item["id"], tenant_id="default")
     result = list_active_memory_items_for_user("alice", "default")
     ids = {r["id"] for r in result}
     assert active_item["id"] in ids
@@ -272,7 +272,7 @@ def test_get_memory_item_returns_item():
         content="Inhalt", purpose="Testzweck", source_id=source_id,
         owner_user_id="alice", status="active",
     )
-    fetched = get_memory_item(item["id"])
+    fetched = get_memory_item(item["id"], tenant_id="default")
     assert fetched["title"] == "Test"
 
 

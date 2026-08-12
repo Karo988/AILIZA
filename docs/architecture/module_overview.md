@@ -168,37 +168,124 @@ Tabellen.
 - **Nicht** identisch mit `apps/backend/memory/` (siehe Abschnitt 3).
   Diese Verwechslung ist der wahrscheinlichste Fehler bei einer Prüfung.
 
-**Bekannte Lücken**
+**Behobene Befunde (B-MEM-1 bis B-MEM-3)**
 
-- **B-MEM-1: Sperrliste greift nicht im Memory-Kern.** `classify()` und
-  damit `_BLOCKED_CLASSES` werden nur in `store_fact()`
-  (`reflection_facts`) angewendet, nicht in `create_memory_item()` oder
-  `confirm_memory_suggestion()`. Ein Inhalt der Klassen `CREDENTIALS`,
-  `SPECIAL_CATEGORY`, `HR` oder `LEGAL` würde beim direkten Schreiben in
-  `memory_items` nicht automatisch abgewiesen.
-  Belegstelle: `apps/backend/database.py` (`create_memory_item`,
-  `confirm_memory_suggestion`) gegen
-  `apps/backend/reflection/reflection_skill.py:50`.
-- **B-MEM-2: Mandantenfilterung nicht durchgängig.**
-  `get_memory_item(item_id)` filtert ausschließlich nach `id`, ohne
-  `tenant_id`. Zusätzlich hat `memory_visibility` gar keine
-  `tenant_id`-Spalte, und in `memory_items` ist `tenant_id`
-  `nullable=True`.
-  Belegstelle: `apps/backend/database.py:1595`,
-  `apps/backend/db_schema.py:306` und `:327`.
-- **B-MEM-3: Permission-Evaluator noch nicht angebunden.** Die Anbindung
-  des Memory-Kerns an `apps/backend/permissions.py` hat laut `README.md`
-  (Zeile 53) noch nicht begonnen; Voraussetzung ist eine
-  Produktions-Bestandsprüfung der Memory-Invarianten.
+Alle drei wurden praktisch reproduziert und anschließend behoben. Die
+Nachweise liegen in `tests/test_memory_security_hardening.py` (32 Tests).
 
-Diese drei Punkte sind **Befunde, keine Behauptungen über geplante
-Arbeit**. Sie sind hier dokumentiert, nicht behoben — eine technische
-Behebung wäre eine eigene Aufgabe mit eigener Freigabe.
+| ID | Befund (vorher) | Behebung |
+|---|---|---|
+| B-MEM-1 | Die Sperrliste griff nur in `store_fact()` (`reflection_facts`). Über `create_memory_item()` ließen sich Zugangsdaten, Gesundheits-, Personal- und Rechtsdaten unredigiert speichern. | Zentrale Prüfung `_enforce_memory_content_policy()` an **allen** Schreibpfaden. Vorschläge werden datensparsam blockiert (Rohinhalt verworfen) statt abgewiesen. |
+| B-MEM-2 | Über die reine ID waren fremde Mandanten les-, änder-, lösch- und bestätigbar. | `tenant_id` ist Pflichtparameter (keyword-only) in `get_memory_item`, `set_memory_visibility`, `mark_memory_item_deleted`, `reject_memory_suggestion`, `mark_memory_suggestion_blocked`, `confirm_memory_suggestion`. Filterung erfolgt in SQL, nicht nachgelagert. |
+| B-MEM-3 | Memory-Aktionen liefen nie durch `evaluate_permission()`; es gab nur eine Ad-hoc-Zugehörigkeitsliste und einen Rollen-String. | Neun `MEMORY_*`-Aktionen im **bestehenden** zentralen Evaluator; die drei produktiven Endpunkte rufen ihn über `_require_memory_permission()`. Kein zweites Berechtigungssystem. **Teilweise** — siehe Einschränkung unten. |
+
+**Einschränkung zu B-MEM-3 (wichtig für eine Prüfung):** Produktiv
+angebunden sind nur die drei Vorschlags-Aktionen
+(`MEMORY_SUGGESTION_LIST/CONFIRM/REJECT`). Die Konstanten auf Item-Ebene
+(`MEMORY_ITEM_READ/LIST/CREATE/DELETE`, `MEMORY_VISIBILITY_UPDATE`,
+`MEMORY_SCOPE_TRANSFER`) sind definiert und getestet, werden aber von
+**keinem** Produktivpfad aufgerufen — es gibt dort heute keine
+HTTP-Endpunkte. Der Schutz auf Item-Ebene stammt allein aus den
+`tenant_id`-Pflichtparametern der Datenbankfunktionen. Wer die Tests
+liest, könnte sonst eine Absicherung annehmen, die im Betrieb nicht
+greift.
+
+**Entwurfsentscheidungen dabei**
+
+- **Keine `tenant_id`-Spalte in `memory_visibility`.** Sie wäre eine
+  zweite Wahrheit über die Mandantenzugehörigkeit und könnte vom
+  zugehörigen `memory_item` abweichen. Der Mandantenbezug wird stattdessen
+  über das Item geprüft.
+- **`memory_items.tenant_id` bleibt `nullable`.** Altdaten ohne Mandant
+  müssen für ihren Besitzer auffindbar, exportierbar und löschbar bleiben
+  (Art. 17/20 DSGVO). Eine stillschweigende Zuordnung wäre eine
+  Datenfälschung.
+- **Kein generischer Zugriff auf mandantenlose Altdaten.** Ein erster
+  Entwurf ließ solche Zeilen mit passendem `owner_user_id` über
+  `get_memory_item()` zu. Das war falsch: derselbe `user_id` kann in
+  mehreren Mandanten existieren, wodurch ein Nutzer aus Mandant B an die
+  Altdaten eines gleichnamigen Nutzers aus Mandant A kam. Die Ausnahme
+  wurde entfernt; der Selbstbedienungspfad läuft ausschließlich über
+  `list_active_memory_items_for_user()` und
+  `_soft_delete_owned_memory_items()`, die zusätzlich nach `scope` und
+  `owner_user_id` filtern.
+- **`tenant_id=None` ist ein Fehler, kein Filter.** `== None` übersetzt
+  SQLAlchemy zu `IS NULL` und hätte alle mandantenlosen Zeilen getroffen.
+  `_require_tenant()` weist leere Werte fail-closed ab.
+- **Scope-Wechsel ist hart verweigert.** Es existiert kein freigegebener
+  Transferpfad zwischen Gedächtnisebenen; `MEMORY_SCOPE_TRANSFER` wird für
+  **jede** Rolle abgelehnt und der Versuch auditiert.
+
+**Zweite Prüfrunde — acht weitere Lücken in der ersten Behebung**
+
+Eine unabhängige Gegenprüfung fand in der *ersten* Fassung dieser
+Behebung acht Lücken, davon drei mit hohem Schweregrad. Alle wurden
+behoben und mit Tests belegt:
+
+| Schwere | Lücke | Behebung |
+|---|---|---|
+| hoch | Beim Blockieren wurde nur der Inhalt verworfen — der Titel enthielt im Chat-Pfad den Rohprompt (`title=task[:100]`) | Titel, Zweck und Kategorie werden ebenfalls verworfen |
+| hoch | `tenant_id=None` wirkte als `IS NULL` und öffnete alle Altdaten | `_require_tenant()` an allen Zugriffspfaden |
+| hoch | Altdaten-Ausnahme prüfte nur den Besitzernamen, nicht den Ursprungsmandanten | Ausnahme entfernt (siehe oben) |
+| mittel | `purpose` und `category` liefen an der Inhaltsprüfung vorbei | beide werden geprüft |
+| mittel | `confirm_memory_suggestion()` filterte nicht nach Eigentümer — ein anderer Nutzer desselben Mandanten konnte bestätigen | zusätzlicher `user_id`-Filter, auch im öffentlichen Alias |
+| niedrig | `MEMORY_ITEM_CREATE` hatte Listen-Semantik (Blanko-Erlaubnis) | als Eigentümer-Aktion eingestuft |
+| niedrig | Die Endpunkte übergaben den Aufrufer als Eigentümer — die Prüfung war dadurch wirkungslos | tatsächlicher Eigentümer aus dem Datensatz |
+
+Eine **zweite** Prüfrunde deckte danach einen weiteren Fehler in genau
+dieser Korrektur auf: Die Rollen-Ausnahme für admin/manager hob die
+Eigentümerbindung **pauschal** auf, nicht nur für Firmenwissen. Ein
+Manager konnte dadurch aus dem persönlichen Vorschlag eines fremden
+Nutzers einen Gedächtniseintrag erzeugen. Die Ausnahme greift jetzt nur
+noch bei `suggested_scope == "company_memory"`.
+
+**Verbleibende Lücken**
+
+- **B-GOV-1 (neu, offen): `classify()` erkennt nicht jeden Art.-10-Fall.**
+  Ein Text über ein Strafverfahren („Mitarbeiter Meier wurde wegen
+  Diebstahl strafrechtlich verurteilt") wird als `public` eingestuft, nicht
+  als `LEGAL`, und damit gespeichert. Texte mit HR- oder
+  Gesundheitsbezug werden dagegen korrekt geblockt. Die Sperre ist also nur
+  so gut wie der Klassifizierer.
+  `declared_data_classes` ist der verlässliche Weg — **wird aber derzeit
+  von keinem produktiven Aufrufer gesetzt**, nur in Tests. Der Parameter
+  ist damit heute eine Möglichkeit, keine wirksame Maßnahme.
+  Eine Verbesserung von `classify()` selbst wirkt auf die gesamte
+  Redaction-/Policy-Pipeline und gehört in eine eigene Aufgabe mit eigener
+  Freigabe. **HANDOFF.**
+- **B-MEM-4 (neu, offen): Selbstbedienungspfad bleibt mandantenübergreifend
+  für Altdaten — nur teilweise behoben.** Gehärtet wurde ausschließlich
+  `get_memory_item()`. `list_active_memory_items_for_user()`,
+  `export_user_data()` und `_soft_delete_owned_memory_items()` enthalten
+  weiterhin `or_(tenant_id == X, tenant_id.is_(None))` und filtern nur nach
+  `owner_user_id` und `scope`. Praktisch belegt: Existiert derselbe
+  `user_id` in zwei Mandanten, liest **und löscht** jeder von beiden diese
+  mandantenlosen Altdaten.
+  Das ist bestehendes, dokumentiertes Verhalten (M1-Übergangsregel) und war
+  nicht Teil dieser Änderung. Die Auflösung erfordert eine Entscheidung, wem
+  die Altdaten zugeordnet werden — eine stillschweigende Zuordnung wäre
+  Datenfälschung, ein ersatzloses Sperren würde Auskunft und Löschung nach
+  Art. 17/20 DSGVO verhindern. Deshalb ausdrücklich **nicht** eigenmächtig
+  entschieden. **HANDOFF — braucht eine menschliche Entscheidung.**
+- **Außerhalb des Memory-Bereichs, nur als Hinweis:** `/feedback`
+  (`apps/backend/main.py`) übernimmt `tenant_id` aus dem Anfragekörper
+  statt aus dem Token. Nicht Teil dieser Aufgabe, nicht geprüft.
+- **B-MEM-3 (Rest): Anbindung an `permissions.py` ist auf die drei
+  produktiven Memory-Endpunkte begrenzt.** Die Datenbankfunktionen selbst
+  setzen Mandant und Eigentümer durch, prüfen aber keine Rolle — ein
+  direkter Aufruf aus dem Code umgeht die Rollenprüfung. Für weitere
+  Endpunkte muss `_require_memory_permission()` jeweils ergänzt werden.
 
 **Referenzdateien:** `apps/backend/db_schema.py` (Zeilen 288–366),
-`apps/backend/database.py` (`confirm_memory_suggestion`,
-`create_memory_item`), `apps/backend/reflection/reflection_skill.py`,
-`apps/backend/routers/memory.py` (siehe Abschnitt 3)
+`apps/backend/database.py` (`_enforce_memory_content_policy`,
+`_memory_blocked_classes`, `create_memory_item`, `get_memory_item`,
+`set_memory_visibility`, `mark_memory_item_deleted`,
+`confirm_memory_suggestion`, `reject_memory_suggestion`),
+`apps/backend/permissions.py` (`MEMORY_*`, `evaluate_permission`),
+`apps/backend/main.py` (`_require_memory_permission` und die drei
+Memory-Endpunkte), `apps/backend/reflection/reflection_skill.py`,
+`apps/backend/routers/memory.py` (siehe Abschnitt 3),
+`tests/test_memory_security_hardening.py`
 
 ---
 
@@ -253,19 +340,86 @@ bleibt es unregistriert und gesperrt.
 
 ---
 
+## 3a. Migrations-Merge-Gate (bedingt)
+
+**Aktueller Stand:** Der PR-Branch hat **genau einen** Alembic-Head
+(`b7e4d92c1a63`). Die Kette ist linear:
+`6165ff33e9ee → b4d3a1d0de71 → d8f4c6a91b27 → b7e4d92c1a63`.
+
+**Der Konflikt ist damit nicht aufgelöst, sondern nur nicht ausgelöst.**
+Der lokale Branch `feature/phase-1` (nicht auf dem Remote, nicht Teil von
+PR #86) enthält `e1a7c3f92b56` mit demselben Vorgänger `d8f4c6a91b27`.
+
+| | |
+|---|---|
+| Auslöser | Sobald beide Zweige gemeinsam integriert werden |
+| Folge ohne Maßnahme | Zwei Heads, `alembic upgrade head` schlägt fehl |
+| Maßnahme | Genau **ein** Head herstellen: entweder `down_revision` eines Zweigs auf den anderen umhängen (lineare Reihenfolge) oder eine Alembic-Merge-Revision erzeugen |
+| Voraussetzung | Erst wenn beide Zweige tatsächlich integriert werden — eine Merge-Revision auf einen nicht integrierten Branch zu bauen erzeugt eine Abhängigkeit auf Code, den es öffentlich nicht gibt |
+| Nachweis danach | `alembic heads` liefert genau einen Head; frische Migration, Upgrade einer bestehenden Datenbank und Downgrade erneut vollständig testen |
+
+**Status: bedingtes Merge-Gate, offen.** Es blockiert PR #86 nicht, muss
+aber vor dem gemeinsamen Merge mit `feature/phase-1` erledigt sein.
+
+---
+
+## 4. Zielarchitektur Memory — HANDOFF, noch nicht umgesetzt
+
+> Dieser Abschnitt beschreibt **Absicht, keinen Ist-Zustand**. Keine der
+> hier genannten Klassen existiert heute. Er dient als Rahmen für spätere
+> Entscheidungen, nicht als Beschreibung des Codes.
+
+**Ziel:** Andere Speicher (PostgreSQL, Graph-, Vektorspeicher) anbinden
+können, ohne die Governance-Regeln zu vervielfachen.
+
+**Tragende Regel:** Mandant, Gedächtnisebene, Berechtigung,
+Datenklassen-Sperre und Audit werden **oberhalb** des konkreten Speichers
+durchgesetzt. Kein Speicheradapter darf diese Regeln selbst
+implementieren, ändern oder überspringen — sonst entstehen so viele
+Governance-Varianten wie Datenbanken.
+
+**Heutiger Stand als Ausgangspunkt:** Die Durchsetzung liegt bereits in
+`apps/backend/database.py` vor den SQL-Aufrufen (`_enforce_memory_content_policy`,
+Mandantenfilter, `_validate_memory_item`) und in `permissions.py` vor dem
+Datenzugriff. Das ist faktisch schon die geforderte Reihenfolge — was
+fehlt, ist die Trennung von SQLAlchemy.
+
+**Schrittfolge (Vorschlag, jeweils eigene Freigabe)**
+
+| Schritt | Inhalt | Risiko |
+|---|---|---|
+| 1 | Lese-/Schreibzugriffe auf die vier Memory-Tabellen hinter eine schmale Schnittstelle legen (`MemoryRepository`), Regeln bleiben davor | gering, rein struktureller Umbau |
+| 2 | Bestehende SQLAlchemy-Implementierung als erste Umsetzung dieser Schnittstelle | gering |
+| 3 | Zweite Umsetzung (z. B. PostgreSQL-spezifisch) nur, wenn ein realer Bedarf besteht | mittel |
+| 4 | Vektor-/Graphspeicher ausschließlich als **zusätzlicher Index** neben der führenden Tabelle, nie als alleinige Quelle | hoch — eigene Prüfung nötig |
+
+**Ausdrücklich nicht vorgesehen:** eine Neuentwicklung des Memory-Kerns.
+Schritt 1 lohnt sich nur, wenn er echte Kopplung entfernt und alle
+bestehenden Tests unverändert grün bleiben. Andernfalls bleibt es beim
+heutigen Aufbau.
+
+---
+
 ## Prüfstatus dieses Dokuments
 
-| Abschnitt | Belegt durch | Zuletzt geprüft | Bekannte Lücken |
-|---|---|---|---|
-| 1 — `intelligence/` | Quelltext, Tests, Migration | 2026-08-11 | 2 (keine Orchestrator-Anbindung, kein Freigabe-Endpunkt) |
-| 2 — Memory-Kern | Quelltext `db_schema.py`, `database.py` | 2026-08-11 | 3 (B-MEM-1, B-MEM-2, B-MEM-3) |
-| 3 — `memory/` Prototyp | Quelltext, `grep` auf `include_router` | 2026-08-11 | 3 (kein RBAC, kein `tenant_id`, kein Audit) — Grund der Quarantäne |
+| Abschnitt | Belegt durch | Zuletzt geprüft | Prüfer | Bekannte Lücken |
+|---|---|---|---|---|
+| 1 — `intelligence/` | Quelltext, Tests, Migration | 2026-08-11 | Prüfung offen | 2 (keine Orchestrator-Anbindung, kein Freigabe-Endpunkt) |
+| 2 — Memory-Kern | Quelltext, 32 Sicherheitstests, praktische Reproduktion | 2026-08-12 | Prüfung offen | 2 offen (B-GOV-1, B-MEM-3-Rest); B-MEM-1/2 behoben |
+| 3 — `memory/` Prototyp | Quelltext, `grep` auf `include_router` | 2026-08-11 | Prüfung offen | 3 (kein RBAC, kein `tenant_id`, kein Audit) — Grund der Quarantäne |
+| 4 — Zielarchitektur | keine — reine Absicht | 2026-08-12 | Prüfung offen | vollständig HANDOFF |
+
+**Prüfer:** Für keinen Abschnitt liegt bislang eine namentliche
+menschliche Abnahme vor. Der Status lautet deshalb durchgehend
+**Prüfung offen** — die technische Verifikation (Tests, Reproduktion,
+unabhängige Gegenprüfung durch einen zweiten Agenten) ersetzt keine
+personelle Freigabe.
 
 Jede Aussage dieses Dokuments wurde gegen den Quelltext geprüft und
-zusätzlich unabhängig gegengeprüft. Dabei wurden vier Falschaussagen im
-ersten Entwurf gefunden und korrigiert — insbesondere die zunächst
-fälschlich behauptete durchgängige Mandantenfilterung und die
-Reichweite der Datenklassen-Sperre (jetzt B-MEM-1 und B-MEM-2).
+zusätzlich unabhängig gegengeprüft. Im ersten Entwurf wurden dabei vier
+Falschaussagen gefunden und korrigiert — insbesondere die zunächst
+fälschlich behauptete durchgängige Mandantenfilterung und die Reichweite
+der Datenklassen-Sperre (daraus wurden B-MEM-1 und B-MEM-2).
 
 **Nicht geprüft:** ob eine Modul-Registry oder ein automatischer
 Doku-Drift-Test eingeführt werden soll. Beides existiert im Repository
