@@ -124,7 +124,7 @@ try:
         users, user_settings, memory_sources, memory_items, memory_visibility,
         memory_suggestions, messenger_bindings, totp_secrets, totp_backup_codes,
         skills, knowledge_sources, knowledge_chunks, knowledge_source_permissions,
-        user_projects, user_chats, model_candidates, routing_decisions,
+        user_projects, user_chats, model_candidates, routing_decisions, customers,
     )
 except ImportError:
     from db_schema import (  # type: ignore
@@ -135,7 +135,7 @@ except ImportError:
         users, user_settings, memory_sources, memory_items, memory_visibility,
         memory_suggestions, messenger_bindings, totp_secrets, totp_backup_codes,
         skills, knowledge_sources, knowledge_chunks, knowledge_source_permissions,
-        user_projects, user_chats, model_candidates, routing_decisions,
+        user_projects, user_chats, model_candidates, routing_decisions, customers,
     )
 
 engine_options: dict[str, Any] = {}
@@ -2579,6 +2579,34 @@ def create_model_candidate(provider: str, model_id: str, *,
     }
 
 
+# ── Phase 1 (Ladengeschaeft-Produktlauf): Kunde -> Artikel -> Rechnung ───────
+# Kleinster abgeschlossener Baustein: nur Kundenstammdaten (Anlegen + Liste).
+# GRUNDREGEL wie oben: jede Funktion filtert IMMER nach tenant_id. Kein Weg,
+# ueber diese Helper an Datensaetze fremder Mandanten zu gelangen.
+
+def create_customer(customer_id: str, tenant_id: str, *,
+                     name: str, owner_user_id: str | None = None,
+                     email: str | None = None, phone: str | None = None,
+                     address: str | None = None, note: str | None = None) -> dict[str, Any]:
+    """Legt einen neuen Kunden an. Kein Upsert -- eine bestehende id+tenant_id
+    fuehrt zu einem IntegrityError (Primary-Key-Verletzung), keine stille
+    Ueberschreibung fremder/eigener Datensaetze. Personenbezogene Felder
+    werden wie bei user_projects/user_chats feldverschluesselt gespeichert."""
+    now = _now_utc()
+    with engine.begin() as conn:
+        conn.execute(insert(customers).values(
+            id=customer_id, tenant_id=tenant_id, owner_user_id=owner_user_id,
+            name=encrypt_field(name), email=encrypt_field(email),
+            phone=encrypt_field(phone), address=encrypt_field(address),
+            note=encrypt_field(note), created_at=now, updated_at=now,
+        ))
+    return {
+        "id": customer_id, "tenant_id": tenant_id, "owner_user_id": owner_user_id,
+        "name": name, "email": email, "phone": phone, "address": address, "note": note,
+        "created_at": now, "updated_at": now,
+    }
+
+
 class ModelApprovalDenied(RuntimeError):
     """Freigabe verweigert -- eigene Klasse, damit ein Aufrufer sie nicht
     versehentlich mit einem Datenfehler (ValueError) verwechselt."""
@@ -2857,6 +2885,32 @@ def recommend_model(tenant_id: str, *, modality: str, task: str,
         "score": decision.score, "reason": decision.reason,
         "considered": decision.considered, "benchmark_version": decision.benchmark_version,
     }
+
+
+def _decode_customer_row(row: dict[str, Any]) -> dict[str, Any]:
+    row = dict(row)
+    row["name"] = decrypt_field(row["name"])
+    row["email"] = decrypt_field(row["email"])
+    row["phone"] = decrypt_field(row["phone"])
+    row["address"] = decrypt_field(row["address"])
+    row["note"] = decrypt_field(row["note"])
+    return row
+
+
+def list_customers(tenant_id: str, owner_user_id: str | None = None) -> list[dict[str, Any]]:
+    """Listet Kunden eines Mandanten. owner_user_id ist ein zusaetzlicher
+    Filter (nicht Pflicht) -- Sichtbarkeit ueber Rollen/Rechte ist nicht
+    Teil dieses kleinsten Bausteins und wird hier bewusst nicht vorweggenommen."""
+    query = (
+        select(customers)
+        .where(customers.c.tenant_id == tenant_id)
+        .order_by(customers.c.created_at.desc())
+    )
+    if owner_user_id is not None:
+        query = query.where(customers.c.owner_user_id == owner_user_id)
+    with engine.begin() as conn:
+        rows = conn.execute(query).mappings().all()
+    return [_decode_customer_row(row) for row in rows]
 
 
 def migrate_encrypt_existing_records() -> dict[str, int]:

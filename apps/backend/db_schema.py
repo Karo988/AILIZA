@@ -596,3 +596,26 @@ routing_decisions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_routing_decisions_tenant_created", "tenant_id", "created_at"),
 )
+
+# ── Phase 1 (Ladengeschaeft-Produktlauf): Kundenstammdaten ──────────────────
+# Kleinster abgeschlossener Baustein von Kunde -> Artikel -> Rechnung.
+# Artikel und Rechnung sind bewusst NICHT Teil dieses Schritts.
+# owner_user_id NUR hier (Anlegerin/Zustaendige der Kundenakte) -- kein
+# pauschales Feld auf allen Tabellen, wie in den Arbeitsregeln gefordert.
+customers = Table(
+    "customers",
+    metadata_obj,
+    # Zusammengesetzter Primary Key wie bei user_projects/user_chats:
+    # (tenant_id, id) isoliert vollstaendig, kein Hijack ueber kollidierende id.
+    Column("id", String(64), primary_key=True),
+    Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
+    Column("owner_user_id", String(64), nullable=True),
+    Column("name", Text, nullable=False),
+    Column("email", Text, nullable=True),
+    Column("phone", Text, nullable=True),
+    Column("address", Text, nullable=True),
+    Column("note", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_customers_tenant_owner", "tenant_id", "owner_user_id"),
+)
