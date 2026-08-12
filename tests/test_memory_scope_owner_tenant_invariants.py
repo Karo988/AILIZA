@@ -94,10 +94,22 @@ def test_valid_company_memory_accepted():
 
 # ── Legacy-Uebergang: user_memory mit tenant_id=NULL ────────────────────────
 
-def test_user_memory_with_null_tenant_is_listable_for_owner():
-    """Legacy-user_memory ohne Tenant (aus Zeit vor Tenant-Pflicht) muss
-    weiterhin fuer den Owner sichtbar sein, unabhaengig vom angefragten
-    Tenant."""
+def test_user_memory_with_null_tenant_is_quarantined_not_listed():
+    """GEAENDERTES VERHALTEN -- Begruendung (B-MEM-4):
+
+    Dieser Test forderte bisher das Gegenteil: Legacy-user_memory ohne
+    Tenant sollte fuer den Owner sichtbar sein, "unabhaengig vom
+    angefragten Tenant". Genau diese Regel war der Fehler -- sie ordnete
+    allein ueber den Benutzernamen zu. Ein gleichnamiger Nutzer eines
+    ANDEREN Mandanten sah und loeschte damit fremde Altdaten (praktisch
+    reproduziert).
+
+    Der Test wurde nicht abgeschwaecht, sondern auf die neue, strengere
+    Regel umgestellt: solche Zeilen sind aus allen normalen Zugriffspfaden
+    ausgenommen (Quarantaene). Sie werden weder geloescht noch einem
+    Mandanten zugeordnet -- ihre Behandlung ist eine gesonderte
+    menschliche Entscheidung. Der Bestand bleibt ueber
+    count_unassigned_memory_items() nachweisbar."""
     from apps.backend.database import engine, memory_items
     from sqlalchemy import insert
     from datetime import datetime, timezone
@@ -108,10 +120,17 @@ def test_user_memory_with_null_tenant_is_listable_for_owner():
             title="alt", content="alt-inhalt", category=None, purpose="p",
             source_id=None, status="active", created_at=now, updated_at=now,
         ))
-    from apps.backend.database import list_active_memory_items_for_user
-    items = list_active_memory_items_for_user("legacy_alice", "default")
-    assert len(items) == 1
-    assert items[0]["tenant_id"] is None
+    from apps.backend.database import (
+        list_active_memory_items_for_user, count_unassigned_memory_items,
+    )
+    # Aus dem normalen Pfad ausgenommen -- aus JEDEM Mandanten.
+    assert list_active_memory_items_for_user("legacy_alice", "default") == []
+    assert list_active_memory_items_for_user("legacy_alice", "mandant-b") == []
+
+    # Aber nachweisbar vorhanden: nichts wurde geloescht oder zugeordnet.
+    bestand = count_unassigned_memory_items()
+    assert bestand["anzahl"] == 1
+    assert bestand["betroffene_owner_user_ids"] == ["legacy_alice"]
 
 
 def test_legacy_user_memory_with_tenant_remains_findable():

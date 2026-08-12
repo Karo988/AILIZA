@@ -32,7 +32,10 @@ try:
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
         get_accessible_agent_run,
     )
-    from .permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
+    from .permissions import (
+        evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE,
+        MEMORY_SUGGESTION_LIST, MEMORY_SUGGESTION_CONFIRM, MEMORY_SUGGESTION_REJECT,
+    )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
     from .errors import AILIZAError, MESSAGES
@@ -98,7 +101,10 @@ except ImportError:
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
         get_accessible_agent_run,
     )
-    from apps.backend.permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
+    from apps.backend.permissions import (
+        evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE,
+        MEMORY_SUGGESTION_LIST, MEMORY_SUGGESTION_CONFIRM, MEMORY_SUGGESTION_REJECT,
+    )
     from apps.backend.gateway import guarded_tool_call
     from apps.backend.routers.approvals import router as approvals_router
     from apps.backend.errors import AILIZAError, MESSAGES
@@ -3124,6 +3130,26 @@ def _require_user(token: TokenData | None) -> TokenData:
     return token
 
 
+def _require_memory_permission(action: str, actor: TokenData, *,
+                               resource_type: str, resource_id: str,
+                               resource_owner_user_id: str | None = None) -> None:
+    """B-MEM-3: Jede Memory-Aktion laeuft durch den zentralen
+    evaluate_permission() -- denselben Evaluator wie Agent-Runs und
+    Approvals. Eine verweigerte Entscheidung liefert bewusst 404 mit der
+    generischen Meldung, damit die Existenz fremder Eintraege nicht ueber
+    unterschiedliche Statuscodes erkennbar wird."""
+    decision = evaluate_permission(
+        action=action,
+        actor=actor,
+        tenant_id=actor.tenant_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        resource_owner_user_id=resource_owner_user_id,
+    )
+    if not decision.allowed:
+        raise HTTPException(status_code=404, detail=decision.reason_de or GENERIC_DENIED_MESSAGE)
+
+
 @app.get("/api/user-projects")
 def api_list_user_projects(
     token: TokenData | None = Depends(get_current_user),
@@ -3238,6 +3264,10 @@ def api_list_memory_suggestions(
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     user = _require_user(token)
+    _require_memory_permission(
+        MEMORY_SUGGESTION_LIST, user,
+        resource_type="memory_suggestion", resource_id="*",
+    )
     suggestions = list_memory_suggestions_for_user(user.user_id, user.tenant_id)
     return {"suggestions": suggestions, "count": len(suggestions)}
 
@@ -3248,12 +3278,26 @@ def api_confirm_memory_suggestion(
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     user = _require_user(token)
-    own = {s["id"] for s in list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
-    if suggestion_id not in own:
+    # B-MEM-3: Der TATSAECHLICHE Eigentuemer wird aus dem Datensatz gelesen und
+    # an den Evaluator gegeben. Wuerde hier user.user_id uebergeben, waere der
+    # Owner-Zweig immer erfuellt und die Pruefung wirkungslos.
+    eigen = {s["id"]: s for s in
+             list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
+    if suggestion_id not in eigen:
+        # Bleibt als erste Sperre bestehen: ohne sie duerfte eine Manager-
+        # Rolle ueber den ORG_ROLE-Zweig auch fremde persoenliche Vorschlaege
+        # bestaetigen.
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
+    besitzer = eigen[suggestion_id].get("user_id")
+    _require_memory_permission(
+        MEMORY_SUGGESTION_CONFIRM, user,
+        resource_type="memory_suggestion", resource_id=str(suggestion_id),
+        resource_owner_user_id=besitzer,
+    )
     try:
         result = confirm_memory_suggestion(
             suggestion_id, confirmed_by=user.user_id, reviewer_role=user.role,
+            tenant_id=user.tenant_id, user_id=user.user_id,
         )
     except MemoryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3266,10 +3310,21 @@ def api_reject_memory_suggestion(
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     user = _require_user(token)
-    own = {s["id"] for s in list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
-    if suggestion_id not in own:
+    eigen = {s["id"]: s for s in
+             list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
+    if suggestion_id not in eigen:
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
-    reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id)
+    besitzer = eigen[suggestion_id].get("user_id")
+    _require_memory_permission(
+        MEMORY_SUGGESTION_REJECT, user,
+        resource_type="memory_suggestion", resource_id=str(suggestion_id),
+        resource_owner_user_id=besitzer,
+    )
+    try:
+        reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id,
+                                 tenant_id=user.tenant_id)
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "rejected", "id": suggestion_id}
 
 

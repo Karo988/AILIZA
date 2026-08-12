@@ -1535,6 +1535,67 @@ def create_memory_source(tenant_id: str, source_type: str, *,
     return {"id": source_id, "tenant_id": tenant_id, "source_type": source_type}
 
 
+# ── B-MEM-1: zentrale, fail-closed Inhaltsprueffung fuer ALLE Memory-Schreibpfade ──
+# Vorher griff die Sperrliste nur in reflection_skill.store_fact() und schuetzte
+# damit ausschliesslich reflection_facts. create_memory_item(),
+# create_memory_suggestion() und confirm_memory_suggestion() waren ungeschuetzt.
+# Diese Funktion ist der EINZIGE Prueferpunkt und wird von jedem Schreibpfad
+# aufgerufen -- ein neuer Schreibpfad ohne diesen Aufruf ist ein Fehler und
+# wird durch tests/test_memory_content_policy.py erkannt.
+_MEMORY_BLOCKED_DATA_CLASSES = {"credentials", "special_category", "hr", "legal"}
+
+
+def _memory_blocked_classes(*parts: str | None,
+                            declared_classes: list[str] | None = None) -> set[str]:
+    """Liefert die gesperrten Datenklassen, die auf den Inhalt zutreffen
+    (leere Menge = unbedenklich). Getrennt von der werfenden Variante,
+    damit Aufrufer wie create_memory_suggestion() den Fund datensparsam
+    behandeln koennen (Rohinhalt verwerfen statt Fehler)."""
+    blocked: set[str] = set()
+
+    for cls in (declared_classes or []):
+        if str(cls).lower() in _MEMORY_BLOCKED_DATA_CLASSES:
+            blocked.add(str(cls).lower())
+
+    text = "\n".join(p for p in parts if p)
+    if text:
+        if _contains_secret_content(text):
+            blocked.add("credentials")
+        try:
+            from .governance.data_governance import classify
+        except ImportError:  # pragma: no cover - Ausfuehrung aus apps/backend/
+            from governance.data_governance import classify  # type: ignore
+        for dc in classify(text).data_classes:
+            value = getattr(dc, "value", str(dc)).lower()
+            if value in _MEMORY_BLOCKED_DATA_CLASSES:
+                blocked.add(value)
+    return blocked
+
+
+def _enforce_memory_content_policy(*parts: str | None,
+                                   declared_classes: list[str] | None = None) -> None:
+    """Wirft MemoryValidationError, wenn der Inhalt einer gesperrten
+    Datenklasse angehoert. Fail-closed in zwei Stufen:
+
+    1. Vom Aufrufer ausdruecklich mitgegebene Klassen (declared_classes)
+       werden IMMER respektiert -- auch wenn die Heuristik nichts findet.
+    2. Zusaetzlich laeuft classify() ueber den Text sowie die bestehende
+       Secret-Heuristik (_contains_secret_content).
+
+    Bekannte Grenze (B-GOV-1, siehe docs/architecture/module_overview.md):
+    classify() erkennt nicht jeden Art.-10-Sachverhalt (z. B. Strafverfahren)
+    als LEGAL. Die Sperre ist damit nur so gut wie der Klassifizierer --
+    declared_classes ist deshalb der verlaessliche Weg fuer Aufrufer, die
+    die Datenklasse bereits kennen."""
+    blocked = _memory_blocked_classes(*parts, declared_classes=declared_classes)
+    if blocked:
+        raise MemoryValidationError(
+            "Inhalt gehoert zu einer gesperrten Datenklasse und darf nicht ins "
+            f"Gedaechtnis: {sorted(blocked)}. "
+            "(CREDENTIALS/SPECIAL_CATEGORY/HR/LEGAL werden nie gespeichert.)"
+        )
+
+
 def _validate_memory_item(scope: str, tenant_id: str | None, owner_user_id: str | None,
                           status: str, source_id: int | None, purpose: str | None) -> None:
     if scope not in _VALID_MEMORY_SCOPES:
@@ -1567,11 +1628,24 @@ def create_memory_item(tenant_id: str | None, scope: str, title: str, content: s
                        purpose: str | None = None, source_id: int | None = None,
                        owner_user_id: str | None = None, category: str | None = None,
                        status: str = "suggested", expires_at: datetime | None = None,
-                       created_by: str | None = None, approved_by: str | None = None) -> dict[str, Any]:
+                       created_by: str | None = None, approved_by: str | None = None,
+                       declared_data_classes: list[str] | None = None) -> dict[str, Any]:
     """Legt einen Memory-Eintrag an. Kein automatischer Aufrufpfad -- diese
     Funktion wird nur explizit aufgerufen (siehe test_no_automatic_chat_to_memory_path_exists).
     Pflichtregeln (Scope/Zweck/Quelle/Besitzer) werden hier durchgesetzt,
-    nicht erst in einer spaeteren Schicht (fail-closed)."""
+    nicht erst in einer spaeteren Schicht (fail-closed).
+
+    B-MEM-1: Zusaetzlich greift _enforce_memory_content_policy() -- gesperrte
+    Datenklassen erzeugen niemals einen Eintrag, unabhaengig vom Aufrufer."""
+    # Alle vom Aufrufer stammenden Freitextfelder pruefen -- purpose und
+    # category liefen zunaechst an der Sperre vorbei und waren damit ein
+    # Schreibpfad in memory_items ohne Inhaltspruefung (unabhaengig belegt).
+    _enforce_memory_content_policy(title, content, purpose, category,
+                                   declared_classes=declared_data_classes)
+    # B-MEM-4: Keine NEUEN mandantenlosen Zeilen. Solche Eintraege waeren
+    # sofort quarantaenisiert und damit fuer ihren Besitzer nicht mehr
+    # les-, korrigier- oder loeschbar -- das darf nicht neu entstehen.
+    _require_tenant(tenant_id, funktion="create_memory_item")
     _validate_memory_item(scope, tenant_id, owner_user_id, status, source_id, purpose)
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
@@ -1590,12 +1664,55 @@ def create_memory_item(tenant_id: str | None, scope: str, title: str, content: s
                 allowed_roles=[], allowed_user_ids=[], allowed_org_id=vis["allowed_org_id"],
                 project_id=None, created_at=now, updated_at=now,
             ))
-    return get_memory_item(item_id)
+        # Rueckgabe bewusst NICHT ueber get_memory_item(): dort ist tenant_id
+        # Pflicht, waehrend hier auch mandantenloses user_memory (Altbestand,
+        # tenant_id=NULL) erzeugt werden darf. Der Datensatz wurde gerade in
+        # dieser Transaktion angelegt -- ein Mandantenfilter waere hier keine
+        # Zugriffskontrolle, sondern nur eine Rueckfrage auf die eigene Zeile.
+        row = conn.execute(
+            select(memory_items).where(memory_items.c.id == item_id)
+        ).mappings().first()
+    return dict(row) if row else None
 
 
-def get_memory_item(item_id: int) -> dict[str, Any] | None:
+def _require_tenant(tenant_id: str | None, *, funktion: str) -> str:
+    """Fail-closed gegen tenant_id=None.
+
+    Ohne diese Pruefung wuerde `memory_items.c.tenant_id == None` in SQL als
+    `IS NULL` uebersetzt und damit ALLE Altdatensaetze beliebiger Nutzer
+    treffen -- die Mandantenpruefung waere dann nur so stark wie die
+    Disziplin der Aufrufer. Ein fehlender Mandant ist kein gueltiger
+    Mandant."""
+    if not tenant_id or not str(tenant_id).strip():
+        raise MemoryValidationError(
+            f"{funktion}: tenant_id ist Pflicht und darf nicht leer sein."
+        )
+    return tenant_id
+
+
+def get_memory_item(item_id: int, *, tenant_id: str | None) -> dict[str, Any] | None:
+    """B-MEM-2: Direktzugriff ueber die ID war vorher mandantenuebergreifend
+    moeglich. tenant_id ist jetzt Pflicht (keyword-only, damit kein
+    Altaufruf versehentlich weiterlaeuft) und wird in SQL gefiltert.
+
+    KEINE Altdaten-Ausnahme: Eine frueher hier vorgesehene Ausnahme fuer
+    tenant_id=NULL (nur mit passendem owner_user_id) wurde entfernt --
+    derselbe user_id kann in mehreren Mandanten existieren, wodurch ein
+    Nutzer aus Mandant B die mandantenlosen Altdaten eines gleichnamigen
+    Nutzers aus Mandant A erreichte (unabhaengig belegt).
+
+    Der Selbstbedienungspfad fuer Altdaten (Export/Loeschung nach Art. 17/20
+    DSGVO) laeuft ohnehin nicht ueber diese Funktion, sondern ueber
+    list_active_memory_items_for_user() und _soft_delete_owned_memory_items(),
+    die zusaetzlich nach scope und owner_user_id filtern."""
+    _require_tenant(tenant_id, funktion="get_memory_item")
+    query = (
+        select(memory_items)
+        .where(memory_items.c.id == item_id)
+        .where(memory_items.c.tenant_id == tenant_id)
+    )
     with engine.begin() as conn:
-        row = conn.execute(select(memory_items).where(memory_items.c.id == item_id)).mappings().first()
+        row = conn.execute(query).mappings().first()
     return dict(row) if row else None
 
 
@@ -1604,19 +1721,21 @@ def list_active_memory_items_for_user(user_id: str, tenant_id: str = DEFAULT_TEN
     fremden Eintraege und kein company_memory (M1: expliziter scope-Filter,
     vorher implizit ueber owner_user_id).
 
-    Uebergangsregel (M1): Legacy-user_memory mit tenant_id=NULL (aus der
-    Zeit vor Tenant-Pflicht) MUSS weiterhin fuer den Owner auffindbar,
-    exportierbar und loeschbar bleiben -- SQL-NULL-Vergleich
-    (`tenant_id == tenant_id`) liefert bei NULL sonst nie True und wuerde
-    diese Zeilen unsichtbar machen. Kein Erraten/Nachtragen eines
-    Tenant-Werts -- nur zusaetzlich sichtbar machen."""
+    B-MEM-4 (Quarantaene): Zeilen mit tenant_id=NULL sind hier NICHT mehr
+    enthalten. Die fruehere Uebergangsregel schloss sie allein anhand des
+    Benutzernamens ein -- derselbe Name in einem anderen Mandanten sah und
+    loeschte damit fremde Altdaten (unabhaengig reproduziert).
+
+    Es wird kein Mandant erraten und nichts geloescht. Der Bestand ist ueber
+    count_unassigned_memory_items() auswertbar; die Zuordnung ist ein
+    gesonderter, menschlich zu entscheidender Vorgang (HANDOFF)."""
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         rows = conn.execute(
             select(memory_items)
             .where(memory_items.c.scope == "user_memory")
             .where(memory_items.c.owner_user_id == user_id)
-            .where(or_(memory_items.c.tenant_id == tenant_id, memory_items.c.tenant_id.is_(None)))
+            .where(memory_items.c.tenant_id == tenant_id)
             .where(memory_items.c.status == "active")
         ).mappings().all()
     return [dict(r) for r in rows if r["expires_at"] is None or _as_aware(r["expires_at"]) > now]
@@ -1633,6 +1752,34 @@ def list_active_memory_items_for_org(tenant_id: str) -> list[dict[str, Any]]:
             .where(memory_items.c.status == "active")
         ).mappings().all()
     return [dict(r) for r in rows if r["expires_at"] is None or _as_aware(r["expires_at"]) > now]
+
+
+def count_unassigned_memory_items() -> dict[str, Any]:
+    """B-MEM-4: Auswertung des quarantaenisierten Altbestands (tenant_id=NULL).
+
+    Rein lesend. Ordnet nichts zu, loescht nichts, macht nichts sichtbar --
+    liefert nur Anzahl und technische Herkunftsmerkmale, damit ueber die
+    Behandlung entschieden werden kann. Die Entscheidung selbst
+    (Zuordnung, Loeschung, Auskunft) ist ein gesonderter, menschlich zu
+    verantwortender Vorgang und wird hier ausdruecklich NICHT getroffen."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(memory_items.c.id, memory_items.c.scope,
+                   memory_items.c.owner_user_id, memory_items.c.status,
+                   memory_items.c.created_at, memory_items.c.source_id)
+            .where(memory_items.c.tenant_id.is_(None))
+        ).mappings().all()
+    besitzer = sorted({r["owner_user_id"] for r in rows if r["owner_user_id"]})
+    return {
+        "anzahl": len(rows),
+        "betroffene_owner_user_ids": besitzer,
+        "scopes": sorted({r["scope"] for r in rows}),
+        "status": sorted({r["status"] for r in rows}),
+        "aelteste": min((r["created_at"] for r in rows), default=None),
+        "hinweis": ("Quarantaene: aus allen normalen Zugriffspfaden ausgenommen. "
+                    "Zuordnung oder Loeschung erfordert eine gesonderte "
+                    "menschliche Entscheidung (Reconciliation/DSAR-HANDOFF)."),
+    }
 
 
 def _as_aware(dt: datetime) -> datetime:
@@ -1723,9 +1870,35 @@ def audit_memory_scope_invariants() -> dict[str, Any]:
     }
 
 
-def set_memory_visibility(memory_item_id: int, *, visibility_scope: str,
+def set_memory_visibility(memory_item_id: int, *, tenant_id: str | None,
+                          visibility_scope: str,
                           allowed_roles: list | None = None, allowed_user_ids: list | None = None,
-                          allowed_org_id: str | None = None, project_id: str | None = None) -> dict[str, Any]:
+                          allowed_org_id: str | None = None,
+                          project_id: str | None = None,
+                          owner_user_id: str | None = None) -> dict[str, Any]:
+    """B-MEM-2: memory_visibility hat selbst keine tenant_id-Spalte -- der
+    Mandantenbezug kommt ausschliesslich ueber das zugehoerige memory_item.
+    Deshalb wird hier ZUERST geprueft, ob das Item dem angegebenen Mandanten
+    gehoert. Ohne diese Pruefung konnte die Sichtbarkeit eines fremden
+    Eintrags veraendert werden (praktisch reproduziert).
+
+    Eine tenant_id-Spalte in memory_visibility waere die zweite Wahrheit
+    ueber die Mandantenzugehoerigkeit und koennte auseinanderlaufen --
+    deshalb bewusst die Pruefung ueber das Item statt einer neuen Spalte."""
+    _eintrag = get_memory_item(memory_item_id, tenant_id=tenant_id)
+    if _eintrag is None:
+        raise MemoryValidationError(
+            "Memory-Eintrag nicht gefunden oder gehoert zu einem anderen Mandanten."
+        )
+    # Owner-Bindung: ohne sie konnte ein anderer Nutzer desselben Mandanten
+    # die Sichtbarkeit eines fremden persoenlichen Eintrags aendern
+    # (unabhaengig reproduziert). company_memory hat keinen Eigentuemer --
+    # dort entscheidet weiterhin die Rolle auf der Endpunktebene.
+    if (owner_user_id is not None and _eintrag["owner_user_id"] is not None
+            and _eintrag["owner_user_id"] != owner_user_id):
+        raise MemoryValidationError(
+            "Memory-Eintrag gehoert einer anderen Person."
+        )
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         existing = conn.execute(
@@ -1751,9 +1924,27 @@ def set_memory_visibility(memory_item_id: int, *, visibility_scope: str,
     return dict(row)
 
 
-def mark_memory_item_deleted(item_id: int) -> None:
+def mark_memory_item_deleted(item_id: int, *, tenant_id: str | None,
+                             owner_user_id: str | None = None) -> None:
     """Soft-Delete: status='deleted'. Geloeschte Eintraege werden von den
-    list_active_*-Funktionen nie zurueckgegeben (Status-Filter auf 'active')."""
+    list_active_*-Funktionen nie zurueckgegeben (Status-Filter auf 'active').
+
+    B-MEM-2: tenant_id ist Pflicht. Vorher konnte ein fremder Eintrag allein
+    ueber seine ID geloescht werden (praktisch reproduziert). Keine
+    Altdaten-Ausnahme -- der Selbstbedienungspfad nach Art. 17 DSGVO laeuft
+    ueber _soft_delete_owned_memory_items() mit owner- und scope-Filter."""
+    _eintrag = get_memory_item(item_id, tenant_id=tenant_id)
+    if _eintrag is None:
+        raise MemoryValidationError(
+            "Memory-Eintrag nicht gefunden oder gehoert zu einem anderen Mandanten."
+        )
+    # Owner-Bindung: ohne sie konnte ein anderer Nutzer desselben Mandanten
+    # einen fremden persoenlichen Eintrag loeschen (unabhaengig reproduziert).
+    if (owner_user_id is not None and _eintrag["owner_user_id"] is not None
+            and _eintrag["owner_user_id"] != owner_user_id):
+        raise MemoryValidationError(
+            "Memory-Eintrag gehoert einer anderen Person."
+        )
     with engine.begin() as conn:
         conn.execute(
             update(memory_items).where(memory_items.c.id == item_id)
@@ -2053,8 +2244,22 @@ def create_memory_suggestion(*, user_id: str, tenant_id: str, suggested_scope: s
         raise MemoryValidationError(f"Ungueltiger status: {status!r}")
 
     # Blockierte Vorschlaege: Rohinhalt NIE speichern, nur Kategorie-Hinweis.
-    if status == "blocked" or risk_level == "blocked" or _contains_secret_content(suggested_content):
+    # B-MEM-1: Neben der Secret-Heuristik greifen jetzt ALLE gesperrten
+    # Datenklassen (CREDENTIALS/SPECIAL_CATEGORY/HR/LEGAL). Bewusst
+    # datensparsam blockieren statt zu werfen -- so bleibt der Vorschlag als
+    # nachvollziehbarer Vorgang bestehen, ohne den sensiblen Rohtext zu halten.
+    _blocked_classes = _memory_blocked_classes(
+        suggested_title, suggested_content, suggested_purpose, suggested_category,
+    )
+    if status == "blocked" or risk_level == "blocked" or _blocked_classes:
+        # Auch der TITEL wird verworfen: im Chat-Pfad ist er der gekuerzte
+        # Rohprompt (main.py: title=task[:100]) und enthielt damit denselben
+        # sensiblen Text wie der Inhalt. Ebenso purpose/category, die
+        # ebenfalls Freitext des Aufrufers sind.
         suggested_content = "[BLOCKIERT: sensibler Inhalt nicht gespeichert]"
+        suggested_title = "[BLOCKIERT]"
+        suggested_purpose = "[BLOCKIERT]"
+        suggested_category = None
         status = "blocked"
         risk_level = "blocked"
 
@@ -2073,11 +2278,19 @@ def create_memory_suggestion(*, user_id: str, tenant_id: str, suggested_scope: s
     return _get_memory_suggestion(suggestion_id)
 
 
-def _get_memory_suggestion(suggestion_id: int) -> dict[str, Any] | None:
+def _get_memory_suggestion(suggestion_id: int, *, tenant_id: str | None = None,
+                           user_id: str | None = None) -> dict[str, Any] | None:
+    """B-MEM-2: tenant_id/user_id filtern in SQL, sobald sie uebergeben werden.
+    Die Parameter sind optional, damit interne Aufrufer den Datensatz auch
+    ohne Kontext lesen koennen -- jeder AUFRUF AUS EINEM ZUGRIFFSPFAD muss
+    beide setzen (siehe confirm/reject/blocked)."""
+    query = select(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+    if tenant_id is not None:
+        query = query.where(memory_suggestions.c.tenant_id == tenant_id)
+    if user_id is not None:
+        query = query.where(memory_suggestions.c.user_id == user_id)
     with engine.begin() as conn:
-        row = conn.execute(
-            select(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
-        ).mappings().first()
+        row = conn.execute(query).mappings().first()
     if not row:
         return None
     result = dict(row)
@@ -2105,36 +2318,102 @@ def list_memory_suggestions_for_user(user_id: str, tenant_id: str = DEFAULT_TENA
     return out
 
 
-def reject_memory_suggestion(suggestion_id: int, *, reviewed_by: str) -> None:
-    """Abgelehnte Vorschlaege erzeugen NIE ein memory_item."""
+def reject_memory_suggestion(suggestion_id: int, *, reviewed_by: str,
+                             tenant_id: str | None,
+                             user_id: str | None = None) -> None:
+    """Abgelehnte Vorschlaege erzeugen NIE ein memory_item.
+
+    B-MEM-2: tenant_id ist Pflicht -- vorher konnte ein fremder Vorschlag
+    allein ueber seine ID abgelehnt werden (praktisch reproduziert)."""
+    _require_tenant(tenant_id, funktion="reject_memory_suggestion")
+    # Owner-Bindung wie in confirm_memory_suggestion: ohne sie konnte ein
+    # anderer Nutzer DESSELBEN Mandanten fremde Vorschlaege ablehnen
+    # (unabhaengig reproduziert). Ersatzweise gilt reviewed_by.
+    besitzer = user_id or reviewed_by
     with engine.begin() as conn:
-        conn.execute(
-            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+        result = conn.execute(
+            update(memory_suggestions)
+            .where(memory_suggestions.c.id == suggestion_id)
+            .where(memory_suggestions.c.tenant_id == tenant_id)
+            .where(memory_suggestions.c.user_id == besitzer)
             .values(status="rejected", reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
+        )
+    if result.rowcount == 0:
+        raise MemoryValidationError(
+            "Vorschlag nicht gefunden oder gehoert zu einem anderen Mandanten."
         )
 
 
-def mark_memory_suggestion_blocked(suggestion_id: int, *, reviewed_by: str | None = None) -> None:
-    """Blockiert + entfernt den Rohinhalt (Datensparsamkeit)."""
+def mark_memory_suggestion_blocked(suggestion_id: int, *, reviewed_by: str | None = None,
+                                   tenant_id: str | None,
+                                   user_id: str | None = None) -> None:
+    """Blockiert + entfernt den Rohinhalt (Datensparsamkeit).
+
+    B-MEM-2: tenant_id ist Pflicht (siehe reject_memory_suggestion)."""
+    _require_tenant(tenant_id, funktion="mark_memory_suggestion_blocked")
+    besitzer = user_id or reviewed_by
     with engine.begin() as conn:
-        conn.execute(
-            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+        query = (
+            update(memory_suggestions)
+            .where(memory_suggestions.c.id == suggestion_id)
+            .where(memory_suggestions.c.tenant_id == tenant_id)
+        )
+        if besitzer is not None:
+            query = query.where(memory_suggestions.c.user_id == besitzer)
+        result = conn.execute(
+            query
             .values(status="blocked", risk_level="blocked",
                     suggested_content="[BLOCKIERT: sensibler Inhalt nicht gespeichert]",
                     reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
         )
+    if result.rowcount == 0:
+        raise MemoryValidationError(
+            "Vorschlag nicht gefunden oder gehoert zu einem anderen Mandanten."
+        )
 
 
 def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
-                              reviewer_role: str = "user") -> dict[str, Any]:
+                              reviewer_role: str = "user",
+                              tenant_id: str | None,
+                              user_id: str | None = None) -> dict[str, Any]:
     """Ueberfuehrt einen bestaetigten Vorschlag in das Gedaechtnis:
     memory_source + memory_item + memory_visibility (via create_memory_item).
     company_memory verlangt Admin-Rolle (bestehendes Rollenmodell: admin/manager).
     Nur Status open/needs_admin_approval sind bestaetigbar -- rejected/expired/
-    blocked erzeugen nie ein memory_item."""
-    suggestion = _get_memory_suggestion(suggestion_id)
+    blocked erzeugen nie ein memory_item.
+
+    B-MEM-2: tenant_id ist Pflicht. Vorher wurde der Mandant blind aus dem
+    Vorschlag uebernommen, sodass ein fremder Vorschlag bestaetigt werden
+    konnte (praktisch reproduziert).
+    user_id bindet die Bestaetigung zusaetzlich an den Eigentuemer des
+    Vorschlags -- ohne diese Bindung konnte ein anderer Nutzer DESSELBEN
+    Mandanten einen fremden Vorschlag bestaetigen (unabhaengig belegt).
+
+    Die Rollen-Ausnahme (admin/manager) gilt AUSSCHLIESSLICH fuer
+    company_memory: Firmenwissen gehoert der Organisation, deshalb gibt es
+    dort keinen persoenlichen Eigentuemer, den man schuetzen koennte. Fuer
+    user_memory bleibt die Eigentuemerbindung auch fuer Admins bestehen --
+    eine fruehere Fassung hob sie pauschal auf, wodurch ein Manager aus dem
+    persoenlichen Vorschlag eines fremden Nutzers einen Gedaechtniseintrag
+    erzeugen konnte (unabhaengig belegt).
+    B-MEM-1: Der Inhalt laeuft zusaetzlich durch
+    _enforce_memory_content_policy() in create_memory_item()."""
+    _require_tenant(tenant_id, funktion="confirm_memory_suggestion")
+    # Zuerst nur mandantengefiltert lesen -- der Scope entscheidet, ob die
+    # Eigentuemerbindung ueberhaupt aufgehoben werden darf.
+    suggestion = _get_memory_suggestion(suggestion_id, tenant_id=tenant_id)
     if suggestion is None:
-        raise MemoryValidationError("Vorschlag nicht gefunden.")
+        raise MemoryValidationError(
+            "Vorschlag nicht gefunden oder gehoert zu einem anderen Mandanten."
+        )
+    ist_firmenwissen = suggestion["suggested_scope"] == "company_memory"
+    rollen_review = ist_firmenwissen and reviewer_role in ("admin", "manager")
+    if not rollen_review:
+        erwarteter_besitzer = user_id or confirmed_by
+        if suggestion["user_id"] != erwarteter_besitzer:
+            raise MemoryValidationError(
+                "Vorschlag nicht gefunden oder gehoert zu einem anderen Mandanten."
+            )
     if suggestion["status"] not in ("open", "needs_admin_approval"):
         raise MemoryValidationError(
             f"Vorschlag mit Status {suggestion['status']!r} kann nicht bestaetigt werden."
@@ -2170,9 +2449,15 @@ def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
 
 
 def apply_confirmed_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
-                                      reviewer_role: str = "user") -> dict[str, Any]:
-    """Alias gemaess Spec-Namensvorschlag -- identisch zu confirm_memory_suggestion."""
-    return confirm_memory_suggestion(suggestion_id, confirmed_by=confirmed_by, reviewer_role=reviewer_role)
+                                      reviewer_role: str = "user",
+                                      tenant_id: str | None,
+                                      user_id: str | None = None) -> dict[str, Any]:
+    """Alias gemaess Spec-Namensvorschlag -- identisch zu confirm_memory_suggestion.
+    Reicht user_id mit durch, damit der Alias nicht schwaecher ist als das
+    Original (der Alias hat keine HTTP-seitige Zugehoerigkeitspruefung)."""
+    return confirm_memory_suggestion(suggestion_id, confirmed_by=confirmed_by,
+                                     reviewer_role=reviewer_role, tenant_id=tenant_id,
+                                     user_id=user_id)
 
 
 # ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ──────────
@@ -2205,14 +2490,15 @@ def _soft_delete_owned_memory_items(conn: Any, user_id: str, tenant_id: str, now
     Filter allein schon ausgeschlossen, der scope-Filter macht das aber
     unmissverstaendlich explizit statt implizit).
 
-    Uebergangsregel (M1): schliesst wie list_active_memory_items_for_user()
-    Legacy-Zeilen mit tenant_id=NULL mit ein, damit Accountloeschung auch
-    fuer Alt-Daten vollstaendig greift."""
+    B-MEM-4 (Quarantaene): Zeilen mit tenant_id=NULL sind ausgenommen --
+    sie liessen sich nur ueber den Benutzernamen zuordnen, was mandanten-
+    uebergreifend fehlgreift. Sie werden weder geloescht noch zugeordnet;
+    ihre Behandlung ist ein gesonderter Vorgang (HANDOFF)."""
     conn.execute(
         update(memory_items)
         .where(memory_items.c.scope == "user_memory")
         .where(memory_items.c.owner_user_id == user_id)
-        .where(or_(memory_items.c.tenant_id == tenant_id, memory_items.c.tenant_id.is_(None)))
+        .where(memory_items.c.tenant_id == tenant_id)
         .values(status="deleted", updated_at=now)
     )
 

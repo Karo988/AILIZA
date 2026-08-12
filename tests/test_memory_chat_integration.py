@@ -199,7 +199,7 @@ def test_list_confirm_reject_own_suggestion(client):
 
     r2 = client.post(f"/api/memory-suggestions/{s['id']}/confirm", headers=h)
     assert r2.status_code == 200
-    item = get_memory_item(r2.json()["memory_item_id"])
+    item = get_memory_item(r2.json()["memory_item_id"], tenant_id="default")
     assert item["status"] == "active"
 
 

@@ -54,6 +54,22 @@ APPROVAL_READ = "APPROVAL_READ"
 APPROVAL_DECIDE = "APPROVAL_DECIDE"
 CASE_ASSIGNMENT_READ = "CASE_ASSIGNMENT_READ"
 
+# ── B-MEM-3: Memory-Aktionen im ZENTRALEN Evaluator ────────────────────────
+# Vorher pruefte der Memory-Pfad nur ad-hoc (Zugehoerigkeitsliste in main.py
+# plus ein Rollen-String in database.py) und lief nie durch
+# evaluate_permission(). Diese Schluessel binden Memory an denselben
+# Evaluator wie Agent-Runs und Approvals -- bewusst KEIN zweites
+# Berechtigungssystem.
+MEMORY_ITEM_READ = "MEMORY_ITEM_READ"
+MEMORY_ITEM_LIST = "MEMORY_ITEM_LIST"
+MEMORY_ITEM_CREATE = "MEMORY_ITEM_CREATE"
+MEMORY_ITEM_DELETE = "MEMORY_ITEM_DELETE"
+MEMORY_VISIBILITY_UPDATE = "MEMORY_VISIBILITY_UPDATE"
+MEMORY_SUGGESTION_LIST = "MEMORY_SUGGESTION_LIST"
+MEMORY_SUGGESTION_CONFIRM = "MEMORY_SUGGESTION_CONFIRM"
+MEMORY_SUGGESTION_REJECT = "MEMORY_SUGGESTION_REJECT"
+MEMORY_SCOPE_TRANSFER = "MEMORY_SCOPE_TRANSFER"
+
 # ── B4: Modellfreigabe ueber den zentralen Evaluator ───────────────────────
 # Vorher genuegte ein frei uebergebener Rollen-String (reviewer_role="admin"),
 # der von keiner Sitzung gedeckt war. Diese Aktion bindet die Freigabe an
@@ -65,6 +81,23 @@ CASE_ASSIGNMENT_READ = "CASE_ASSIGNMENT_READ"
 # (admin/manager) und ist bewusst deny-by-default. Sie ersetzt KEINE
 # fachliche Freigabeentscheidung und ist zu bestaetigen.
 MODEL_CANDIDATE_APPROVE = "MODEL_CANDIDATE_APPROVE"
+
+# Aktionen, die ausschliesslich der Eigentuemer ausfuehren darf.
+# MEMORY_ITEM_CREATE ist hier enthalten, weil ein Eintrag nur fuer sich
+# selbst (user_memory) oder -- ohne Eigentuemer -- als company_memory mit
+# Manager-Rolle angelegt werden darf.
+_MEMORY_OWNER_ACTIONS = frozenset({
+    MEMORY_ITEM_READ, MEMORY_ITEM_CREATE, MEMORY_ITEM_DELETE,
+    MEMORY_VISIBILITY_UPDATE,
+    MEMORY_SUGGESTION_CONFIRM, MEMORY_SUGGESTION_REJECT,
+})
+# Aktionen, deren Owner-Filterung in der Datenbankabfrage passiert.
+# MEMORY_ITEM_CREATE gehoert bewusst NICHT hierher: eine Schreibaktion mit
+# Listen-Semantik waere fuer jede bekannte Rolle erlaubt gewesen, ohne
+# Owner- oder Scope-Bezug.
+_MEMORY_LIST_ACTIONS = frozenset({
+    MEMORY_ITEM_LIST, MEMORY_SUGGESTION_LIST,
+})
 
 GENERIC_DENIED_MESSAGE = "Der angeforderte Eintrag wurde nicht gefunden oder ist für Sie nicht verfügbar."
 
@@ -225,6 +258,35 @@ def evaluate_permission(
         # nicht durch Laden aller Datensaetze und anschliessendes Verwerfen.
         return _allow("OK")
 
+    # ── B-MEM-3: Memory ────────────────────────────────────────────────────
+    if action == MEMORY_SCOPE_TRANSFER:
+        # Wissen darf NIE ohne ausdrueckliche Freigabe zwischen Scopes wandern.
+        # Es gibt derzeit keinen freigegebenen Transferpfad -- deshalb hart
+        # verweigern statt eine Rolle zu erfinden, die es nicht gibt.
+        write_audit_entry(
+            action="memory.scope_transfer_denied",
+            tenant_id=actor.tenant_id,
+            metadata={"resource_type": resource_type, "resource_id": resource_id},
+        )
+        return _deny(
+            "SCOPE_TRANSFER_NOT_ALLOWED",
+            "Ein Wechsel der Gedächtnis-Ebene ist nicht freigegeben.",
+        )
+
+    if action in _MEMORY_OWNER_ACTIONS:
+        # company_memory gehoert der Organisation, nicht einer Person:
+        # dort entscheidet die Rolle (admin/manager), sonst der Eigentuemer.
+        if resource_owner_user_id is None:
+            # DSB hat laut rbac.py ausdruecklich Lese-/Kontrollrechte, aber
+            # KEINE Schreibrechte -- der reine Rangvergleich haette ihn hier
+            # eingeschlossen (DSB=4 > ADMIN=3).
+            if role >= Role.MANAGER and role != Role.DSB:
+                return _allow("ORG_ROLE")
+            return _deny_generic()
+        if resource_owner_user_id == actor.user_id:
+            return _allow("OWNER")
+        return _deny_generic()
+
     if action == MODEL_CANDIDATE_APPROVE:
         # Selbstfreigabe: wer den Kandidaten angelegt hat, darf ihn nicht
         # selbst freigeben. resource_owner_user_id traegt hier den Anleger.
@@ -255,6 +317,11 @@ def evaluate_permission(
             "INSUFFICIENT_ROLE",
             "Für eine Modellfreigabe fehlt die erforderliche Rolle.",
         )
+
+    if action in _MEMORY_LIST_ACTIONS:
+        # Owner-/Tenant-Filterung erfolgt in der Datenbankabfrage
+        # (list_memory_suggestions_for_user, list_active_memory_items_for_user).
+        return _allow("OK")
 
     return _deny("UNKNOWN_ACTION", "Unbekannte Aktion.")
 
