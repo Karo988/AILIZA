@@ -47,6 +47,7 @@ def upgrade() -> None:
         sa.Column("benchmark_version", sa.String(64), nullable=False),
         sa.Column("evidence_urls", sa.JSON, nullable=False),
         sa.Column("approved_by", sa.String(64), nullable=True),
+        sa.Column("created_by", sa.String(64), nullable=True),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),

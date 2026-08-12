@@ -20,6 +20,20 @@ os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("AILIZA_EXTERNAL_LLM_ENABLED", "false")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _actor(user_id="pruefer", tenant_id="default", role="manager"):
+    """Authentifizierter Actor -- ersetzt den frueheren freien Rollen-String."""
+    from apps.backend.auth.jwt_handler import TokenData
+    return TokenData(user_id=user_id, tenant_id=tenant_id, role=role)
+
+
+def _klass(*klassen):
+    """Belegte Klassifikation aus der Governance-Komponente."""
+    from apps.backend.governance.data_governance import ClassificationResult, DataClass
+    return ClassificationResult(data_classes=[DataClass(k) for k in klassen] or [DataClass.PUBLIC])
+
+
 BACKEND_DIR = REPO_ROOT / "apps" / "backend"
 
 
@@ -35,9 +49,8 @@ def test_new_candidate_starts_unapproved_and_is_not_recommended():
     from apps.backend.database import create_model_candidate, recommend_model
 
     create_model_candidate(
-        "groq", "llama-test", modalities=["text"], capabilities=["chat"], context_window=8000,
-    )
-    result = recommend_model("default", modality="text", task="chat")
+        "groq", "llama-test", modalities=["text"], capabilities=["chat"], context_window=8000, created_by="einbringer")
+    result = recommend_model("default", modality="text", task="chat", prompt_text="Wie formuliere ich eine hoefliche Absage?")
     assert result["selected"] is None
     assert "llama-test" not in " ".join(result["considered"])
 
@@ -46,17 +59,16 @@ def test_approved_candidate_is_recommended():
     from apps.backend.database import create_model_candidate, approve_model_candidate, recommend_model
 
     create_model_candidate(
-        "groq", "llama-test", modalities=["text"], capabilities=["chat"], context_window=8000,
-    )
+        "groq", "llama-test", modalities=["text"], capabilities=["chat"], context_window=8000, created_by="einbringer")
     approved = approve_model_candidate(
-        "groq", "llama-test", approved_by="admin1", reviewer_role="admin",
+        "groq", "llama-test", actor=_actor(),
         quality_score=0.8, latency_score=0.7, cost_score=0.9, privacy_score=0.75,
         benchmark_version="2026-08-bench-1",
     )
     assert approved is not None
     assert approved["status"] == "approved"
 
-    result = recommend_model("default", modality="text", task="chat", required_capabilities=["chat"])
+    result = recommend_model("default", modality="text", task="chat", required_capabilities=["chat"], prompt_text="Wie formuliere ich eine hoefliche Absage?")
     assert result["selected"] == "groq:llama-test"
     assert result["benchmark_version"] == "2026-08-bench-1"
 
@@ -65,14 +77,13 @@ def test_high_risk_data_requires_privacy_score_above_threshold():
     from apps.backend.database import create_model_candidate, approve_model_candidate, recommend_model
 
     create_model_candidate(
-        "groq", "low-privacy", modalities=["text"], capabilities=[], context_window=8000,
-    )
+        "groq", "low-privacy", modalities=["text"], capabilities=[], context_window=8000, created_by="einbringer")
     approve_model_candidate(
-        "groq", "low-privacy", approved_by="admin1", reviewer_role="admin",
+        "groq", "low-privacy", actor=_actor(),
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=0.5,
         benchmark_version="v1",
     )
-    result = recommend_model("default", modality="text", task="chat", data_risk="high")
+    result = recommend_model("default", modality="text", task="chat", data_risk="high", prompt_text="Wie formuliere ich eine hoefliche Absage?")
     assert result["selected"] is None
 
 
@@ -80,7 +91,7 @@ def test_approve_unknown_candidate_returns_none_no_silent_create():
     from apps.backend.database import approve_model_candidate
 
     result = approve_model_candidate(
-        "unknown", "ghost", approved_by="admin1", reviewer_role="admin",
+        "unknown", "ghost", actor=_actor(),
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
@@ -91,21 +102,21 @@ def test_duplicate_provider_model_rejected():
     import sqlalchemy.exc
     from apps.backend.database import create_model_candidate
 
-    create_model_candidate("groq", "dup", modalities=["text"], capabilities=[], context_window=1000)
+    create_model_candidate("groq", "dup", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
     with pytest.raises(sqlalchemy.exc.IntegrityError):
-        create_model_candidate("groq", "dup", modalities=["text"], capabilities=[], context_window=1000)
+        create_model_candidate("groq", "dup", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
 
 
 def test_recommend_model_writes_audit_entry_without_prompt_content():
     from apps.backend.database import create_model_candidate, approve_model_candidate, recommend_model, list_audit_entries
 
-    create_model_candidate("groq", "audited", modalities=["text"], capabilities=[], context_window=1000)
+    create_model_candidate("groq", "audited", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
     approve_model_candidate(
-        "groq", "audited", approved_by="admin1", reviewer_role="admin",
+        "groq", "audited", actor=_actor(),
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
-    recommend_model("default", modality="text", task="chat")
+    recommend_model("default", modality="text", task="chat", prompt_text="Wie formuliere ich eine hoefliche Absage?")
 
     entries = list_audit_entries(limit=10, tenant_id="default")
     matching = [e for e in entries if e["action"] == "model.routing.recommended"]
@@ -120,13 +131,13 @@ def test_recommend_model_persists_routing_decision():
     )
     from sqlalchemy import select
 
-    create_model_candidate("groq", "logged", modalities=["text"], capabilities=[], context_window=1000)
+    create_model_candidate("groq", "logged", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
     approve_model_candidate(
-        "groq", "logged", approved_by="admin1", reviewer_role="admin",
+        "groq", "logged", actor=_actor(),
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
-    recommend_model("tenant-x", modality="text", task="chat")
+    recommend_model("tenant-x", modality="text", task="chat", prompt_text="Wie formuliere ich eine hoefliche Absage?")
 
     with engine.begin() as conn:
         rows = conn.execute(
@@ -137,17 +148,19 @@ def test_recommend_model_persists_routing_decision():
 
 
 def test_approve_requires_admin_or_manager_role():
-    from apps.backend.database import create_model_candidate, approve_model_candidate
+    from apps.backend.database import (
+        create_model_candidate, approve_model_candidate, ModelApprovalDenied,
+    )
 
-    create_model_candidate("groq", "role-check", modalities=["text"], capabilities=[], context_window=1000)
-    with pytest.raises(ValueError):
+    create_model_candidate("groq", "role-check", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
+    with pytest.raises(ModelApprovalDenied):
         approve_model_candidate(
-            "groq", "role-check", approved_by="user1", reviewer_role="user",
+            "groq", "role-check", actor=_actor(role="user"),
             quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
             benchmark_version="v1",
         )
     approved = approve_model_candidate(
-        "groq", "role-check", approved_by="admin1", reviewer_role="manager",
+        "groq", "role-check", actor=_actor(role="manager"),
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
@@ -157,13 +170,13 @@ def test_approve_requires_admin_or_manager_role():
 def test_recommend_model_blocks_hard_restricted_data_classes():
     from apps.backend.database import create_model_candidate, approve_model_candidate, recommend_model
 
-    create_model_candidate("groq", "blocked-check", modalities=["text"], capabilities=[], context_window=1000)
+    create_model_candidate("groq", "blocked-check", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
     approve_model_candidate(
-        "groq", "blocked-check", approved_by="admin1", reviewer_role="admin",
+        "groq", "blocked-check", actor=_actor(),
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )
-    result = recommend_model("default", modality="text", task="chat", data_classes=["hr"])
+    result = recommend_model("default", modality="text", task="chat", prompt_text="Gehalt von Hans Meier: 85000 EUR, Abmahnung wegen Krankheit")
     assert result["selected"] is None
     assert "nicht extern geroutet" in result["reason"]
 
@@ -171,10 +184,10 @@ def test_recommend_model_blocks_hard_restricted_data_classes():
 def test_list_model_candidates_filters_by_status():
     from apps.backend.database import create_model_candidate, approve_model_candidate, list_model_candidates
 
-    create_model_candidate("groq", "c1", modalities=["text"], capabilities=[], context_window=1000)
-    create_model_candidate("groq", "c2", modalities=["text"], capabilities=[], context_window=1000)
+    create_model_candidate("groq", "c1", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
+    create_model_candidate("groq", "c2", modalities=["text"], capabilities=[], context_window=1000, created_by="einbringer")
     approve_model_candidate(
-        "groq", "c1", approved_by="admin1", reviewer_role="admin",
+        "groq", "c1", actor=_actor(),
         quality_score=1.0, latency_score=1.0, cost_score=1.0, privacy_score=1.0,
         benchmark_version="v1",
     )

@@ -54,6 +54,18 @@ APPROVAL_READ = "APPROVAL_READ"
 APPROVAL_DECIDE = "APPROVAL_DECIDE"
 CASE_ASSIGNMENT_READ = "CASE_ASSIGNMENT_READ"
 
+# ── B4: Modellfreigabe ueber den zentralen Evaluator ───────────────────────
+# Vorher genuegte ein frei uebergebener Rollen-String (reviewer_role="admin"),
+# der von keiner Sitzung gedeckt war. Diese Aktion bindet die Freigabe an
+# einen authentifizierten Actor.
+#
+# HANDOFF: Eine ausdruecklich bestaetigte Freigabepolicy fuer Modelle
+# existiert im Repository nicht. Die hier verwendete Schwelle (MANAGER)
+# folgt dem bestehenden Projektmuster aus confirm_memory_suggestion()
+# (admin/manager) und ist bewusst deny-by-default. Sie ersetzt KEINE
+# fachliche Freigabeentscheidung und ist zu bestaetigen.
+MODEL_CANDIDATE_APPROVE = "MODEL_CANDIDATE_APPROVE"
+
 GENERIC_DENIED_MESSAGE = "Der angeforderte Eintrag wurde nicht gefunden oder ist für Sie nicht verfügbar."
 
 _ROLE_MAPPING = {
@@ -195,7 +207,12 @@ def evaluate_permission(
         return _deny("UNKNOWN_ROLE", "Ihre Berechtigung konnte nicht ermittelt werden.")
 
     if action in (AGENT_RUN_READ, APPROVAL_READ):
-        if resource_owner_user_id is not None and resource_owner_user_id == actor.user_id:
+        # Normalisierter Vergleich: "Alice", " alice " und "alice" sind
+        # dieselbe Person. Ein reiner String-Vergleich liess die
+        # Selbstfreigabe ueber Schreibweise oder Leerzeichen zu.
+        def _norm(w):
+            return str(w).strip().casefold() if w is not None else None
+        if resource_owner_user_id is not None and _norm(resource_owner_user_id) == _norm(actor.user_id):
             return _allow("OWNER")
         case_type = "AGENT_RUN" if action == AGENT_RUN_READ else "APPROVAL"
         if has_active_case_assignment(case_type, resource_id, tenant_id, actor.user_id):
@@ -207,6 +224,37 @@ def evaluate_permission(
         # Filterung erfolgt direkt in der Datenbankabfrage (list_own_or_assigned_*),
         # nicht durch Laden aller Datensaetze und anschliessendes Verwerfen.
         return _allow("OK")
+
+    if action == MODEL_CANDIDATE_APPROVE:
+        # Selbstfreigabe: wer den Kandidaten angelegt hat, darf ihn nicht
+        # selbst freigeben. resource_owner_user_id traegt hier den Anleger.
+        # Normalisierter Vergleich: "Alice", " alice " und "alice" sind
+        # dieselbe Person. Ein reiner String-Vergleich liess die
+        # Selbstfreigabe ueber Schreibweise oder Leerzeichen zu.
+        def _norm(w):
+            return str(w).strip().casefold() if w is not None else None
+        if resource_owner_user_id is not None and _norm(resource_owner_user_id) == _norm(actor.user_id):
+            write_audit_entry(
+                action="model.approval.self_approval_denied",
+                tenant_id=actor.tenant_id,
+                metadata={"resource_type": resource_type, "resource_id": resource_id},
+            )
+            return _deny(
+                "SELF_APPROVAL_NOT_ALLOWED",
+                "Eine selbst eingebrachte Modellfreigabe darf nicht von derselben Person erteilt werden.",
+            )
+        if role >= Role.MANAGER and role != Role.DSB:
+            return _allow("ORG_ROLE")
+        write_audit_entry(
+            action="model.approval.denied",
+            tenant_id=actor.tenant_id,
+            metadata={"resource_type": resource_type, "resource_id": resource_id,
+                      "reason_code": "INSUFFICIENT_ROLE"},
+        )
+        return _deny(
+            "INSUFFICIENT_ROLE",
+            "Für eine Modellfreigabe fehlt die erforderliche Rolle.",
+        )
 
     return _deny("UNKNOWN_ACTION", "Unbekannte Aktion.")
 

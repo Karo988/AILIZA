@@ -567,6 +567,9 @@ model_candidates = Table(
     Column("evidence_urls", JSON, nullable=False, default=list),
     Column("approved_by", String(64), nullable=True),
     Column("approved_at", DateTime(timezone=True), nullable=True),
+    # B4: Wer den Kandidaten eingebracht hat -- Grundlage der
+    # Selbstfreigabe-Pruefung (Vier-Augen-Prinzip) in approve_model_candidate().
+    Column("created_by", String(64), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Index("ix_model_candidates_provider_model", "provider", "model_id", unique=True),

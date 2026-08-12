@@ -76,12 +76,40 @@ Migration: `apps/backend/alembic/versions/0005b_add_model_intelligence_tables.py
   Token-Budget und Komplexitätsstufe (SIMPLE..RISKY), nicht über die
   Modellauswahl.
 
+**Freigabe und Routing — beides fail-closed (B3/B4)**
+
+| Prüfpunkt | Verhalten |
+|---|---|
+| Modellfreigabe ohne angemeldete Person | verweigert (`ModelApprovalDenied`) |
+| Freigabe per frei übergebenem Rollen-String | nicht mehr möglich — der Parameter existiert nicht |
+| Freigabe im fremden Namen | ausgeschlossen; `approved_by` stammt aus dem Actor |
+| Selbstfreigabe (Einbringer = Freigebender) | verweigert und auditiert |
+| Unbekannte oder unzureichende Rolle | verweigert und auditiert |
+| Routing ohne Klassifikation | kein Modell wird ausgewählt |
+| Klassifikation als lose Liste oder Dict | abgewiesen — nur `ClassificationResult` der Governance-Komponente |
+| Gesperrte Datenklasse | kein Modell, unabhängig von Score, Provider und `local_only` |
+
 **Bekannte Lücken**
 
 - Keine Anbindung an `orchestrator.generate()`. Bewusst offen gelassen;
   eine Verdrahtung ist eine eigene Entscheidung mit eigener Freigabe.
 - Kein API-Endpunkt für die Modellfreigabe. Freigaben erfolgen derzeit
-  nur über die Datenbankfunktion, nicht über eine Oberfläche.
+  nur über die Datenbankfunktion. Es gibt damit **keinen produktiven
+  Aufrufer** — die Härtung ist vorsorglich, nicht reaktiv.
+- **B-GOV-2 (offen, HANDOFF):** `ClassificationResult` trägt keine
+  Versionsangabe. Eine Bindung an eine bestimmte Klassifiziererversion ist
+  deshalb nicht möglich; belegt ist nur die Herkunft (Typ), nicht der
+  Stand. Zu ergänzen, bevor Klassifikationsergebnisse revisionssicher
+  nachweisbar sein müssen.
+- **Freigabepolicy nicht bestätigt (HANDOFF):** Die Schwelle
+  (`manager`/`admin`, `dsb` ausgeschlossen) folgt dem bestehenden
+  Projektmuster aus `confirm_memory_suggestion()`. Eine fachlich
+  bestätigte Freigaberegel für Modelle existiert im Repository nicht und
+  wurde hier **nicht** eigenmächtig beschlossen — sie ist zu bestätigen.
+- **Vier-Augen-Prinzip nur bei bekanntem Urheber:** Ist `created_by` nicht
+  gesetzt (Altbestand oder Anlage ohne Urheber), lässt sich Selbstfreigabe
+  nicht prüfen. Dieser Fall wird auditiert
+  (`model.approval.creator_unknown`), nicht stillschweigend übergangen.
 
 **Referenzdateien:** `apps/backend/intelligence/__init__.py`,
 `model_router.py`, `models.py`, `apps/backend/database.py`
