@@ -9,6 +9,8 @@ class SqliteMemoryStore:
     def __init__(self, db_path: str = "data/ailiza_memory.db"):
         self.db_path = db_path
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._init_schema()
 
     def _init_schema(self) -> None:

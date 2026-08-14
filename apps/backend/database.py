@@ -178,6 +178,11 @@ if DATABASE_URL.startswith("sqlite"):
             if not _IS_MEMORY_DB:
                 cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA busy_timeout=5000")
+            # Fremdschluesselpruefung ist bei SQLite pro Verbindung deaktiviert,
+            # sofern nicht explizit aktiviert -- ohne diese Zeile werden ON
+            # DELETE CASCADE u.ae. Regeln aus dem Schema stillschweigend
+            # ignoriert.
+            cursor.execute("PRAGMA foreign_keys=ON")
         finally:
             cursor.close()
 
