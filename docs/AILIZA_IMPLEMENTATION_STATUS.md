@@ -24,7 +24,13 @@ Jede Code-Sitzung:
 | Fixture-Fix (Windows-Cleanup) | ✅ | Commit `73c46a8`, `store.close()` in Fixture, CI grün (Teil von Run für `695b02d`) | erledigt |
 | Statusdatei angelegt | ✅ | Commit `695b02d`, CI grün (Run 31798105509/31798102160) | erledigt |
 | Gate 1A — Memory-Audit strikt read-only | ✅ | Commit `1e6bda7`, `init_db()` aus `audit_memory_scope_cli.py` entfernt, ersetzt durch `inspect(engine).has_table()`; 14/14 Zieltests + volle Suite 1444 passed/0 failed; CI grün (Run [31806555098](https://github.com/Karo988/AILIZA/actions/runs/31806555098), `completed`/`success`); 4 Subagenten-Reviews grün (memory-invariant-reviewer ×2, pg-sqlite-migration-checker ×2, pr-diff-reviewer: GO) | **P0-Chat-Schutzgate (siehe unten) — höhere Priorität als Gate 1B, das folgt erst danach** |
-| **P0 — Chat-Schutzgate (Lupe/Redaction verbindlich vor externem Versand)** | 🔄 in Arbeit | Auftrag erteilt 2026-08-14; Phase 1 (paralleler Ist-Audit) läuft | Ist-Audit abwarten, dann Sicherheitsvertrag (Phase 2) mit Karo abstimmen |
+| **P0 — Chat-Schutzgate (Lupe/Redaction verbindlich vor externem Versand)** | 🔄 in Arbeit, **noch keine Schutzwirkung** | Baustein 1 fertig: Commit `937f4ce` (`governance/send_preview.py`, 26 Tests). **Noch nicht in den Versandpfad verdrahtet** — bis dahin wirkt nichts davon | Verdrahtung in `main.py` (`/agent/run`), dann Frontend-Zustandsautomat, dann Output-Governance |
+| PII in Audit-Logs der Tool-Endpunkte | ✅ | Commit `8496aaa`: `/tools/search` und `/tools/fetch` schrieben rohe Suchanfrage bzw. vollständige URL (inkl. Tokens im Query-String) ins Audit. Jetzt nur Länge/Host + HMAC-Fingerprint über `AILIZA_LOG_HMAC_KEY`; ohne Schlüssel gar kein Fingerprint. 5 Tests, volle Suite 1449 passed/0 failed | erledigt |
+| `_ask_llm_directly()` ohne Provider-Kontext | ⚠️ offen | `main.py:1608` übergibt dem Orchestrator kein `context` → Capability-Gate prüft mit `PUBLIC`/`redaction_applied=False` als Default, also faktisch blind. Heute unschädlich, weil `main.py` korrekt `effective_task` durchreicht — aber ohne Absicherung in der Tiefe | Kontext explizit übergeben, Orchestrator bei fehlendem Kontext blockieren lassen |
+| `safe_stream.py` / `output_guardrail` | ⚠️ offen | Modul hat **0 Aufrufer** im gesamten Backend, keine Streaming-Route existiert — totes Sicherheitsfeature, nicht bloß lückenhaft | Entscheiden: verdrahten oder entfernen (kein Zwischenzustand) |
+| Telegram-Ausgang ohne Output-Prüfung | ⚠️ offen | `messenger/telegram_gateway.py`: eingehender Text läuft durch `redact()`, die **LLM-Antwort** geht ohne Output-Guardrail an die Telegram-Server | Output-Governance auch für diesen Pfad |
+| Output-Governance (neu erzeugte PII) | ⚠️ offen | Vor der Reinsertion findet keine erneute Klassifikation der Modellantwort statt — vom Modell **neu erzeugte** PII wird nicht erkannt | Teil des P0-Restpakets |
+| Rohe Tool-Parameter in `approval_requests` | ⚠️ offen | `gateway.py:65-70` speichert `input_params` roh in der Datenbank (nicht im Log) — bei PII-haltigen Suchanfragen/URLs liegt das dort im Klartext | Produktentscheidung: Redaction vor Speicherung oder bewusst akzeptieren |
 | PC synchronisieren | ⚠️ | PC zuletzt bekannt auf Commit `ea2cbd6`, veraltet gegenüber `1e6bda7`; PC-Synchronisierung ist aus dieser Cloud-Sitzung nicht prüfbar (kein Zugriff auf C:\AILIZA) | Auf dem PC: lokale Änderungen sichern, dann per Fast-forward auf `1e6bda7` synchronisieren |
 | Render-Deployment | ⚠️ | ✅ Staging erreichbar: `https://ailiza-stagin.onrender.com/`, Oberfläche meldet „System aktiv". ⚠️ deployter Commit unbekannt, ⚠️ Render-Branch unbekannt, ⚠️ Datenbanktyp unbekannt, ⚠️ Alembic-Revision der Staging-Datenbank unbekannt. Render läuft laut letztem Stand auf `main`/`058fea1` — nicht auf diesem Feature-Branch | Render-Dashboard prüfen: deployter Commit, Branch, DB-Typ, Alembic-Revision |
 | Migration 0007 | ⏸️ | Kein bestätigter fachlicher Bedarf, keine Tabellen `knowledge_approvals`/`claim_evidence` im Schema | Produktentscheidung: werden diese Tabellen wirklich gebraucht? |
@@ -113,3 +119,40 @@ bestätigt hat oder dass er irgendwo deployt ist.
   `1e6bda7`). Ein separater Auftrag an eine Sitzung mit `C:\AILIZA`-Zugriff
   wurde vorbereitet, aber nicht von dieser Sitzung ausgeführt (kein
   Dateisystemzugriff auf den PC von hier aus).
+
+### 2026-08-14 — P0-Vorarbeiten: Audit-Fund + Prüfbeleg-Baustein
+
+**Ist-Audit (3 Subagenten parallel, read-only).** Wichtigste Korrektur an der
+ursprünglichen Annahme: Im heutigen Chat-Pfad laufen Prüfung und Versand
+**synchron im selben Request** (`main.py:1872 → 1886`) — es gibt gar kein
+Zeitfenster zwischen „geprüft" und „gesendet". Mehrere der befürchteten
+Lücken (Invarianten 4, 8, 9, 10, 12) sind deshalb heute bereits erfüllt. Der
+Prüfbeleg wird erst durch die **neue** Bedienung nötig, bei der die Nutzerin
+den bereinigten Text bearbeitet und diesen sendet. Er sichert also die
+künftige Bedienung ab und schließt keine heute offene Lücke — das ist bewusst
+so benannt und nicht als „Sicherheitslücke geschlossen" dargestellt.
+
+**Ungeplanter, aber realer Fund (behoben, `8496aaa`).** `/tools/search` und
+`/tools/fetch` schrieben die rohe Nutzereingabe ins Audit-Log. Erste Fassung
+nutzte einen einfachen SHA-256-Fingerprint; der Sicherheitsreview wies zu
+Recht darauf hin, dass der per Wörterbuchangriff umkehrbar ist. Nachgehärtet
+auf HMAC mit dem bestehenden Logging-Schlüssel, gleiches Muster wie
+`_mask_user_id_for_log()`.
+
+**Baustein 1 (`937f4ce`).** `governance/send_preview.py` mit 26 Tests:
+Bindung an Nutzer/Mandant/Zweck/Text-Hash, Einmalnutzung, TTL, echter
+Nebenläufigkeitstest (8 gleichzeitige Threads, genau einer kommt durch),
+Unicode-NFC- und Zeilenenden-Normalisierung ohne echte Änderungen zu
+verschlucken, Speicherobergrenze. **Noch nicht verdrahtet.**
+
+**Betriebsgrenze, offen dokumentiert:** Der Prüfbeleg liegt prozesslokal im
+Arbeitsspeicher. Bei mehreren Workern bricht der Versand sicher ab statt
+falsch durchzugehen — keine Lücke, aber eine Fehlbedienung. Passt zur
+bestehenden Ein-Worker-Vorgabe in `render.yaml`. Eine mehrprozessfähige
+Variante bräuchte gemeinsamen Speicher und damit neue Infrastruktur; das ist
+bewusst nicht Teil dieses Pakets.
+
+**Noch offen für P0** (siehe Statustabelle): Verdrahtung in den Versandpfad,
+Frontend-Zustandsautomat, Output-Governance, `_ask_llm_directly`-Kontext,
+Entscheidung zu `safe_stream`. Die Folgepakete P1A (Navigation), P1B
+(Einstellungen) und P2 (Gate-1B-Vorlage) sind **nicht begonnen**.
