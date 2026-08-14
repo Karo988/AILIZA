@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import re
 import uuid
 import logging
@@ -631,7 +632,7 @@ def beta_access_check(request: Request, payload: _BetaAccessRequest):
 
 
 from fastapi.responses import JSONResponse
-from fastapi import Depends, UploadFile, File
+from fastapi import Depends, UploadFile, File, Response
 
 
 # ── CSRF-Schutz: Origin-/Referer-Check fuer Cookie-gestuetzte Requests ────────
@@ -1828,6 +1829,7 @@ def _attach_knowledge_result(*, result: dict[str, Any], knowledge: dict[str, Any
 def run_agent(
     request: Request,
     payload: AgentRunRequest,
+    response: Response,
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Duenner Wrapper um _run_agent_core(): haengt den Speicher-Vorschlags-
@@ -1839,7 +1841,7 @@ def run_agent(
     tenant = _tenant_id(token)
     knowledge = _maybe_build_knowledge_context(task=payload.task, token=token, tenant_id=tenant)
     result = _run_agent_core(
-        request, payload, token,
+        request, payload, token, response,
         knowledge_context_block=knowledge.get("context_block"),
     )
     _maybe_suggest_memory(task=payload.task, result=result, token=token, tenant_id=tenant)
@@ -1851,6 +1853,7 @@ def _run_agent_core(
     request: Request,
     payload: AgentRunRequest,
     token: TokenData | None,
+    response: Response,
     knowledge_context_block: str | None = None,
 ) -> dict[str, Any]:
     tenant = _tenant_id(token)
@@ -2111,9 +2114,10 @@ def _run_agent_core(
             "results": [],
         }
     try:
+        _anon_session_id = _get_or_set_anon_session_id(request, response)
         send_preview_store.consume(
             preview_id=payload.preview_id,
-            user_id=token.user_id if token else None,
+            user_id=_preview_identity(token, _anon_session_id),
             tenant_id=tenant,
             text=payload.task,
             purpose="agent_run",
@@ -2612,6 +2616,7 @@ async def knowledge_upload(
 @_limiter.limit("10/minute")
 async def documents_agent_run(
     request: Request,
+    response: Response,
     task: str = Form(...),
     file: UploadFile = File(...),
     consent_approval_id: int | None = Form(None),
@@ -2766,8 +2771,14 @@ async def documents_agent_run(
     # verbraucht ihn sofort wieder ueber denselben Pfad. Das aendert nichts
     # an der eigentlichen Sicherheitspruefung: classify()/redact() laufen
     # in _run_agent_core weiterhin unveraendert ueber combined_task.
+    # Dieselbe Identitaet wie beim spaeteren Verbrauch in _run_agent_core
+    # verwenden (ueber request.state zwischengespeichert, siehe
+    # _get_or_set_anon_session_id) -- sonst wuerden Ausstellung und Verbrauch
+    # bei anonymem Zugriff auf zwei verschiedene "anon:"-Werte laufen und der
+    # selbst ausgestellte Beleg waere nie einloesbar (Sicherheitsreview-Fund).
+    _doc_anon_session_id = _get_or_set_anon_session_id(request, response)
     _doc_preview_id = send_preview_store.issue(
-        user_id=token.user_id if token else None,
+        user_id=_preview_identity(token, _doc_anon_session_id),
         tenant_id=tenant,
         checked_text=combined_task,
         purpose="agent_run",
@@ -2775,6 +2786,7 @@ async def documents_agent_run(
 
     result = run_agent(
         request=request,
+        response=response,
         payload=AgentRunRequest(
             task=combined_task,
             history=None,
@@ -2830,6 +2842,61 @@ AUTH_RESULT_SUCCESS = "AUTH_SUCCESS"
 AUTH_RESULT_STEP_UP_REQUIRED = "AUTH_STEP_UP_REQUIRED"
 AUTH_RESULT_FAILED = "AUTH_FAILED"
 AUTH_RESULT_TECHNICAL_ERROR = "AUTH_TECHNICAL_ERROR"
+
+
+_ANON_SESSION_COOKIE = "ailiza_anon_session"
+_ANON_SESSION_MIN_LEN = 32
+
+
+def _get_or_set_anon_session_id(http_request: Request, response) -> str:
+    """Sichere, fachlich bedeutungslose Sitzungskennung fuer NICHT eingeloggte
+    Nutzer -- ersetzt den bisherigen gemeinsamen Pseudo-Wert "__anonymous__"
+    als Bindung fuer Pruefbelege (governance/send_preview.py). Ohne diese
+    Bindung koennte ein in Browser A ausgestellter Beleg in Browser B benutzt
+    werden, weil alle anonymen Nutzer denselben festen Wert teilten.
+
+    Kein Klartext, keine PII, kein Login-Ersatz -- nur ein hochentropischer
+    Zufallswert, der ausschliesslich als Bindungsschluessel dient. Fehlt das
+    Cookie oder ist es zu kurz (z.B. manipuliert/gekuerzt), wird ein neues
+    ausgestellt -- fail-closed: der alte, zu diesem Fall gehoerende Beleg
+    (falls vorhanden) passt dann nicht mehr und muss neu geprueft werden,
+    statt eine schwache/geratene Kennung zu akzeptieren.
+
+    Auf request.state zwischengespeichert: ein frisch ausgestelltes Cookie
+    steckt nur im Response-Header, taucht aber innerhalb DESSELBEN Requests
+    nie in http_request.cookies auf (das ist erst beim naechsten Request der
+    Fall). Ohne dieses Caching wuerden zwei Aufrufe im selben Request (z.B.
+    Beleg ausstellen UND sofort verbrauchen, siehe documents_agent_run)
+    zwei VERSCHIEDENE Sitzungs-IDs erzeugen -- ein Beleg, den der Server sich
+    selbst ausstellt, waere dann nie zum eigenen Verbrauch kompatibel."""
+    cached = getattr(http_request.state, "anon_session_id", None)
+    if cached:
+        return cached
+    existing = http_request.cookies.get(_ANON_SESSION_COOKIE)
+    if existing and len(existing) >= _ANON_SESSION_MIN_LEN:
+        http_request.state.anon_session_id = existing
+        return existing
+    new_id = secrets.token_urlsafe(32)
+    is_prod = os.getenv("AILIZA_ENV", "development").lower() in ("production", "staging")
+    response.set_cookie(
+        key=_ANON_SESSION_COOKIE,
+        value=new_id,
+        httponly=True,
+        secure=is_prod,
+        samesite="strict",
+        max_age=int(os.getenv("AILIZA_ANON_SESSION_MAX_AGE_SECONDS", str(30 * 24 * 3600))),
+        path="/",
+    )
+    http_request.state.anon_session_id = new_id
+    return new_id
+
+
+def _preview_identity(token: "TokenData | None", anon_session_id: str) -> str:
+    """Identitaet fuer die Pruefbeleg-Bindung: echter Nutzer bei Login, sonst
+    die anonyme Sitzungskennung -- niemals der gemeinsame Pseudo-Wert. Das
+    "anon:"-Praefix verhindert eine (auch nur theoretische) Kollision mit
+    einem echten user_id-Namensraum."""
+    return token.user_id if token else f"anon:{anon_session_id}"
 
 
 def _set_session_cookie(response: JSONResponse, token: str) -> None:
@@ -4220,6 +4287,8 @@ def build_escalation_info(risk_level: str, violations: list[str] = None) -> dict
 @app.post("/api/policy-redact", response_model=PolicyRedactResponse)
 def policy_redact(
     request: PolicyRedactRequest,
+    http_request: Request,
+    response: Response,
     current_user: TokenData | None = Depends(get_current_user),
 ) -> PolicyRedactResponse:
     """
@@ -4376,8 +4445,9 @@ def policy_redact(
         # Rohtexts -- siehe Kommentar bei _raw_input_for_preview oben.
         preview_id = None
         if _raw_input_for_preview:
+            _anon_session_id = _get_or_set_anon_session_id(http_request, response)
             preview_id = send_preview_store.issue(
-                user_id=current_user.user_id if current_user else None,
+                user_id=_preview_identity(current_user, _anon_session_id),
                 tenant_id=_tenant_id(current_user),
                 checked_text=_raw_input_for_preview,
                 purpose="agent_run",

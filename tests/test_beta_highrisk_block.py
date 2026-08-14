@@ -78,9 +78,20 @@ def test_golden_amun_brief_still_blocked_via_art9(monkeypatch):
     """Doppelabdeckung ist gewollt: der Golden-Brief laeuft ueber ein
     unabhaengiges System (RedactionEngineV2 / policy_redact), nicht ueber
     compliance_auditor.py - bleibt unabhaengig vom AILIZA_BETA_HIGHRISK_BLOCK-
-    Schalter ueber Art. 9 blockiert."""
+    Schalter ueber Art. 9 blockiert.
+
+    Ueber den echten HTTP-Endpunkt statt direktem Funktionsaufruf: policy_redact()
+    verlangt seit der anonymen Sitzungstrennung (Paket B) zusaetzlich
+    http_request/response-Parameter fuer das Sitzungs-Cookie -- ein direkter
+    Python-Aufruf muesste die bei jeder Signaturaenderung nachziehen, der
+    TestClient bleibt davon unabhaengig."""
     monkeypatch.delenv("AILIZA_BETA_HIGHRISK_BLOCK", raising=False)
-    from apps.backend.main import policy_redact, PolicyRedactRequest
-    request = PolicyRedactRequest(text="Gesundheit: wiederkehrende Migräne", context=None, detected_categories=None)
-    response = policy_redact(request, current_user=None)
-    assert response.can_send_to_llm is False
+    from fastapi.testclient import TestClient
+    from apps.backend.main import app
+    client = TestClient(app, cookies={})
+    resp = client.post(
+        "/api/policy-redact",
+        json={"text": "Gesundheit: wiederkehrende Migräne", "context": None, "detected_categories": None},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["can_send_to_llm"] is False
