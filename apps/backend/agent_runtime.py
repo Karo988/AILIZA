@@ -258,7 +258,7 @@ class AgentRuntime:
                 self.tool_executor("_health_probe", {})
             except HTTPException as _probe_exc:
                 if _is_missing_provider_error(_probe_exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer(
                         "agent.degraded_missing_provider",
@@ -286,7 +286,7 @@ class AgentRuntime:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
                 if _is_missing_provider_error(exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer(
                         "agent.degraded_missing_provider",
@@ -462,15 +462,27 @@ class AgentRuntime:
         approval_timeout: float = 300.0,
     ) -> Iterator[dict[str, Any]]:
         run_id = str(uuid4())
-        plan = plan_tool_calls(task)
+        self._redacted_task: str = task
         self.create_run_record(run_id, task, streaming=True)
+
+        # P0-Nachbesserung: stream() rief bisher plan_tool_calls(task) direkt
+        # mit dem ROHEN Text auf -- keine classify()/redact()-Pruefung, anders
+        # als run() (siehe _precheck oben). PII/Sperrinhalte gingen dadurch
+        # ungeprueft in die Tool-Planung. Gleiches Muster wie run() jetzt
+        # auch hier: erst pruefen, dann mit self._redacted_task planen.
+        early_result = self._precheck(task, run_id)
+        if early_result is not None:
+            yield stream_event("run_blocked", early_result)
+            return
+
+        plan = plan_tool_calls(self._redacted_task)
         self.audit_writer(
             "agent.run.started",
             {"run_id": run_id, "planned_steps": len(plan), "streaming": True},
         )
         yield stream_event(
             "run_started",
-            {"run_id": run_id, "status": "running", "task": task, "planned_steps": len(plan)},
+            {"run_id": run_id, "status": "running", "task": self._redacted_task, "planned_steps": len(plan)},
         )
 
         if not plan:
@@ -478,7 +490,7 @@ class AgentRuntime:
                 self.tool_executor("_health_probe", {})
             except HTTPException as _probe_exc:
                 if _is_missing_provider_error(_probe_exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer("agent.degraded_missing_provider",
                                       {"run_id": run_id, "tool": "_health_probe",
@@ -524,7 +536,7 @@ class AgentRuntime:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
                 if _is_missing_provider_error(exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer(
                         "agent.degraded_missing_provider",
