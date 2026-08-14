@@ -419,3 +419,111 @@ def test_admin_delete_binding_not_found(client):
         headers={"Authorization": f"Bearer {_admin_token()}"},
     )
     assert resp.status_code == 404
+
+
+# ── Paket C: kein externer Anbieter-Call ueber Telegram ──────────────────────
+# Telegram kann die Pruef- und Freigabeansicht der Weboberflaeche nicht
+# gleichwertig abbilden (kein sichtbarer bereinigter Versandtext, keine
+# Bearbeitung, keine Freigabe vor dem Versand -- und die Anbieterantwort ging
+# bisher zusaetzlich ohne Ausgangspruefung an die Telegram-Server). Deshalb
+# bleibt der externe Weg hier geschlossen, statt ein schwaecheres Sondergate
+# zu bauen.
+
+def test_question_does_not_reach_external_provider(mock_tg, monkeypatch):
+    """Kernbeweis: eine normale Frage loest KEINEN Provider-Aufruf aus."""
+    from apps.backend.messenger.telegram_gateway import (
+        handle_update, create_binding, confirm_opt_in,
+    )
+    import apps.backend.providers.orchestrator as orch_module
+
+    calls: list[str] = []
+
+    class _SpyOrchestrator:
+        def __init__(self, *a, **kw):
+            calls.append("constructed")
+
+        def generate(self, *a, **kw):
+            calls.append("generate")
+            return "sollte nie passieren"
+
+    monkeypatch.setattr(orch_module, "ProviderOrchestrator", _SpyOrchestrator)
+
+    create_binding("881", "u")
+    confirm_opt_in("881")
+    mock_tg.clear()
+
+    handle_update({"message": {"chat": {"id": 881},
+                               "text": "Schreibe mir bitte eine Kundenmail.",
+                               "from": {}}})
+
+    assert calls == [], f"Externer Anbieter wurde doch erreicht: {calls}"
+
+
+def test_user_gets_understandable_alternative_not_a_dead_end(mock_tg):
+    """Keine Sackgasse: die Nutzerin erfaehrt den Grund UND den Weg, wie sie
+    ihre Frage trotzdem beantwortet bekommt."""
+    from apps.backend.messenger.telegram_gateway import (
+        handle_update, create_binding, confirm_opt_in,
+    )
+    create_binding("882", "u")
+    confirm_opt_in("882")
+    mock_tg.clear()
+
+    handle_update({"message": {"chat": {"id": 882},
+                               "text": "Schreibe mir bitte eine Kundenmail.",
+                               "from": {}}})
+
+    texts = " ".join(m.get("text", "") for m in mock_tg)
+    assert "Weboberflaeche" in texts or "Weboberfläche" in texts
+    assert "freigeben" in texts.lower() or "freigibst" in texts.lower()
+    assert "Traceback" not in texts and "Exception" not in texts
+
+
+def test_local_fast_path_answers_still_work(mock_tg):
+    """Rein lokale Antworten bleiben erlaubt -- sie erreichen nachweislich
+    keinen externen Anbieter, also gibt es keinen Grund sie zu sperren."""
+    from apps.backend.messenger.telegram_gateway import _run_agent
+    try:
+        from apps.backend.main import answer_simple_question
+    except ImportError:
+        pytest.skip("answer_simple_question nicht importierbar")
+
+    probe = "Welches Datum haben wir heute?"
+    if not answer_simple_question(probe):
+        pytest.skip("Fast-Path beantwortet diesen Beispieltext nicht (mehr)")
+
+    antwort = _run_agent(probe, "default")
+    assert "Weboberflaeche" not in antwort, (
+        "Lokale Antwort wurde faelschlich als externer Fall behandelt"
+    )
+
+
+def test_help_and_status_commands_still_work(mock_tg):
+    """Die lokalen Kommandos duerfen von der Sperre nicht betroffen sein."""
+    from apps.backend.messenger.telegram_gateway import (
+        handle_update, create_binding, confirm_opt_in,
+    )
+    create_binding("883", "u")
+    confirm_opt_in("883")
+    mock_tg.clear()
+
+    handle_update({"message": {"chat": {"id": 883}, "text": "/hilfe", "from": {}}})
+    handle_update({"message": {"chat": {"id": 883}, "text": "/status", "from": {}}})
+
+    texts = " ".join(m.get("text", "") for m in mock_tg)
+    assert "Hilfe" in texts
+    assert len(mock_tg) >= 2
+
+
+def test_no_orchestrator_import_remains_in_run_agent():
+    """Statischer Regressionsschutz: der Provider-Orchestrator darf im
+    Telegram-Ausgangspfad gar nicht mehr auftauchen -- sonst koennte ein
+    spaeterer Patch ihn versehentlich reaktivieren."""
+    from pathlib import Path
+    quelle = Path(__file__).resolve().parents[1] / "apps" / "backend" / "messenger" / "telegram_gateway.py"
+    inhalt = quelle.read_text(encoding="utf-8")
+    start = inhalt.index("def _run_agent(")
+    ende = inhalt.index("def _audit(", start)
+    block = inhalt[start:ende]
+    assert "ProviderOrchestrator" not in block
+    assert "orch.generate" not in block

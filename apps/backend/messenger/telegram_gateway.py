@@ -376,8 +376,44 @@ def _handle_status(chat_id: str) -> None:
         send_message(chat_id, "❌ Nicht verbunden. Tippe /start.")
 
 
+# Verstaendliche Meldung, wenn eine Frage einen externen KI-Anbieter braeuchte.
+# Bewusst mit konkretem Alternativweg statt blossem "geht nicht".
+_EXTERNE_KI_UEBER_WEB = (
+    "🔒 Fragen an die externe KI beantworte ich hier in Telegram derzeit nicht.\n\n"
+    "Grund: Vor jedem Versand an einen externen Anbieter muss ein Mensch den "
+    "bereinigten Text sehen und freigeben koennen. In Telegram gibt es diese "
+    "Pruefansicht nicht.\n\n"
+    "So geht es: Stelle deine Frage in der AILIZA-Weboberflaeche. Dort siehst du "
+    "vor dem Senden, was geschwaerzt wurde, kannst den Text bearbeiten und gibst "
+    "ihn selbst frei.\n\n"
+    "Einfache lokale Fragen (z. B. nach Datum oder Uhrzeit) beantworte ich hier "
+    "weiterhin."
+)
+
+
 def _run_agent(task: str, tenant_id: str) -> str:
-    """Ruft den Fast-Path oder Provider-Orchestrator auf. Fail-closed."""
+    """Beantwortet lokal, was lokal beantwortbar ist -- und bricht sonst
+    fail-closed ab, statt extern zu senden.
+
+    P0/Paket C: Der externe Anbieter-Aufruf ist hier bewusst entfernt.
+    Ueber die Weboberflaeche gilt seit dem Chat-Schutzgate: ein Mensch sieht
+    den bereinigten Versandtext, kann ihn bearbeiten und gibt ihn frei; nur
+    exakt dieser gepruefte Text geht hinaus (Pruefbeleg, siehe
+    governance/send_preview.py). Telegram kann das strukturell nicht
+    gleichwertig abbilden -- es gibt dort keine Ansicht, in der die
+    bereinigte Fassung vor dem Versand geprueft und bearbeitet wird, und die
+    Antwort des Anbieters ging bisher zusaetzlich ohne Ausgangspruefung
+    direkt an die Telegram-Server.
+
+    Statt hier ein zweites, schwaecheres Sondergate zu bauen (Freigabe per
+    Chat-Kommando o.ae.), bleibt der externe Weg geschlossen, bis eine
+    gleichwertige Pruef- und Freigabeansicht existiert. Die Eingabe geht
+    dabei nicht verloren: die Nutzerin bekommt den konkreten Alternativweg
+    genannt.
+
+    Rein lokale Antworten (Fast-Path, z.B. Datum/Uhrzeit) bleiben erlaubt --
+    sie erreichen nachweislich keinen externen Anbieter.
+    """
     try:
         from ..main import answer_simple_question
     except ImportError:
@@ -391,27 +427,7 @@ def _run_agent(task: str, tenant_id: str) -> str:
         if fast:
             return fast
 
-    try:
-        from ..kill_switch import is_external_llm_enabled
-    except ImportError:
-        from kill_switch import is_external_llm_enabled
-    if not is_external_llm_enabled():
-        return "Externe KI ist derzeit deaktiviert. Fuer einfache Fragen stehe ich lokal zur Verfuegung."
-
-    try:
-        from ..providers.orchestrator import ProviderOrchestrator
-    except ImportError:
-        from providers.orchestrator import ProviderOrchestrator
-
-    try:
-        orch = ProviderOrchestrator()
-        messages = [
-            {"role": "system", "content": "Du bist AILIZA, ein KI-Assistent fuer KMU. Antworte kurz und auf Deutsch."},
-            {"role": "user", "content": task},
-        ]
-        return orch.generate(messages)
-    except Exception:
-        return "Es tut mir leid, ich konnte deine Anfrage gerade nicht verarbeiten."
+    return _EXTERNE_KI_UEBER_WEB
 
 
 # ── Audit-Light ───────────────────────────────────────────────────────────────
