@@ -1893,40 +1893,6 @@ def _run_agent_core(
             "results": [],
         }
 
-    # ── Pruefbeleg einloesen (falls die Vorschau benutzt wurde) ──────────────
-    # Wenn die Nutzerin den bereinigten Text in der Vorschau bearbeitet und
-    # abgeschickt hat, ist genau dieser Text bereits geprueft. Der Beleg
-    # beweist, dass er seitdem nicht veraendert wurde und zu diesem Nutzer,
-    # Mandanten und Zweck gehoert. Fehlschlag heisst abbrechen, nicht
-    # ungeprueft senden.
-    if payload.preview_id is not None:
-        try:
-            send_preview_store.consume(
-                preview_id=payload.preview_id,
-                user_id=token.user_id if token else None,
-                tenant_id=tenant,
-                text=payload.task,
-                purpose="agent_run",
-            )
-        except PreviewRejected as rejected:
-            write_audit_entry(
-                action="send_preview.rejected",
-                tenant_id=tenant,
-                metadata={"reason": rejected.reason},
-            )
-            return {
-                "status": "preview_invalid",
-                "message": rejected.message_de,
-                "ai_response": rejected.message_de,
-                "steps": [],
-                "results": [],
-            }
-        write_audit_entry(
-            action="send_preview.consumed",
-            tenant_id=tenant,
-            metadata={"purpose": "agent_run"},
-        )
-
     # ── Governance Pre-Check ZUERST: classify → data_matrix → redact ─────────
     # Betreiber-Freigabe 2026-07-11 (drei Stufen statt Hartblock):
     #   Fall 1: keine sensiblen Daten → direkt senden, kein Login noetig.
@@ -2073,6 +2039,69 @@ def _run_agent_core(
                 "redaction_applied": True,
                 "audit_id": compliance_check.get("audit_id"),
             },
+        )
+
+    # ── Pruefbeleg einloesen: VERPFLICHTEND, unmittelbar vor dem externen Versand ─
+    # Bewusst HIER und nicht frueher im Ablauf: Fall 1/2/3 oben entscheiden erst,
+    # OB und unter welcher Bedingung (Login, Einwilligung) ueberhaupt gesendet
+    # werden darf -- keiner dieser Zweige sendet vorher extern (jeder endet mit
+    # return). Ein Gate davor wuerde genau diese bereits freigegebene
+    # Stufenlogik (Betreiber-Freigabe 2026-07-11) blockieren, bevor sie greifen
+    # kann -- das war ein Fehler im ersten Entwurf dieser Aenderung, durch die
+    # bestehenden Tests in test_compliance_consent_flow.py aufgedeckt.
+    #
+    # Ausnahme: der Fall-3-Einwilligungspfad (consent_approval_id) hat bereits
+    # seine eigene, etablierte Bindung an genau diesen Text (task_sha256 in
+    # consume_compliance_consent() oben) -- ein zusaetzlicher Beleg waere dort
+    # doppelt gemoppelt, nicht sicherer.
+    #
+    # Fuer jeden anderen Fall gilt fail-closed: ohne gueltigen, zweck- und
+    # nutzergebundenen Beleg wird NICHT an einen externen Anbieter gesendet.
+    # Kein Fallback auf serverseitige Neu-Redaktion des Rohtexts -- das waere
+    # genau der Compatibility-Bypass, der ein Gate wirkungslos macht.
+    if not payload.consent_approval_id:
+        if not payload.preview_id:
+            _msg = (
+                "Bitte zuerst die Sicherheitsprüfung (🔍) ausführen, bevor "
+                "die Nachricht gesendet wird."
+            )
+            write_audit_entry(
+                action="send_preview.rejected",
+                tenant_id=tenant,
+                metadata={"reason": "missing"},
+            )
+            return {
+                "status": "preview_invalid",
+                "message": _msg,
+                "ai_response": _msg,
+                "steps": [],
+                "results": [],
+            }
+        try:
+            send_preview_store.consume(
+                preview_id=payload.preview_id,
+                user_id=token.user_id if token else None,
+                tenant_id=tenant,
+                text=payload.task,
+                purpose="agent_run",
+            )
+        except PreviewRejected as rejected:
+            write_audit_entry(
+                action="send_preview.rejected",
+                tenant_id=tenant,
+                metadata={"reason": rejected.reason},
+            )
+            return {
+                "status": "preview_invalid",
+                "message": rejected.message_de,
+                "ai_response": rejected.message_de,
+                "steps": [],
+                "results": [],
+            }
+        write_audit_entry(
+            action="send_preview.consumed",
+            tenant_id=tenant,
+            metadata={"purpose": "agent_run"},
         )
 
     # ── Schreibaufgaben: direkt LLM ohne AgentRuntime / Tavily ────────────────
@@ -2696,12 +2725,28 @@ async def documents_agent_run(
         },
     )
 
+    # combined_task entsteht erst hier, serverseitig, aus Dokumentinhalt +
+    # Aufgabe -- der Client kann dafuer nie vorher eine preview_id besitzen.
+    # Da der verpflichtende Beleg-Check in _run_agent_core sonst jede
+    # Dokumentanfrage ohne consent_approval_id ablehnen wuerde, stellt der
+    # Server sich hier selbst einen Beleg fuer genau diesen Text aus und
+    # verbraucht ihn sofort wieder ueber denselben Pfad. Das aendert nichts
+    # an der eigentlichen Sicherheitspruefung: classify()/redact() laufen
+    # in _run_agent_core weiterhin unveraendert ueber combined_task.
+    _doc_preview_id = send_preview_store.issue(
+        user_id=token.user_id if token else None,
+        tenant_id=tenant,
+        checked_text=combined_task,
+        purpose="agent_run",
+    )
+
     result = run_agent(
         request=request,
         payload=AgentRunRequest(
             task=combined_task,
             history=None,
             consent_approval_id=consent_approval_id,
+            preview_id=_doc_preview_id,
         ),
         token=token,
     )
@@ -4155,6 +4200,15 @@ def policy_redact(
     """
     try:
         text = request.text or ""
+        # Fuer den Pruefbeleg: die UNVERAENDERTE Eingabe, wie sie das Frontend
+        # spaeter unveraendert als "task" an /agent/run schickt -- NICHT der
+        # unten mehrfach mutierte "text" (Secret-Stripping, Redaction). Der
+        # Beleg bindet bewusst an den Rohtext, nicht an safe_text: /agent/run
+        # klassifiziert den Rohtext selbst noch einmal fuer die Fall-1/2/3-
+        # Entscheidung (Login-/Einwilligungspflicht) -- eine Bindung an bereits
+        # geschwaerzten Text wuerde diese zweite Klassifikation entwerten
+        # (Platzhalter statt Klartext loesen keine PII-Erkennung mehr aus).
+        _raw_input_for_preview = text
         logger.info(f"🔍 /api/policy-redact called | text_len={len(text)} | engine=RedactionEngineV2")
 
         # ─────────────────────────────────────────────────────────
@@ -4281,15 +4335,18 @@ def policy_redact(
         )
         detected_items = build_detected_items(redaction_result)
 
-        # Pruefbeleg nur ausstellen, wenn dieser Text ueberhaupt gesendet
-        # werden darf -- sonst gaebe es einen Beleg fuer etwas, das das Gate
-        # danach ohnehin ablehnt.
+        # Pruefbeleg fuer den ROHEN Eingabetext ausstellen -- unabhaengig von
+        # can_send_to_llm: der Beleg belegt nur "dieser exakte Rohtext wurde
+        # geprueft", nicht "dieser Text darf ungeprueft raus". Die eigentliche
+        # Fall-1/2/3-Entscheidung (Login/Einwilligung) trifft /agent/run
+        # weiterhin selbst anhand einer eigenen Klassifikation desselben
+        # Rohtexts -- siehe Kommentar bei _raw_input_for_preview oben.
         preview_id = None
-        if can_send_to_llm:
+        if _raw_input_for_preview:
             preview_id = send_preview_store.issue(
                 user_id=current_user.user_id if current_user else None,
                 tenant_id=_tenant_id(current_user),
-                checked_text=redaction_result.redacted_text,
+                checked_text=_raw_input_for_preview,
                 purpose="agent_run",
             )
             write_audit_entry(

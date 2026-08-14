@@ -48,6 +48,16 @@ def _headers(user_id: str, tenant_id: str = "default", role: str = "user") -> di
     return {"Authorization": f"Bearer {_token(user_id, tenant_id, role)}"}
 
 
+def _preview_id(client, task: str, headers: dict) -> str:
+    """/agent/run verlangt seit dem P0-Schutzgate verpflichtend einen
+    Pruefbeleg fuer den exakten Rohtext."""
+    resp = client.post("/api/policy-redact", json={"text": task}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    preview_id = resp.json().get("preview_id")
+    assert preview_id, f"Kein Pruefbeleg fuer Testtext ausgestellt: {resp.json()}"
+    return preview_id
+
+
 def _make_run(run_id: str, tenant_id: str = "default", owner_user_id: str | None = None):
     from apps.backend.database import create_agent_run
     return create_agent_run(
@@ -169,9 +179,11 @@ def test_historical_ownerless_run_invisible(client):
 
 # 8. Neue Runs erhalten Owner+Tenant aus dem Server-Kontext
 def test_new_run_gets_server_side_owner_and_tenant(client):
+    task = "Fasse zusammen: Der Himmel ist blau."
+    headers = _headers("alice")
     resp = client.post(
-        "/agent/run", json={"task": "Fasse zusammen: Der Himmel ist blau."},
-        headers=_headers("alice"),
+        "/agent/run", json={"task": task, "preview_id": _preview_id(client, task, headers)},
+        headers=headers,
     )
     assert resp.status_code == 200
     run_id = resp.json().get("run_id")
@@ -185,10 +197,12 @@ def test_new_run_gets_server_side_owner_and_tenant(client):
 
 # 9. Vom Browser mitgegebener fremder Owner wird ignoriert
 def test_client_supplied_owner_is_ignored(client):
+    task = "Fasse zusammen: Der Himmel ist blau."
+    headers = _headers("alice")
     resp = client.post(
         "/agent/run",
-        json={"task": "Fasse zusammen: Der Himmel ist blau.", "owner_user_id": "mallory"},
-        headers=_headers("alice"),
+        json={"task": task, "owner_user_id": "mallory", "preview_id": _preview_id(client, task, headers)},
+        headers=headers,
     )
     assert resp.status_code == 200
     run_id = resp.json().get("run_id")

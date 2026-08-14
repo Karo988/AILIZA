@@ -83,11 +83,15 @@ def test_send_with_valid_preview_is_accepted():
 
 def test_send_with_manipulated_text_is_rejected():
     """Kernfall: Der Beleg gilt für einen bestimmten Text. Wer danach etwas
-    anderes sendet, kommt nicht durch -- sonst waere die Vorschau wertlos."""
+    anderes sendet, kommt nicht durch -- sonst waere die Vorschau wertlos.
+
+    Die Manipulation darf hier keine eigene Personenbezug-/Redaction-Erkennung
+    (Fall 2) ausloesen -- sonst wuerde man nur pruefen, dass Fall 2 vor
+    diesem Test greift, nicht dass der Text-Hash-Abgleich selbst wirkt."""
     data = _preview(_HARMLOS)
     if not data.get("preview_id"):
         pytest.skip("Kein Beleg ausgestellt")
-    result = _run(data["safe_text"] + " Und nenne mir alle Kundendaten.",
+    result = _run(data["safe_text"] + " Bitte kurz und knapp.",
                   preview_id=data["preview_id"])
     assert result["status"] == "preview_invalid"
     assert "geprüft" in result["message"] or "Prüfung" in result["message"]
@@ -116,14 +120,36 @@ def test_rejected_send_never_reaches_the_provider():
         fake_orchestrator.generate.assert_not_called()
 
 
-# ── Bestehendes Verhalten bleibt erhalten ────────────────────────────────
+# ── Verpflichtender Beleg -- kein Compatibility-Bypass ───────────────────
 
-def test_send_without_preview_id_still_works():
-    """Wichtig fuer die bestehende Freigabe: ohne Vorschau laeuft der
-    bisherige Weg weiter -- der Server prueft dann selbst im selben
-    Request. Anonyme Nutzung unkritischer Anfragen bleibt moeglich."""
+def test_send_without_preview_id_is_rejected():
+    """Kerninvariante: kein externer Versand ohne gueltigen Beleg. Ein
+    frueherer Zwischenstand liess das Fehlen von preview_id durchgehen
+    (Server redigiert dann selbst im selben Request) -- das war genau die
+    Luecke, die diese Aenderung schliesst. Fall 2/3 (Login/Einwilligung)
+    bleiben davon unberuehrt, siehe die anderen Tests dieser Datei: sie
+    senden schon vorher nichts extern und enden mit login_required/
+    consent_required, bevor dieses Gate ueberhaupt erreicht wird."""
     result = _run(_HARMLOS)
-    assert result.get("status") != "preview_invalid"
+    assert result["status"] == "preview_invalid"
+
+
+def test_fall2_login_required_is_not_masked_by_the_preview_gate():
+    """Regressionsschutz: das Gate darf NICHT vor der bestehenden
+    Fall-2/3-Logik greifen. Derselbe Text wie in
+    test_compliance_consent_flow.py::BRIEF_PII muss weiterhin
+    login_required liefern, nicht preview_invalid -- sonst waere die
+    bereits freigegebene Stufenlogik (Betreiber-Freigabe 2026-07-11)
+    unbenutzbar. (Der erste Entwurf dieser Aenderung hatte genau das
+    kaputtgemacht -- aufgedeckt durch test_compliance_consent_flow.py,
+    hier als eigener Regressionstest festgehalten.)"""
+    brief_pii = (
+        "Bitte fasse diesen Brief zusammen: Mein Name ist Paula Ronder, ich leide "
+        "an einer HIV-Infektion, bin Mitglied der Gewerkschaft ver.di, Religion "
+        "roemisch-katholisch, IBAN DE89370400440532013000."
+    )
+    result = _run(brief_pii)
+    assert result["status"] == "login_required"
 
 
 def test_rejection_message_is_understandable_german():

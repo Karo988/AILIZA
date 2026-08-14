@@ -159,6 +159,17 @@ def _auth(user_id: str):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _preview_id(client, task: str, headers: dict) -> str:
+    """/agent/run verlangt seit dem P0-Schutzgate verpflichtend einen
+    Pruefbeleg fuer den exakten Rohtext -- ohne ihn liefert der Endpunkt
+    status=preview_invalid statt die eigentliche Chat-Logik zu erreichen."""
+    resp = client.post("/api/policy-redact", json={"text": task}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    preview_id = resp.json().get("preview_id")
+    assert preview_id, f"Kein Pruefbeleg fuer Testtext ausgestellt: {resp.json()}"
+    return preview_id
+
+
 def test_agent_run_includes_knowledge_context_in_llm_task(client, monkeypatch):
     import apps.backend.main as main_module
 
@@ -172,9 +183,10 @@ def test_agent_run_includes_knowledge_context_in_llm_task(client, monkeypatch):
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
 
+    task = "Bitte schreibe: Wie ist die Urlaubsregelung?"
     response = client.post(
         "/agent/run",
-        json={"task": "Bitte schreibe: Wie ist die Urlaubsregelung?"},
+        json={"task": task, "preview_id": _preview_id(client, task, h)},
         headers=h,
     )
     assert response.status_code == 200
@@ -225,8 +237,9 @@ def test_agent_run_search_failure_does_not_break_chat(client, monkeypatch):
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
 
+    task = "Bitte schreibe: Test"
     response = client.post(
-        "/agent/run", json={"task": "Bitte schreibe: Test"}, headers=h,
+        "/agent/run", json={"task": task, "preview_id": _preview_id(client, task, h)}, headers=h,
     )
     assert response.status_code == 200
     body = response.json()
