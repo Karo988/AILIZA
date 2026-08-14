@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1088,7 +1089,14 @@ def search_tools(
     search_query = query or (payload.query if payload else None)
     if search_query is None:
         raise HTTPException(status_code=422, detail="query is required")
-    write_audit_entry(action="tools.search", metadata={"query": search_query})
+    # Nur Metadaten, niemals die Suchanfrage selbst: eine Nutzeranfrage kann
+    # Namen, Adressen oder Geheimnisse enthalten (CLAUDE.md: keine PII/Prompts
+    # in Logs). Fuer die Nachvollziehbarkeit genuegen Laenge und Hash-Praefix.
+    _search_metadata: dict[str, Any] = {"query_len": len(search_query)}
+    _search_fp = _fingerprint_for_audit(search_query, "q")
+    if _search_fp is not None:
+        _search_metadata["query_fingerprint"] = _search_fp
+    write_audit_entry(action="tools.search", metadata=_search_metadata)
     parameters = {"query": search_query}
     response = guarded_tool_call("search", parameters)
     if response.get("status") == "completed":
@@ -1104,7 +1112,20 @@ def fetch_tool(
     fetch_url = url or (payload.url if payload else None)
     if fetch_url is None:
         raise HTTPException(status_code=422, detail="url is required")
-    write_audit_entry(action="tools.fetch", metadata={"url": fetch_url})
+    # URLs koennen personenbezogene Daten im Pfad/Query tragen (Profil-IDs,
+    # Tokens, E-Mail-Adressen). Nur Host und Hash protokollieren, nie die
+    # vollstaendige URL (CLAUDE.md: keine PII/Secrets in Logs).
+    _fetch_metadata: dict[str, Any] = {
+        # Host bleibt im Klartext: fuer die Sicherheitsbewertung (welche
+        # Gegenstelle wurde kontaktiert) unverzichtbar und ohne Pfad/Query
+        # in aller Regel nicht personenbezogen. Randfall persoenlicher
+        # Subdomains ist bewusst in Kauf genommen.
+        "url_host": urlparse(fetch_url).hostname or "unbekannt",
+    }
+    _fetch_fp = _fingerprint_for_audit(fetch_url, "u")
+    if _fetch_fp is not None:
+        _fetch_metadata["url_fingerprint"] = _fetch_fp
+    write_audit_entry(action="tools.fetch", metadata=_fetch_metadata)
     parameters = {"url": fetch_url}
     response = guarded_tool_call("fetch", parameters)
     if response.get("status") == "completed":
@@ -2743,6 +2764,25 @@ def _mask_user_id_for_log(user_id: str) -> str | None:
     version = os.getenv("AILIZA_LOG_HMAC_KEY_VERSION", "1")
     digest = hmac.new(key.encode("utf-8"), user_id.encode("utf-8"), hashlib.sha256).hexdigest()[:20]
     return f"uh_v{version}_{digest}"
+
+
+def _fingerprint_for_audit(value: str, prefix: str) -> str | None:
+    """Wiedererkennbarer, aber nicht rueckrechenbarer Fingerprint fuer
+    Audit-Metadaten (Suchanfragen, URLs).
+
+    Gleiche Begruendung wie bei _mask_user_id_for_log(): ein einfacher
+    SHA-256 waere per Woerterbuchangriff umkehrbar -- bei kurzen,
+    vorhersehbaren Werten (Namen, Standardfragen, bekannte URLs) koennte
+    jemand mit Log-Zugriff schlicht Kandidaten durchhashen und vergleichen.
+    Deshalb HMAC mit dem separaten Logging-Schluessel und, wenn dieser
+    fehlt, gar kein Fingerprint (kein Fallback auf Klartext oder SHA-256).
+    """
+    key = _get_log_hmac_key()
+    if key is None:
+        return None
+    version = os.getenv("AILIZA_LOG_HMAC_KEY_VERSION", "1")
+    digest = hmac.new(key.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()[:20]
+    return f"{prefix}_v{version}_{digest}"
 
 
 @app.post("/auth/login")
