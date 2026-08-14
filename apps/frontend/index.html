@@ -1923,20 +1923,38 @@ let _pendingSendText="";let _pendingMap={};
 async function sendMessage(){
   const inp=document.getElementById("chat-input");
   const text=inp.value.trim();if(!text)return;
-  // B2 (Betreiber-Freigabe 2026-07-11): Der frühere client-seitige
-  // Vorab-Check (redactWithBackend + native Browser-Dialoge) wurde
-  // entfernt — er lief VOR und unabhängig von der eigentlichen Governance-
-  // Pipeline in /agent/run und erzeugte damit ein zweites, inkonsistentes
-  // Gate mit haesslichen Popups (kein Frust-Ziel der Betreiberin).
-  // /agent/run (aufgerufen ueber runAgent() in _doSend) ist jetzt die
-  // EINZIGE Quelle der Wahrheit fuer Schwärzung, Login-Gate (Fall 2) und
-  // Einwilligungs-Gate (Fall 3). Die 🔍-Vorschau (previewRedaction) bleibt
-  // als rein optionaler, nicht-blockierender Info-Schritt bestehen.
+  // P0-Schutzgate: /agent/run verlangt jetzt verpflichtend einen
+  // Pruefbeleg (preview_id) fuer jede Anfrage ohne consent_approval_id --
+  // ohne Beleg lehnt der Server ab (status "preview_invalid"), OHNE extern
+  // zu senden. Deshalb wird die Pruefung hier automatisch und unsichtbar
+  // vor jedem Senden ausgefuehrt (kein manueller Lupe-Klick mehr noetig,
+  // keine haesslichen Popups -- passend zur Betreiber-Freigabe 2026-07-11,
+  // die genau das vermeiden wollte).
+  //
+  // WICHTIG: Der Beleg bindet an den ROHEN Text (nicht an eine bereinigte
+  // Fassung). /agent/run klassifiziert und schwaerzt weiterhin selbst --
+  // Fall 1/2/3 (Login-/Einwilligungspflicht) bleiben dadurch unveraendert
+  // korrekt. Der Beleg beweist nur "dieser exakte Text wurde gerade
+  // geprueft", nicht "dieser Text ist sicher zu senden".
   _lastPreview=null;_previewStale=true;
   document.getElementById("kI-input-preview").value="";
   const label=document.getElementById("kI-preview-label");
   if(label)label.textContent="✏️ Vorschau: Klick auf 🔍 zeigt, was geschwärzt wird";
-  await _doSend(text,{},pendingChatFile);
+
+  const file=pendingChatFile;
+  let previewId=null;
+  if(!file){
+    // Datei-Pfad (/documents/agent-run) stellt sich seinen Beleg serverseitig
+    // selbst aus, weil der kombinierte Text (Aufgabe + Dokumentinhalt) dem
+    // Client vorher nicht bekannt ist.
+    const preview=await redactWithBackend(text);
+    if(preview.decision==="technical_block"){
+      addAiMessage(preview.user_message_de||"Sicherheitsprüfung nicht verfügbar.","Sicherheitsprüfung");
+      return;
+    }
+    previewId=preview.preview_id||null;
+  }
+  await _doSend(text,{},file,previewId);
 }
 async function approvePiiConsent(){
   localStorage.setItem("ailiza_pii_consent","1");
@@ -1950,7 +1968,7 @@ function denyPiiConsent(){
   document.getElementById("pii-consent").classList.remove("show");
   _pendingSendText="";_pendingMap={};
 }
-async function _doSend(sendText,map,fileOverride=null){
+async function _doSend(sendText,map,fileOverride=null,previewId=null){
   const inp=document.getElementById("chat-input");
   const file=fileOverride||pendingChatFile;
 
@@ -1995,7 +2013,8 @@ async function _doSend(sendText,map,fileOverride=null){
       sendText,
       Object.keys(map).length>0?map:null,
       undefined,
-      file
+      file,
+      previewId
     );
   }catch(e){
     hideTyping();
@@ -2023,7 +2042,7 @@ let gatedTask=null;
 let gatedConsentApprovalId=null;
 let gatedFile=null;
 
-async function runAgent(text,redactionMap,consentApprovalId,file=null){
+async function runAgent(text,redactionMap,consentApprovalId,file=null,previewId=null){
   const history=chatHistory.slice(-20).map(m=>({
     role:m.role==="ai"?"assistant":m.role,
     content:m.content
@@ -2050,6 +2069,9 @@ async function runAgent(text,redactionMap,consentApprovalId,file=null){
 
     if(consentApprovalId){
       body.consent_approval_id=consentApprovalId;
+    }
+    if(previewId){
+      body.preview_id=previewId;
     }
 
     r=await fetch(`${API}/agent/run`,{
@@ -2124,6 +2146,16 @@ async function runAgent(text,redactionMap,consentApprovalId,file=null){
         }
       }
     ]);
+    return;
+  }
+
+  if(data.status==="preview_invalid"){
+    // Beleg abgelehnt (fehlt, abgelaufen, verbraucht oder Text seither
+    // veraendert). Kein Fallback -- die Nutzerin muss erneut pruefen.
+    activeRedactionMap={};
+    renderPrivacyMemory();
+    if(file){pendingChatFile=file;showPendingChatFile(file);}
+    addAiMessage(data.message||"Bitte erneut prüfen und senden.",undefined);
     return;
   }
 
@@ -2360,7 +2392,17 @@ async function doLogin(isFreshRegistration){
     const task=gatedTask,file=gatedFile;
     gatedTask=null;gatedConsentApprovalId=null;gatedFile=null;
     showTyping();
-    try{await runAgent(task,null,undefined,file);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+    try{
+      // Nach Login erneut senden: ohne Datei braucht /agent/run jetzt
+      // verpflichtend einen frischen Pruefbeleg (der vorherige Versuch
+      // ist am Login-Gate gescheitert, nie verbraucht worden).
+      let previewId=null;
+      if(!file){
+        const preview=await redactWithBackend(task);
+        previewId=preview.preview_id||null;
+      }
+      await runAgent(task,null,undefined,file,previewId);
+    }catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
   }
 }
 
