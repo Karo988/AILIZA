@@ -64,6 +64,7 @@ try:
     from .governance.data_governance import classify, DataClass, DataTarget
     from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
+    from .governance.send_preview import PreviewRejected, send_preview_store
     from .compliance_auditor import evaluate_compliance, Severity
     from .kill_switch import enforce_kill_switch
     from .knowledge.rag_context import (
@@ -113,6 +114,7 @@ except ImportError:
     from apps.backend.governance.data_governance import classify, DataClass, DataTarget
     from apps.backend.governance.redaction import redact, reinsert
     from apps.backend.governance.data_matrix import check_data_target, PolicyDecision
+    from apps.backend.governance.send_preview import PreviewRejected, send_preview_store
     from apps.backend.compliance_auditor import evaluate_compliance, Severity
     from apps.backend.kill_switch import enforce_kill_switch
     from apps.backend.knowledge.rag_context import (
@@ -719,6 +721,12 @@ class AgentRunRequest(BaseModel):
     # bestaetigten Freigabe (/approvals/{id}/approve). Bindet ueber task_sha256
     # an genau diese Anfrage.
     consent_approval_id: int | None = None
+    # Pruefbeleg aus /api/policy-redact. Pflicht, sobald die Nutzerin den
+    # bereinigten Vorschautext selbst bearbeitet und diesen sendet -- dann
+    # ist "task" bereits geprueft und wuerde sonst ungeprueft uebernommen.
+    # Ohne preview_id bleibt es beim bisherigen Ablauf, bei dem der Server
+    # den Rohtext im selben Request klassifiziert und schwaerzt.
+    preview_id: str | None = None
 
     @field_validator("task")
     @classmethod
@@ -1884,6 +1892,40 @@ def _run_agent_core(
             "steps": [],
             "results": [],
         }
+
+    # ── Pruefbeleg einloesen (falls die Vorschau benutzt wurde) ──────────────
+    # Wenn die Nutzerin den bereinigten Text in der Vorschau bearbeitet und
+    # abgeschickt hat, ist genau dieser Text bereits geprueft. Der Beleg
+    # beweist, dass er seitdem nicht veraendert wurde und zu diesem Nutzer,
+    # Mandanten und Zweck gehoert. Fehlschlag heisst abbrechen, nicht
+    # ungeprueft senden.
+    if payload.preview_id is not None:
+        try:
+            send_preview_store.consume(
+                preview_id=payload.preview_id,
+                user_id=token.user_id if token else None,
+                tenant_id=tenant,
+                text=payload.task,
+                purpose="agent_run",
+            )
+        except PreviewRejected as rejected:
+            write_audit_entry(
+                action="send_preview.rejected",
+                tenant_id=tenant,
+                metadata={"reason": rejected.reason},
+            )
+            return {
+                "status": "preview_invalid",
+                "message": rejected.message_de,
+                "ai_response": rejected.message_de,
+                "steps": [],
+                "results": [],
+            }
+        write_audit_entry(
+            action="send_preview.consumed",
+            tenant_id=tenant,
+            metadata={"purpose": "agent_run"},
+        )
 
     # ── Governance Pre-Check ZUERST: classify → data_matrix → redact ─────────
     # Betreiber-Freigabe 2026-07-11 (drei Stufen statt Hartblock):
@@ -3901,6 +3943,12 @@ class PolicyRedactResponse(BaseModel):
     # NUR Kategorie-Label + Risikostufe, NIEMALS Originalwerte.
     detected_items: list[dict[str, str]] = Field(default_factory=list)
 
+    # Pruefbeleg fuer genau diesen safe_text. Wird nur ausgestellt, wenn der
+    # Text ueberhaupt extern gesendet werden darf. Das Frontend schickt ihn
+    # beim Senden mit; der Server prueft damit, dass der gesendete Text
+    # unveraendert der gepruefte ist.
+    preview_id: str | None = None
+
     # Versionsmarker für Debugging (zeigt dass RedactionEngineV2 aktiv ist)
     redaction_engine: str = "RedactionEngineV2"
     policy_version: str = "1.3.3"
@@ -4232,8 +4280,27 @@ def policy_redact(
             else None
         )
         detected_items = build_detected_items(redaction_result)
+
+        # Pruefbeleg nur ausstellen, wenn dieser Text ueberhaupt gesendet
+        # werden darf -- sonst gaebe es einen Beleg fuer etwas, das das Gate
+        # danach ohnehin ablehnt.
+        preview_id = None
+        if can_send_to_llm:
+            preview_id = send_preview_store.issue(
+                user_id=current_user.user_id if current_user else None,
+                tenant_id=_tenant_id(current_user),
+                checked_text=redaction_result.redacted_text,
+                purpose="agent_run",
+            )
+            write_audit_entry(
+                action="send_preview.issued",
+                tenant_id=_tenant_id(current_user),
+                metadata={"purpose": "agent_run", "risk_level": risk_level},
+            )
+
         logger.info(f"📤 PolicyRedact response | decision={decision} | risk_level={risk_level} | can_send_to_llm={can_send_to_llm}")
         return PolicyRedactResponse(
+            preview_id=preview_id,
             decision=decision,
             risk_level=risk_level,
             safe_text=redaction_result.redacted_text,
