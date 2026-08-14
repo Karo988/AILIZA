@@ -35,11 +35,60 @@ def test_script_exists_and_is_python():
     assert SCRIPT.read_text(encoding="utf-8").startswith('"""')
 
 
+def _init_schema_only(db_url: str) -> None:
+    """Legt das Schema separat vom CLI-Aufruf an -- das Audit selbst darf
+    das seit der Read-only-Haertung nicht mehr tun (siehe
+    test_script_never_calls_init_db_or_creates_schema)."""
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    setup = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.database import init_db
+init_db()
+"""
+    subprocess.run([sys.executable, "-c", setup], env=env, capture_output=True, text=True, check=True, timeout=30)
+
+
 def test_clean_db_exits_zero_and_reports_no_violations(tmp_path):
     db_path = tmp_path / "clean.db"
-    result = _run_script(f"sqlite:///{db_path}")
+    db_url = f"sqlite:///{db_path}"
+    _init_schema_only(db_url)
+    result = _run_script(db_url)
     assert result.returncode == 0, result.stderr
     assert "Keine Invarianten-Verletzungen" in result.stdout
+
+
+def test_missing_schema_exits_two_without_creating_it(tmp_path):
+    """Kernverhalten der Read-only-Haertung: eine Datenbank ohne
+    memory_items/memory_visibility darf NICHT repariert werden -- das Audit
+    muss verstaendlich abbrechen, statt das Schema selbst anzulegen."""
+    db_path = tmp_path / "no_schema.db"
+    db_url = f"sqlite:///{db_path}"
+    result = _run_script(db_url)
+    assert result.returncode == 2, result.stdout
+    assert "Tabelle(n) fehlen" in result.stderr
+    assert "memory_items" in result.stderr
+    # Beweis, dass das Audit selbst nichts angelegt hat: eine frische
+    # Verbindung sieht weiterhin keine memory_items-Tabelle.
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    check = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from sqlalchemy import create_engine, inspect
+eng = create_engine({db_url!r})
+assert not inspect(eng).has_table("memory_items"), "Audit hat trotz Read-only-Fix Schema angelegt"
+print("OK")
+"""
+    check_result = subprocess.run(
+        [sys.executable, "-c", check], env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert check_result.returncode == 0, check_result.stderr
+    assert "OK" in check_result.stdout
 
 
 def test_violation_exits_one_and_lists_violation_in_text_output(tmp_path):
@@ -217,7 +266,9 @@ with engine.begin() as conn:
 
 def test_summary_only_clean_db_still_exits_zero(tmp_path):
     db_path = tmp_path / "summary_clean.db"
-    result = _run_script(f"sqlite:///{db_path}", ["--summary-only", "--json"])
+    db_url = f"sqlite:///{db_path}"
+    _init_schema_only(db_url)
+    result = _run_script(db_url, ["--summary-only", "--json"])
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["has_violations"] is False
@@ -241,9 +292,11 @@ def test_script_works_regardless_of_caller_cwd(tmp_path):
     abhaengen -- nur vom tatsaechlichen Speicherort des Skripts. Simuliert
     exakt den Fall, der im Produktions-Workflow (Run 30626472529) zum
     irrefuehrenden 'No module named apps'-Fehler fuehrte."""
+    db_url = f"sqlite:///{tmp_path / 'cwd_test.db'}"
+    _init_schema_only(db_url)
     env = dict(os.environ)
     env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
-    env["AILIZA_DATABASE_URL"] = f"sqlite:///{tmp_path / 'cwd_test.db'}"
+    env["AILIZA_DATABASE_URL"] = db_url
     env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
     other_cwd = tmp_path / "not_the_repo_root"
     other_cwd.mkdir()
@@ -255,6 +308,89 @@ def test_script_works_regardless_of_caller_cwd(tmp_path):
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["has_violations"] is False
+
+
+# ── Gate 1A: technischer Beweis auf SQL-Anweisungsebene, nicht nur Endzustand ─
+
+_WRITE_KEYWORDS = ("CREATE", "ALTER", "DROP", "INSERT", "UPDATE", "DELETE")
+
+
+def test_script_never_calls_init_db_or_creates_schema():
+    """Statischer Beleg: das CLI darf init_db() (create_all/ensure_sqlite_schema)
+    nicht mehr aufrufen -- das war die Ursache der urspruenglichen
+    Read-only-Verletzung. Prueft nur ausfuehrbaren Code, keine Kommentare/
+    Docstrings (die duerfen den Namen zur Erklaerung erwaehnen)."""
+    content = SCRIPT.read_text(encoding="utf-8")
+    code_lines = [
+        line for line in content.splitlines()
+        if not line.strip().startswith("#") and '"""' not in line
+    ]
+    code_only = "\n".join(code_lines)
+    assert "init_db(" not in code_only
+    assert "import init_db" not in code_only
+
+
+def test_audit_run_issues_no_write_sql_statements(tmp_path):
+    """Beweist die tatsaechlich abgesetzten SQL-Anweisungen, nicht nur den
+    Endzustand der Datenbank: audit_memory_scope_invariants() darf niemals
+    CREATE/ALTER/DROP/INSERT/UPDATE/DELETE ausloesen, auch nicht bei bereits
+    vorhandenem Schema mit Verletzungen. Laeuft bewusst als eigener
+    Subprozess (wie alle anderen Tests dieser Datei) -- ein reload() des
+    Datenbankmoduls im Testprozess wuerde die globale Engine verseuchen und
+    andere Tests in derselben pytest-Session zum Scheitern bringen."""
+    db_path = tmp_path / "sql_proof.db"
+    db_url = f"sqlite:///{db_path}"
+    _init_schema_only(db_url)
+
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+
+    script = f"""
+import sys, json
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from datetime import datetime, timezone
+from sqlalchemy import event, insert
+from apps.backend.database import engine, memory_items, audit_memory_scope_invariants
+
+now = datetime.now(timezone.utc)
+with engine.begin() as conn:
+    conn.execute(insert(memory_items).values(
+        tenant_id="default", scope="company_memory", owner_user_id="sollte_leer_sein",
+        title="invalid", content="c", purpose="p", source_id=None,
+        status="active", created_at=now, updated_at=now,
+    ))
+
+statements = []
+
+def _capture(conn, cursor, statement, parameters, context, executemany):
+    statements.append(statement)
+
+event.listen(engine, "before_cursor_execute", _capture)
+try:
+    audit_memory_scope_invariants()
+finally:
+    event.remove(engine, "before_cursor_execute", _capture)
+
+print("STATEMENTS_JSON_START")
+print(json.dumps(statements))
+print("STATEMENTS_JSON_END")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, cwd=REPO_ROOT,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    stdout = result.stdout
+    payload = stdout.split("STATEMENTS_JSON_START\n", 1)[1].split("\nSTATEMENTS_JSON_END", 1)[0]
+    statements = json.loads(payload)
+
+    assert statements, "Es wurden gar keine SQL-Anweisungen erfasst -- Test greift nicht"
+    for stmt in statements:
+        upper = stmt.strip().upper()
+        for keyword in _WRITE_KEYWORDS:
+            assert not upper.startswith(keyword), f"Schreibende Anweisung entdeckt: {stmt!r}"
 
 
 def test_workflow_installs_cryptography_dependency():

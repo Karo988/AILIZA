@@ -128,12 +128,24 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        from apps.backend.database import audit_memory_scope_invariants, init_db
-        # Eigenstaendiger CLI-Einstiegspunkt (kein main.py/FastAPI-Lifespan
-        # davor) -- Schema-Bootstrap deshalb hier explizit, analog zum
-        # Anwendungsstart. init_db() ist idempotent (checkfirst) und
-        # veraendert keine vorhandenen Audit-/Fachdaten.
-        init_db()
+        from sqlalchemy import inspect
+        from apps.backend.database import audit_memory_scope_invariants, engine
+
+        # Rein lesende Existenzpruefung -- kein init_db()/create_all() mehr:
+        # Dieses CLI bezeichnet sich als read-only und darf auch technisch
+        # niemals Schema anlegen oder aendern (auch nicht "nur" additiv per
+        # ensure_sqlite_schema()). Fehlt eine Tabelle, bricht der Audit hier
+        # verstaendlich ab, statt sie stillschweigend zu erzeugen.
+        insp = inspect(engine)
+        missing = [t for t in ("memory_items", "memory_visibility") if not insp.has_table(t)]
+        if missing:
+            print(
+                f"❌ Audit fehlgeschlagen: Tabelle(n) fehlen: {', '.join(missing)} "
+                "-- Schema muss bereits migriert sein, wird von diesem Audit nicht angelegt.",
+                file=sys.stderr,
+            )
+            return 2
+
         report = audit_memory_scope_invariants()
     except Exception as exc:
         print(f"❌ Audit fehlgeschlagen: {type(exc).__name__}: {exc}", file=sys.stderr)
