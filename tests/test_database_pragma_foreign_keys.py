@@ -62,7 +62,11 @@ class TestSqliteMemoryStorePragmas:
     def store(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "memory_test.db")
-            yield SqliteMemoryStore(db_path=db_path)
+            s = SqliteMemoryStore(db_path=db_path)
+            try:
+                yield s
+            finally:
+                s.close()
 
     def test_foreign_keys_pragma_is_on(self, store):
         cursor = store._conn.execute("PRAGMA foreign_keys")
