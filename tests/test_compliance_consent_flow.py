@@ -24,7 +24,21 @@ import pytest
 # Statusse, die eine Antwort VERHINDERN (Gates). Alles andere bedeutet:
 # die Anfrage ist durch die Gates gekommen (LLM-Fehler in der Testumgebung
 # wie "failed"/"local_only" zaehlen als durchgekommen).
-GATE_STATUSES = {"login_required", "consent_required", "compliance_blocked", "blocked"}
+# preview_invalid gehoert seit dem verpflichtenden Pruefbeleg-Gate dazu --
+# ohne diesen Eintrag wuerde "not in GATE_STATUSES" faelschlich als Erfolg
+# durchgehen, obwohl der Versand tatsaechlich am fehlenden Beleg scheiterte.
+GATE_STATUSES = {"login_required", "consent_required", "compliance_blocked", "blocked", "preview_invalid"}
+
+
+def _preview_id(client, task: str, headers: dict) -> str:
+    """Einwilligung UND Pruefbeleg sind seit der Nachbesserung beide Pflicht
+    fuer den externen Versand (Fall 3) -- eine erteilte Einwilligung allein
+    beweist nicht mehr, dass der gesendete Text unveraendert blieb."""
+    resp = client.post("/api/policy-redact", json={"text": task}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    preview_id = resp.json().get("preview_id")
+    assert preview_id, f"Kein Pruefbeleg fuer Testtext ausgestellt: {resp.json()}"
+    return preview_id
 
 BRIEF_PII = (
     "Bitte fasse diesen Brief zusammen: Mein Name ist Paula Ronder, ich leide "
@@ -71,7 +85,10 @@ def _auth():
 
 # ── Fall 1: harmlos, Gast ─────────────────────────────────────────────────────
 def test_fall1_harmless_guest_passes_gates(client):
-    resp = client.post("/agent/run", json={"task": HARMLOS})
+    resp = client.post(
+        "/agent/run",
+        json={"task": HARMLOS, "preview_id": _preview_id(client, HARMLOS, {})},
+    )
     assert resp.status_code == 200
     assert resp.json().get("status") not in GATE_STATUSES
 
@@ -89,7 +106,12 @@ def test_fall2_pii_guest_gets_login_required(client):
 
 
 def test_fall2_pii_logged_in_passes_gates(client):
-    resp = client.post("/agent/run", json={"task": BRIEF_PII}, headers=_auth())
+    headers = _auth()
+    resp = client.post(
+        "/agent/run",
+        json={"task": BRIEF_PII, "preview_id": _preview_id(client, BRIEF_PII, headers)},
+        headers=headers,
+    )
     assert resp.status_code == 200
     assert resp.json().get("status") not in GATE_STATUSES
 
@@ -122,11 +144,72 @@ def test_fall3_consent_flow_completes(client):
 
     resp = client.post(
         "/agent/run",
-        json={"task": NONKONFORM, "consent_approval_id": approval_id},
+        json={
+            "task": NONKONFORM,
+            "consent_approval_id": approval_id,
+            "preview_id": _preview_id(client, NONKONFORM, headers),
+        },
         headers=headers,
     )
     assert resp.status_code == 200
-    assert resp.json().get("status") not in GATE_STATUSES
+    status = resp.json().get("status")
+    assert status not in GATE_STATUSES, (
+        f"Erwartet: durchgekommen (Einwilligung + Beleg gueltig), tatsaechlich: {status!r}"
+    )
+
+
+def test_fall3_consent_without_preview_id_still_rejected(client):
+    """Regressionsschutz fuer die Nachbesserung: eine erteilte Einwilligung
+    allein darf NICHT mehr genuegen -- ohne Pruefbeleg muss der Versand
+    trotz gueltiger consent_approval_id abgelehnt werden."""
+    headers = _auth()
+    body = client.post("/agent/run", json={"task": NONKONFORM}, headers=headers).json()
+    approval_id = body["approval_id"]
+    client.post(f"/approvals/{approval_id}/approve", headers=headers)
+
+    resp = client.post(
+        "/agent/run",
+        json={"task": NONKONFORM, "consent_approval_id": approval_id},
+        headers=headers,
+    )
+    assert resp.json()["status"] == "preview_invalid"
+
+
+def test_fall3_missing_preview_id_does_not_burn_the_consent(client):
+    """Sicherheitsreview-Fund: preview_id fehlt -> die Einwilligung darf NICHT
+    bereits verbraucht werden (sonst gaebe es eine dokumentierte Zustimmung
+    ohne jeden Versand). Die Einwilligung muss danach noch gueltig sein und
+    mit einem Beleg tatsaechlich durchgehen."""
+    headers = _auth()
+    body = client.post("/agent/run", json={"task": NONKONFORM}, headers=headers).json()
+    approval_id = body["approval_id"]
+    client.post(f"/approvals/{approval_id}/approve", headers=headers)
+
+    # Erster Versuch ohne Beleg -- muss abgelehnt werden, OHNE die Einwilligung
+    # zu verbrauchen.
+    first = client.post(
+        "/agent/run",
+        json={"task": NONKONFORM, "consent_approval_id": approval_id},
+        headers=headers,
+    )
+    assert first.json()["status"] == "preview_invalid"
+
+    # Zweiter Versuch, jetzt MIT Beleg, DERSELBEN approval_id -- muss noch
+    # funktionieren. Wuerde der erste Versuch die Einwilligung bereits
+    # verbraucht haben, schluege dieser hier fehl.
+    second = client.post(
+        "/agent/run",
+        json={
+            "task": NONKONFORM,
+            "consent_approval_id": approval_id,
+            "preview_id": _preview_id(client, NONKONFORM, headers),
+        },
+        headers=headers,
+    )
+    assert second.json().get("status") not in GATE_STATUSES, (
+        f"Einwilligung wurde vermutlich beim ersten (fehlgeschlagenen) Versuch "
+        f"verbraucht: {second.json()}"
+    )
 
 
 def test_fall3_consent_bound_to_exact_task(client):
@@ -138,7 +221,11 @@ def test_fall3_consent_bound_to_exact_task(client):
 
     resp = client.post(
         "/agent/run",
-        json={"task": NONKONFORM + " Und noch etwas anderes.", "consent_approval_id": approval_id},
+        json={
+            "task": NONKONFORM + " Und noch etwas anderes.",
+            "consent_approval_id": approval_id,
+            "preview_id": _preview_id(client, NONKONFORM + " Und noch etwas anderes.", headers),
+        },
         headers=headers,
     )
     assert resp.json()["status"] == "consent_required"
@@ -152,7 +239,11 @@ def test_fall3_unapproved_consent_id_not_accepted(client):
     # KEIN approve — direkt versuchen
     resp = client.post(
         "/agent/run",
-        json={"task": NONKONFORM, "consent_approval_id": approval_id},
+        json={
+            "task": NONKONFORM,
+            "consent_approval_id": approval_id,
+            "preview_id": _preview_id(client, NONKONFORM, headers),
+        },
         headers=headers,
     )
     assert resp.json()["status"] == "consent_required"
@@ -217,9 +308,10 @@ def test_real_usa_transfer_still_flagged():
 
 def test_fall1_summarize_request_guest_passes_gates(client):
     """Der haeufigste Anwendungsfall (harmlose Zusammenfassung) bleibt frei."""
+    task = "Fasse diesen Text bitte zusammen: Der Himmel ist blau und die Sonne scheint."
     resp = client.post(
         "/agent/run",
-        json={"task": "Fasse diesen Text bitte zusammen: Der Himmel ist blau und die Sonne scheint."},
+        json={"task": task, "preview_id": _preview_id(client, task, {})},
     )
     assert resp.status_code == 200
     assert resp.json().get("status") not in GATE_STATUSES

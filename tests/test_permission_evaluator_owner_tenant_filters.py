@@ -975,16 +975,24 @@ def test_consent_used_audit_only_after_successful_atomic_consumption(client):
     Einwilligung (bereits 'consumed') erzeugt KEINEN weiteren Audit-Eintrag."""
     _ensure_user("nutzer_consent1")
     approval_id = _make_approved_consent(owner_user_id="nutzer_consent1")
+    headers = _headers("nutzer_consent1")
 
     resp1 = client.post(
         "/agent/run",
-        json={"task": _CONSENT_TASK, "consent_approval_id": approval_id},
-        headers=_headers("nutzer_consent1"),
+        json={
+            "task": _CONSENT_TASK,
+            "consent_approval_id": approval_id,
+            "preview_id": _preview_id(client, _CONSENT_TASK, headers),
+        },
+        headers=headers,
     )
+    # Zweiter Versuch bewusst OHNE preview_id: er soll ohnehin scheitern
+    # (Kernaussage des Tests -- kein zweiter Audit-Eintrag), jetzt eben
+    # schon am fehlenden Beleg statt erst am bereits verbrauchten Consent.
     resp2 = client.post(
         "/agent/run",
         json={"task": _CONSENT_TASK, "consent_approval_id": approval_id},
-        headers=_headers("nutzer_consent1"),
+        headers=headers,
     )
     assert resp1.status_code == 200
     assert resp2.status_code == 200

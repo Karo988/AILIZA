@@ -2284,7 +2284,17 @@ async function consentResend(){
   const task=gatedTask,aid=gatedConsentApprovalId,file=gatedFile;
   gatedTask=null;gatedConsentApprovalId=null;gatedFile=null;
   showTyping();
-  try{await runAgent(task,null,aid,file);}catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
+  try{
+    // Einwilligung UND Pruefbeleg sind jetzt beide Pflicht -- eine erteilte
+    // Einwilligung allein beweist nicht, dass der Text seitdem unveraendert
+    // blieb (Prompt-Injection auf sowas separat verhindern).
+    let previewId=null;
+    if(!file){
+      const preview=await redactWithBackend(task);
+      previewId=preview.preview_id||null;
+    }
+    await runAgent(task,null,aid,file,previewId);
+  }catch(e){hideTyping();addAiMessage("Anfrage fehlgeschlagen.","Verbindungsfehler");}
 }
 
 // ── B2: Minimales Login (Cookie-Flow, /auth/login setzt HttpOnly-Cookie) ─────

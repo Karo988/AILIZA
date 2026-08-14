@@ -1970,6 +1970,34 @@ def _run_agent_core(
 
         _consumed_consent = None
         if payload.consent_approval_id:
+            # Sicherheitsreview-Nachbesserung: preview_id ist seit Kurzem
+            # ZUSAETZLICH zur Einwilligung Pflicht (siehe Kommentar weiter
+            # unten vor dem Pruefbeleg-Gate). Ohne diesen Vorab-Check wuerde
+            # eine gueltige Einwilligung hier bereits atomar verbraucht
+            # (Status approved->consumed, dokumentiert im Audit), obwohl der
+            # Versand Zeilen spaeter mangels Beleg ohnehin abbricht -- eine
+            # protokollierte Zustimmung, der nie ein Versand folgte. Deshalb
+            # erst pruefen, DASS ueberhaupt ein Beleg mitgeschickt wurde
+            # (nicht seine volle Gueltigkeit -- das prueft weiterhin
+            # ausschliesslich send_preview_store.consume() weiter unten,
+            # einmalig, damit der Beleg nicht doppelt verbraucht wird).
+            if not payload.preview_id:
+                _msg = (
+                    "Bitte zuerst die Sicherheitsprüfung (🔍) ausführen, bevor "
+                    "die Nachricht gesendet wird."
+                )
+                write_audit_entry(
+                    action="send_preview.rejected",
+                    tenant_id=tenant,
+                    metadata={"reason": "missing"},
+                )
+                return {
+                    "status": "preview_invalid",
+                    "message": _msg,
+                    "ai_response": _msg,
+                    "steps": [],
+                    "results": [],
+                }
             # PR 2 Nachbesserung: nutzer- und tenantgebundene, EINMALIGE
             # Verwendung -- Autorisierung (Owner/Tenant/Tool/Status/Hash/
             # aktiver-nicht-gesperrter-Nutzer), die Statusaenderung
@@ -2050,59 +2078,64 @@ def _run_agent_core(
     # kann -- das war ein Fehler im ersten Entwurf dieser Aenderung, durch die
     # bestehenden Tests in test_compliance_consent_flow.py aufgedeckt.
     #
-    # Ausnahme: der Fall-3-Einwilligungspfad (consent_approval_id) hat bereits
-    # seine eigene, etablierte Bindung an genau diesen Text (task_sha256 in
-    # consume_compliance_consent() oben) -- ein zusaetzlicher Beleg waere dort
-    # doppelt gemoppelt, nicht sicherer.
+    # WICHTIG: consent_approval_id (Fall 3) und preview_id sind KEIN
+    # Entweder-oder mehr. consume_compliance_consent() bindet nur an
+    # task_sha256 (payload.task) -- das beweist eine fachlich/rechtlich
+    # bestaetigte Ausnahme, aber NICHT, dass genau dieser Text auch tatsaechlich
+    # der ist, den der Provider erhaelt (das leistet ausschliesslich der
+    # Pruefbeleg, mit eigenem Ablauf/Einmalverbrauch). Ein fruehrer Entwurf
+    # liess consent_approval_id die Beleg-Pruefung ueberspringen -- das haette
+    # bedeutet, dass eine einmal erteilte Einwilligung ohne jede weitere
+    # Textpruefung "durchgereicht" werden koennte. Jetzt: beide Bedingungen
+    # muessen erfuellt sein, wenn die Policy eine Einwilligung verlangt.
     #
-    # Fuer jeden anderen Fall gilt fail-closed: ohne gueltigen, zweck- und
-    # nutzergebundenen Beleg wird NICHT an einen externen Anbieter gesendet.
-    # Kein Fallback auf serverseitige Neu-Redaktion des Rohtexts -- das waere
-    # genau der Compatibility-Bypass, der ein Gate wirkungslos macht.
-    if not payload.consent_approval_id:
-        if not payload.preview_id:
-            _msg = (
-                "Bitte zuerst die Sicherheitsprüfung (🔍) ausführen, bevor "
-                "die Nachricht gesendet wird."
-            )
-            write_audit_entry(
-                action="send_preview.rejected",
-                tenant_id=tenant,
-                metadata={"reason": "missing"},
-            )
-            return {
-                "status": "preview_invalid",
-                "message": _msg,
-                "ai_response": _msg,
-                "steps": [],
-                "results": [],
-            }
-        try:
-            send_preview_store.consume(
-                preview_id=payload.preview_id,
-                user_id=token.user_id if token else None,
-                tenant_id=tenant,
-                text=payload.task,
-                purpose="agent_run",
-            )
-        except PreviewRejected as rejected:
-            write_audit_entry(
-                action="send_preview.rejected",
-                tenant_id=tenant,
-                metadata={"reason": rejected.reason},
-            )
-            return {
-                "status": "preview_invalid",
-                "message": rejected.message_de,
-                "ai_response": rejected.message_de,
-                "steps": [],
-                "results": [],
-            }
-        write_audit_entry(
-            action="send_preview.consumed",
-            tenant_id=tenant,
-            metadata={"purpose": "agent_run"},
+    # Fail-closed: ohne gueltigen, zweck- und nutzergebundenen Beleg wird NICHT
+    # an einen externen Anbieter gesendet. Kein Fallback auf serverseitige
+    # Neu-Redaktion des Rohtexts -- das waere genau der Compatibility-Bypass,
+    # der ein Gate wirkungslos macht.
+    if not payload.preview_id:
+        _msg = (
+            "Bitte zuerst die Sicherheitsprüfung (🔍) ausführen, bevor "
+            "die Nachricht gesendet wird."
         )
+        write_audit_entry(
+            action="send_preview.rejected",
+            tenant_id=tenant,
+            metadata={"reason": "missing"},
+        )
+        return {
+            "status": "preview_invalid",
+            "message": _msg,
+            "ai_response": _msg,
+            "steps": [],
+            "results": [],
+        }
+    try:
+        send_preview_store.consume(
+            preview_id=payload.preview_id,
+            user_id=token.user_id if token else None,
+            tenant_id=tenant,
+            text=payload.task,
+            purpose="agent_run",
+        )
+    except PreviewRejected as rejected:
+        write_audit_entry(
+            action="send_preview.rejected",
+            tenant_id=tenant,
+            metadata={"reason": rejected.reason},
+        )
+        return {
+            "status": "preview_invalid",
+            "message": rejected.message_de,
+            "ai_response": rejected.message_de,
+            "steps": [],
+            "results": [],
+        }
+    write_audit_entry(
+        action="send_preview.consumed",
+        tenant_id=tenant,
+        metadata={"purpose": "agent_run"},
+    )
 
     # ── Schreibaufgaben: direkt LLM ohne AgentRuntime / Tavily ────────────────
     _is_writing = (
