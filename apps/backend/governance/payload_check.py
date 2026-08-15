@@ -240,6 +240,67 @@ _APPROVAL_CHECK_FAILED_MESSAGE = (
     "Diese Anfrage konnte nicht sicher geprüft werden und wird deshalb "
     "nicht zur Freigabe gespeichert. Bitte versuchen Sie es erneut."
 )
+_APPROVAL_SPECIAL_CATEGORY_BLOCKED_MESSAGE = (
+    "Diese Aktion enthält besonders schutzbedürftige Informationen und "
+    "kann über diesen allgemeinen Freigabepfad derzeit nicht sicher "
+    "gespeichert werden. Bitte verwenden Sie den dafür vorgesehenen "
+    "geschützten Fachprozess oder lassen Sie die Aktion durch eine "
+    "berechtigte Person prüfen."
+)
+
+
+def _pruefe_textfragment(text: str, ergebnis: dict[str, bool]) -> None:
+    """Kernpruefung EINES Textfragments (String-Wert oder String-Schluessel)
+    fuer prepare_for_approval_storage().
+
+    Secret-Erkennung auf dem Original, Special-Category-Erkennung auf der
+    um kanonische Redaktionsmarker bereinigten Kopie -- siehe
+    _klassifikationskopie().
+    """
+    _, geheimnis_muster = strip_secrets_with_placeholder(text)
+    klassifikation_original = classify(text)
+    klassen_original = set(getattr(klassifikation_original, "data_classes", []) or [])
+    if geheimnis_muster or DataClass.CREDENTIALS in klassen_original:
+        ergebnis["secret"] = True
+
+    klassifikationstext = _klassifikationskopie(text)
+    klassifikation = classify(klassifikationstext)
+    klassen = set(getattr(klassifikation, "data_classes", []) or [])
+    if DataClass.SPECIAL_CATEGORY in klassen:
+        ergebnis["special_category"] = True
+
+
+def _kanonische_marker() -> frozenset[str]:
+    try:
+        from .redaction_v2 import RedactionEngineV2
+    except ImportError:  # pragma: no cover
+        from governance.redaction_v2 import RedactionEngineV2
+    return RedactionEngineV2.canonical_violet_markers()
+
+
+def _klassifikationskopie(text: str) -> str:
+    """Neutralisiert AUSSCHLIESSLICH die kanonischen AILIZA-Redaktionsmarker
+    (z.B. "[GESCHWAERZT: Gesundheit - Art. 9 DSGVO]") fuer die erneute
+    Klassifikation -- NICHT fuer Secret-Erkennung, NICHT fuer die
+    gespeicherte/ausgefuehrte Nutzlast.
+
+    Hintergrund (Fall-2-Regression, Betreiber-Freigabe): der Marker selbst
+    enthaelt woertlich den Kategorienamen ("Gesundheit") und die
+    Rechtsgrundlage ("Art. 9 DSGVO"). classify() erkennt darin -- korrekt
+    nach seinen eigenen Regeln, aber hier fehlerhaft angewendet -- erneut
+    SPECIAL_CATEGORY, obwohl an dieser Stelle bereits redigiert wurde. Der
+    Marker beschreibt nur, DASS redigiert wurde, er enthaelt selbst keine
+    besondere personenbezogene Information.
+
+    Nur EXAKTE kanonische Marker werden ersetzt (String-Vergleich, keine
+    Wildcard wie r"\\[GESCHWAERZT:.*\\]"). Ein erfundener oder manipulierter
+    Marker -- z.B. "[GESCHWAERZT: HIV - Art. 9 DSGVO]", der so nie von
+    RedactionEngineV2 erzeugt wird -- bleibt unveraendert und damit
+    klassifizierbar.
+    """
+    for marker in _kanonische_marker():
+        text = text.replace(marker, "[AILIZA_REDACTED]")
+    return text
 
 
 def _scanne_tool_parameter(wert: Any, ergebnis: dict[str, bool], tiefe: int = 0) -> None:
@@ -250,6 +311,12 @@ def _scanne_tool_parameter(wert: Any, ergebnis: dict[str, bool], tiefe: int = 0)
     spaeter unveraendert zur Ausfuehrung gebraucht, ein Platzhaltersystem
     wie bei Text-Antworten existiert dafuer nicht. Sie meldet nur, OB ein
     Geheimnis-Muster oder eine besondere Kategorie vorkommt.
+
+    Secret-Pruefung IMMER auf dem Originaltext -- niemals auf der
+    Klassifikationskopie, sonst koennte ein manipuliertes Markerformat ein
+    Secret verstecken. Special-Category-Pruefung dagegen auf der
+    Klassifikationskopie, in der nur die kanonischen Redaktionsmarker
+    neutralisiert sind (siehe _klassifikationskopie()).
     """
     if tiefe > MAX_NUTZLAST_TIEFE:
         ergebnis["nicht_bewertbar"] = True
@@ -258,21 +325,22 @@ def _scanne_tool_parameter(wert: Any, ergebnis: dict[str, bool], tiefe: int = 0)
     if isinstance(wert, str):
         if not wert:
             return
-        _, geheimnis_muster = strip_secrets_with_placeholder(wert)
-        klassifikation = classify(wert)
-        klassen = set(getattr(klassifikation, "data_classes", []) or [])
-        if geheimnis_muster or DataClass.CREDENTIALS in klassen:
-            ergebnis["secret"] = True
-        if DataClass.SPECIAL_CATEGORY in klassen:
-            ergebnis["special_category"] = True
+        _pruefe_textfragment(wert, ergebnis)
         return
 
     if isinstance(wert, dict):
         for schluessel, unterwert in wert.items():
+            # Derselbe Scanner fuer Schluessel wie fuer Werte -- ein
+            # Schluessel wie {"HIV": True} ist genauso Inhalt wie ein Wert
+            # (Betreiber-Freigabe: bisher wurden Schluessel nur auf
+            # Geheimnisse geprueft, nicht auf besondere Kategorien).
             if isinstance(schluessel, str) and schluessel:
-                _, schluessel_geheimnis = strip_secrets_with_placeholder(schluessel)
-                if schluessel_geheimnis:
-                    ergebnis["secret"] = True
+                _pruefe_textfragment(schluessel, ergebnis)
+            elif not isinstance(schluessel, (str, int, float, bool)) and schluessel is not None:
+                # Nicht-primitiver Schluesseltyp widerspricht dem fuer
+                # input_params vorgesehenen JSON-artigen Datenmodell --
+                # fail-closed statt zu raten.
+                ergebnis["nicht_bewertbar"] = True
             _scanne_tool_parameter(unterwert, ergebnis, tiefe + 1)
         return
 
@@ -317,12 +385,19 @@ def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageE
         stille Fehlausfuehrung mit vermeintlichem Erfolg -- schlimmer als
         eine klare Ablehnung mit verstaendlichem naechsten Schritt.
 
-      * Eine erkannte besondere Kategorie (Art. 9/10 DSGVO) wird NICHT
-        blockiert. Solche Inhalte sind in normalen Geschaeftsvorgaengen
-        nicht grundsaetzlich verboten (z.B. eine Support-Suche zu einer
-        Diagnose). Sie wird aber ausdruecklich markiert und auditiert,
-        damit die Persistenz nicht unkontrolliert -- also unsichtbar --
-        erfolgt.
+      * Eine erkannte besondere Kategorie (Art. 9/10 DSGVO) fuehrt in
+        DIESEM generischen Pfad ebenfalls zur Ablehnung -- aber aus einem
+        anderen Grund als beim Geheimnis: request_approval_if_needed()
+        besitzt hier keinen belastbaren Tenant-/Owner-Kontext
+        (create_approval_request() faellt auf Default-Tenant und
+        owner_user_id=None zurueck, siehe Betreiber-Freigabe zur
+        Phase-1-Finalisierung). Eine rohe Persistenz besonders
+        schutzbeduerftiger Inhalte ohne verlaessliche Zugriffsbindung waere
+        unkontrolliert. Das ist AUSDRUECKLICH keine generelle Aussage --
+        besondere Kategorien sind in autorisierten, tenant-/ownergebundenen
+        internen Geschaeftsspeichern nicht grundsaetzlich verboten. Sobald
+        dieser Pfad einen belastbaren Kontext erhaelt, ist diese Regel neu
+        zu bewerten (separates Arbeitspaket, nicht Teil dieser Aenderung).
 
     Rueckgabe: ApprovalStorageEntscheidung. Bei erlaubt=False darf KEIN
     approval_requests-Datensatz angelegt werden.
@@ -341,6 +416,9 @@ def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageE
             nutzerhinweis=_APPROVAL_CHECK_FAILED_MESSAGE,
         )
 
+    # Reihenfolge bewusst: Secret vor Special Category. Ein Text mit beidem
+    # soll als "secret_detected" gemeldet werden -- die konkretere Diagnose
+    # gewinnt, auch wenn beide Faelle hier zur Ablehnung fuehren.
     if ergebnis.get("secret") or ergebnis.get("nicht_bewertbar"):
         return ApprovalStorageEntscheidung(
             erlaubt=False,
@@ -354,10 +432,19 @@ def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageE
             ),
         )
 
+    if ergebnis.get("special_category"):
+        return ApprovalStorageEntscheidung(
+            erlaubt=False,
+            parameter={},
+            special_category_erkannt=True,
+            ablehnungsgrund="special_category_no_binding_context",
+            nutzerhinweis=_APPROVAL_SPECIAL_CATEGORY_BLOCKED_MESSAGE,
+        )
+
     return ApprovalStorageEntscheidung(
         erlaubt=True,
         parameter=parameters,
-        special_category_erkannt=bool(ergebnis.get("special_category")),
+        special_category_erkannt=False,
         ablehnungsgrund=None,
         nutzerhinweis=None,
     )

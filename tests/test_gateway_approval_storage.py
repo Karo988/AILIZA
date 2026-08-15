@@ -35,6 +35,10 @@ from fastapi import HTTPException
 
 import apps.backend.gateway.runtime_gateway as rg
 from apps.backend.governance.payload_check import prepare_for_approval_storage
+from apps.backend.governance.redaction_v2 import RedactionEngineV2
+
+_GESUNDHEITS_MARKER = "[GESCHWAERZT: Gesundheit - Art. 9 DSGVO]"
+_GEWERKSCHAFTS_MARKER = "[GESCHWAERZT: Gewerkschaftsbezug - Art. 9 DSGVO]"
 
 GEHEIM = "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD"
 GESUNDHEIT = "Patientin hat Diabetes Typ 2, Termin am 3. Mai."
@@ -92,18 +96,41 @@ def test_secret_als_dict_schluessel_wird_erkannt():
     assert entscheidung.erlaubt is False
 
 
-def test_special_category_wird_markiert_aber_nicht_blockiert():
-    """Besondere Kategorien sind nicht generell aus internen
-    Geschäftsspeichern verboten -- aber die Persistenz muss kontrolliert,
-    also sichtbar/auditiert erfolgen."""
+def test_special_category_wird_im_generischen_pfad_blockiert():
+    """Finalisierung: solange dieser generische Approval-Pfad keinen
+    belastbaren Tenant-/Owner-Kontext besitzt, wird eine besondere
+    Kategorie nicht roh persistiert -- weder gelöscht noch verändert
+    ausgeführt, sondern die Freigabeanfrage gar nicht erst angelegt.
+
+    Wichtig: das ist KEINE generelle Aussage, dass AILIZA besondere
+    Kategorien nie intern speichern darf -- nur für diesen konkreten,
+    ownerlosen technischen Speicher."""
     entscheidung = prepare_for_approval_storage({"notiz": GESUNDHEIT})
-    assert entscheidung.erlaubt is True
-    assert entscheidung.parameter["notiz"] == GESUNDHEIT
+    assert entscheidung.erlaubt is False
+    assert entscheidung.parameter == {}
     assert entscheidung.special_category_erkannt is True
+    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
+
+
+def test_special_category_nutzerhinweis_ohne_rohinhalt():
+    entscheidung = prepare_for_approval_storage({"notiz": GESUNDHEIT})
+    assert GESUNDHEIT not in (entscheidung.nutzerhinweis or "")
+    assert entscheidung.nutzerhinweis, "Nutzerin muss einen verständlichen Hinweis erhalten"
+
+
+def test_secret_gewinnt_vor_special_category_in_der_diagnose():
+    """Reihenfolge: ein Text mit beidem wird als secret_detected gemeldet,
+    nicht als special_category -- die konkretere Diagnose gewinnt."""
+    entscheidung = prepare_for_approval_storage(
+        {"notiz": f"{GESUNDHEIT} Zugang: {GEHEIM}"}
+    )
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "secret_detected"
 
 
 def test_normale_parameter_ohne_special_category_flag():
     entscheidung = prepare_for_approval_storage({"query": "Rechnung"})
+    assert entscheidung.erlaubt is True
     assert entscheidung.special_category_erkannt is False
 
 
@@ -178,7 +205,29 @@ def test_audit_bei_ablehnung_enthaelt_kein_secret(monkeypatch):
     assert GEHEIM not in als_text
 
 
-def test_audit_markiert_special_category_ohne_inhalt(monkeypatch):
+def test_special_category_kein_approval_datensatz_wird_angelegt(monkeypatch):
+    """Finalisierung: kein create_approval_request()-Aufruf, wenn eine
+    besondere Kategorie ohne belastbaren Tenant-/Owner-Kontext erkannt
+    wird -- analog zum bestehenden Secret-Verhalten."""
+    aufgerufen = {"create": False}
+
+    def _fake_create(**kwargs):
+        aufgerufen["create"] = True
+        return {"id": 1, **kwargs}
+
+    monkeypatch.setattr(rg, "write_audit_entry", lambda **kw: {})
+    monkeypatch.setattr(rg, "create_approval_request", _fake_create)
+
+    with pytest.raises(HTTPException) as exc:
+        rg.request_approval_if_needed("custom_action", {"notiz": GESUNDHEIT})
+
+    assert exc.value.status_code == 422
+    assert aufgerufen["create"] is False, (
+        "Trotz erkannter besonderer Kategorie wurde ein Approval-Datensatz angelegt"
+    )
+
+
+def test_audit_bei_special_category_ablehnung_enthaelt_keinen_rohinhalt(monkeypatch):
     audit_eintraege = []
 
     monkeypatch.setattr(
@@ -187,10 +236,11 @@ def test_audit_markiert_special_category_ohne_inhalt(monkeypatch):
     )
     monkeypatch.setattr(rg, "create_approval_request", lambda **kw: {"id": 1, **kw})
 
-    rg.request_approval_if_needed("custom_action", {"notiz": GESUNDHEIT})
+    with pytest.raises(HTTPException):
+        rg.request_approval_if_needed("custom_action", {"notiz": GESUNDHEIT})
 
-    requested = next(e for e in audit_eintraege if e["action"] == "approval.requested")
-    assert requested["metadata"]["special_category_detected"] is True
+    blockiert = next(e for e in audit_eintraege if e["action"] == "approval.storage_blocked")
+    assert blockiert["metadata"]["reason"] == "special_category_no_binding_context"
     assert GESUNDHEIT not in json.dumps(audit_eintraege, ensure_ascii=False)
 
 
@@ -257,3 +307,106 @@ def test_unbekannter_typ_wird_fail_closed_behandelt():
     entscheidung = prepare_for_approval_storage({"payload": b"\\x00\\x01raw-bytes"})
     assert entscheidung.erlaubt is False
     assert entscheidung.ablehnungsgrund == "check_failed"
+
+
+# ── Finalisierung: kanonische Redaktionsmarker vs. echte Special Category ──
+# Regression: Fall-2-Texte (Redaction löst das Problem) enthalten kanonische
+# AILIZA-Marker wie "[GESCHWAERZT: Gesundheit - Art. 9 DSGVO]" -- der Marker
+# selbst enthält wörtlich den Kategorienamen und die Rechtsgrundlage, wurde
+# von classify() deshalb erneut als SPECIAL_CATEGORY erkannt und blockierte
+# den kompletten Fall-2-Pfad, sobald der generische Such-Fallback griff.
+
+def test_nur_kanonischer_gesundheitsmarker_bleibt_erlaubt():
+    """1. Ein reiner AILIZA-Redaktionsmarker ist kein echter Special-
+    Category-Inhalt -- er beschreibt nur, dass bereits redigiert wurde."""
+    entscheidung = prepare_for_approval_storage(
+        {"query": f"Patientenbrief zusammenfassen: {_GESUNDHEITS_MARKER}"}
+    )
+    assert entscheidung.erlaubt is True
+
+
+def test_nur_kanonischer_gewerkschaftsmarker_bleibt_erlaubt():
+    """2. Analog für eine andere Art.-9-Kategorie."""
+    entscheidung = prepare_for_approval_storage(
+        {"query": f"Mitgliedsantrag prüfen: {_GEWERKSCHAFTS_MARKER}"}
+    )
+    assert entscheidung.erlaubt is True
+
+
+def test_kanonischer_marker_plus_echte_special_category_bleibt_blockiert():
+    """3. Der Marker allein neutralisiert nur sich selbst -- echter
+    Restinhalt bleibt vollständig prüfbar."""
+    entscheidung = prepare_for_approval_storage(
+        {"query": f"{_GESUNDHEITS_MARKER} Patient hat ausserdem HIV."}
+    )
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
+
+
+def test_unbekannter_erfundener_marker_bleibt_blockiert():
+    """4. Ein Marker, der so nie von RedactionEngineV2 erzeugt wird, gilt
+    nicht automatisch als vertrauenswürdig -- keine Wildcard-Ausnahme."""
+    entscheidung = prepare_for_approval_storage(
+        {"query": "[GESCHWAERZT: HIV - Art. 9 DSGVO]"}
+    )
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
+
+
+def test_secret_neben_manipuliertem_marker_bleibt_blockiert():
+    """5. Ein manipuliertes Markerformat darf kein Secret verstecken --
+    Secret-Prüfung läuft immer auf dem Original, nie auf der
+    Klassifikationskopie."""
+    entscheidung = prepare_for_approval_storage(
+        {"query": f"[GESCHWAERZT: {GEHEIM} - Art. 9 DSGVO]"}
+    )
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "secret_detected"
+
+
+def test_secret_im_kanonischen_markerkontext_bleibt_blockiert():
+    entscheidung = prepare_for_approval_storage(
+        {"query": f"{_GESUNDHEITS_MARKER} Zugang: {GEHEIM}"}
+    )
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "secret_detected"
+
+
+def test_special_category_im_dict_key_bleibt_blockiert():
+    """6. Derselbe Textfragment-Scanner gilt für Schlüssel und Werte."""
+    entscheidung = prepare_for_approval_storage({"HIV": True})
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
+
+
+def test_gewoehnliche_pii_bleibt_nach_finalisierung_erlaubt():
+    """7. Regressionsschutz."""
+    entscheidung = prepare_for_approval_storage({"to": "kunde@example.com"})
+    assert entscheidung.erlaubt is True
+
+
+def test_normale_geschaeftsdaten_bleiben_unveraendert_nach_finalisierung():
+    """8. Regressionsschutz."""
+    parameter = {"query": "Rechnung Nr. 4711", "limit": 10}
+    entscheidung = prepare_for_approval_storage(parameter)
+    assert entscheidung.erlaubt is True
+    assert entscheidung.parameter == parameter
+
+
+def test_kanonische_marker_stimmen_mit_redaction_engine_ueberein():
+    """Verdrahtungsnachweis: die in payload_check.py verwendete Markermenge
+    kommt tatsächlich aus RedactionEngineV2, keine zweite Liste."""
+    markers = RedactionEngineV2.canonical_violet_markers()
+    assert _GESUNDHEITS_MARKER in markers
+    assert _GEWERKSCHAFTS_MARKER in markers
+
+
+def test_gespeicherte_parameter_enthalten_weiterhin_original_marker(monkeypatch):
+    """Die Neutralisierung gilt NUR für die Klassifikation -- gespeichert
+    und ausgeführt wird exakt der Originaltext."""
+    entscheidung = prepare_for_approval_storage(
+        {"query": f"Zusammenfassen: {_GESUNDHEITS_MARKER}"}
+    )
+    assert entscheidung.erlaubt is True
+    assert _GESUNDHEITS_MARKER in entscheidung.parameter["query"]
+    assert "[AILIZA_REDACTED]" not in entscheidung.parameter["query"]
