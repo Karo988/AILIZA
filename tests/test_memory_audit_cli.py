@@ -61,12 +61,38 @@ def test_clean_db_exits_zero_and_reports_no_violations(tmp_path):
     assert "Keine Invarianten-Verletzungen" in result.stdout
 
 
+def test_missing_database_file_does_not_create_it(tmp_path):
+    """Gate 1: eine nicht existierende Datenbankdatei darf durch das Audit
+    NICHT angelegt werden. Eine gewoehnliche SQLite-Verbindung (auch eine
+    rein lesende `inspect()`-Anfrage ueber die Standard-Engine) legt eine
+    fehlende Datei beim Verbindungsaufbau selbst an -- das war die
+    tatsaechliche Ursache des urspruenglichen Schreibpotenzials, auch nach
+    Entfernen von init_db() aus dem Auditpfad. Der Dateisystem-Check muss
+    JEDER Verbindung vorausgehen."""
+    db_path = tmp_path / "ghost.db"
+    db_url = f"sqlite:///{db_path}"
+    assert not db_path.exists()
+
+    result = _run_script(db_url)
+
+    assert result.returncode == 2, result.stdout
+    assert "Datenbankdatei nicht gefunden" in result.stderr
+    assert not db_path.exists(), (
+        "Das Audit hat trotz fehlender Datenbank eine Datei angelegt"
+    )
+
+
 def test_missing_schema_exits_two_without_creating_it(tmp_path):
-    """Kernverhalten der Read-only-Haertung: eine Datenbank ohne
-    memory_items/memory_visibility darf NICHT repariert werden -- das Audit
-    muss verstaendlich abbrechen, statt das Schema selbst anzulegen."""
+    """Kernverhalten der Read-only-Haertung: eine (existierende, aber
+    leere) Datenbank ohne memory_items/memory_visibility darf NICHT
+    repariert werden -- das Audit muss verstaendlich abbrechen, statt das
+    Schema selbst anzulegen."""
     db_path = tmp_path / "no_schema.db"
     db_url = f"sqlite:///{db_path}"
+    # Datei existiert (leer, ohne Schema) -- unterscheidet diesen Fall
+    # bewusst von test_missing_database_file_does_not_create_it oben.
+    db_path.touch()
+
     result = _run_script(db_url)
     assert result.returncode == 2, result.stdout
     assert "Tabelle(n) fehlen" in result.stderr
@@ -310,9 +336,94 @@ def test_script_works_regardless_of_caller_cwd(tmp_path):
     assert report["has_violations"] is False
 
 
+# ── Gate 1: dedizierte Read-only-SQLite-Verbindung (mode=ro + query_only) ────
+
+def test_readonly_connection_rejects_a_deliberate_write(tmp_path):
+    """Gegenprobe/Schutztest: beweist nicht nur, dass der Audit-Code selbst
+    keine schreibende Anweisung absetzt (das leistet
+    test_audit_run_issues_no_write_sql_statements unten), sondern dass ein
+    Schreibversuch UEBER DIESELBE Read-only-Verbindung, die das Audit
+    verwendet, technisch abgewiesen wird -- unabhaengig davon, ob der
+    Audit-Code selbst fehlerfrei ist. Zwei unabhaengige Schranken:
+    URI mode=ro UND PRAGMA query_only."""
+    db_path = tmp_path / "protected.db"
+    db_url = f"sqlite:///{db_path}"
+    _init_schema_only(db_url)
+
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    script = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.audit_memory_scope_cli import _open_readonly_sqlite_engine
+from apps.backend.database import memory_items
+from sqlalchemy import insert
+from sqlalchemy.exc import OperationalError
+from datetime import datetime, timezone
+
+ro_engine = _open_readonly_sqlite_engine({str(db_path)!r})
+now = datetime.now(timezone.utc)
+try:
+    with ro_engine.connect() as conn:
+        conn.execute(insert(memory_items).values(
+            tenant_id="default", scope="company_memory", owner_user_id=None,
+            title="t", content="c", purpose="p", source_id=None,
+            status="active", created_at=now, updated_at=now,
+        ))
+        conn.commit()
+    print("SCHREIBVERSUCH_ERFOLGREICH")
+except OperationalError as exc:
+    print(f"SCHREIBVERSUCH_ABGEWIESEN: {{exc}}")
+finally:
+    ro_engine.dispose()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, cwd=REPO_ROOT,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert "SCHREIBVERSUCH_ABGEWIESEN" in result.stdout, (
+        f"Read-only-Schutz hat einen Schreibversuch NICHT abgewiesen: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "readonly" in result.stdout.lower() or "read-only" in result.stdout.lower()
+
+
+def test_readonly_engine_uses_separate_connection_from_app_engine(tmp_path):
+    """Regressionsschutz: die dedizierte Read-only-Engine darf die
+    schreibfaehige, anwendungsweite `engine` aus database.py nicht
+    ersetzen oder beeinflussen -- nur ein zusaetzlicher, unabhaengiger
+    Verbindungsweg fuer den Audit-Lauf."""
+    db_path = tmp_path / "separate.db"
+    db_url = f"sqlite:///{db_path}"
+    _init_schema_only(db_url)
+
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    script = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.audit_memory_scope_cli import _open_readonly_sqlite_engine
+from apps.backend.database import engine as app_engine
+ro_engine = _open_readonly_sqlite_engine({str(db_path)!r})
+assert ro_engine is not app_engine
+assert ro_engine.url != app_engine.url
+ro_engine.dispose()
+print("OK")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, cwd=REPO_ROOT,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stdout
+
+
 # ── Gate 1A: technischer Beweis auf SQL-Anweisungsebene, nicht nur Endzustand ─
 
-_WRITE_KEYWORDS = ("CREATE", "ALTER", "DROP", "INSERT", "UPDATE", "DELETE")
+_WRITE_KEYWORDS = ("CREATE", "ALTER", "DROP", "INSERT", "UPDATE", "DELETE", "REPLACE", "VACUUM", "ATTACH", "DETACH")
 
 
 def test_script_never_calls_init_db_or_creates_schema():
@@ -391,6 +502,112 @@ print("STATEMENTS_JSON_END")
         upper = stmt.strip().upper()
         for keyword in _WRITE_KEYWORDS:
             assert not upper.startswith(keyword), f"Schreibende Anweisung entdeckt: {stmt!r}"
+
+
+def test_audit_via_readonly_connection_issues_no_write_sql_statements(tmp_path):
+    """Wie test_audit_run_issues_no_write_sql_statements oben, aber ueber
+    GENAU die dedizierte Read-only-Verbindung, die das CLI tatsaechlich
+    fuer den Audit-Lauf verwendet (nicht die schreibfaehige App-Engine)."""
+    db_path = tmp_path / "sql_proof_ro.db"
+    db_url = f"sqlite:///{db_path}"
+    _init_schema_only(db_url)
+
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+
+    setup = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.database import init_db, engine, memory_items
+from sqlalchemy import insert
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc)
+with engine.begin() as conn:
+    conn.execute(insert(memory_items).values(
+        tenant_id="default", scope="company_memory", owner_user_id="sollte_leer_sein",
+        title="invalid", content="c", purpose="p", source_id=None,
+        status="active", created_at=now, updated_at=now,
+    ))
+"""
+    subprocess.run([sys.executable, "-c", setup], env=env, capture_output=True, text=True, check=True, timeout=30)
+
+    script = f"""
+import sys, json
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from sqlalchemy import event
+from apps.backend.audit_memory_scope_cli import _open_readonly_sqlite_engine
+from apps.backend.database import audit_memory_scope_invariants
+
+ro_engine = _open_readonly_sqlite_engine({str(db_path)!r})
+statements = []
+
+def _capture(conn, cursor, statement, parameters, context, executemany):
+    statements.append(statement)
+
+event.listen(ro_engine, "before_cursor_execute", _capture)
+try:
+    with ro_engine.connect() as conn:
+        audit_memory_scope_invariants(conn=conn)
+finally:
+    event.remove(ro_engine, "before_cursor_execute", _capture)
+    ro_engine.dispose()
+
+print("STATEMENTS_JSON_START")
+print(json.dumps(statements))
+print("STATEMENTS_JSON_END")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, cwd=REPO_ROOT,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = result.stdout.split("STATEMENTS_JSON_START\n", 1)[1].split("\nSTATEMENTS_JSON_END", 1)[0]
+    statements = json.loads(payload)
+
+    assert statements, "Es wurden gar keine SQL-Anweisungen erfasst -- Test greift nicht"
+    for stmt in statements:
+        upper = stmt.strip().upper()
+        for keyword in _WRITE_KEYWORDS:
+            assert not upper.startswith(keyword), f"Schreibende Anweisung entdeckt: {stmt!r}"
+
+
+def test_output_contains_no_raw_secret_or_content(tmp_path):
+    """Anforderung 8: die Audit-Ausgabe darf niemals Rohinhalte (title/
+    content/purpose) oder darin enthaltene Test-Secrets ausgeben -- nur
+    Zaehlwerte, technische IDs und die fuer die Diagnose zwingend
+    benoetigten owner_user_id/tenant_id-Werte."""
+    GEHEIM = "sk-test-audit-secret-nicht-echt-24680"
+    db_path = tmp_path / "secret_content.db"
+    db_url = f"sqlite:///{db_path}"
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    setup = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.database import init_db, engine, memory_items
+from sqlalchemy import insert
+from datetime import datetime, timezone
+init_db()
+now = datetime.now(timezone.utc)
+with engine.begin() as conn:
+    conn.execute(insert(memory_items).values(
+        tenant_id="default", scope="company_memory", owner_user_id="sollte_leer_sein",
+        title="Zugangsdaten", content="api_key={GEHEIM!r}", purpose="Geheimnisverwaltung",
+        source_id=None, status="active", created_at=now, updated_at=now,
+    ))
+"""
+    subprocess.run([sys.executable, "-c", setup], env=env, capture_output=True, text=True, check=True, timeout=30)
+
+    for extra_args in ([], ["--json"], ["--summary-only", "--json"]):
+        result = _run_script(db_url, extra_args)
+        assert GEHEIM not in result.stdout
+        assert GEHEIM not in result.stderr
+        assert "Zugangsdaten" not in result.stdout
+        assert "Geheimnisverwaltung" not in result.stdout
 
 
 def test_workflow_installs_cryptography_dependency():

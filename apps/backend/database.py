@@ -1657,53 +1657,89 @@ def _as_aware(dt: datetime) -> datetime:
 # gefundenen echten Verletzungen abgebrochen wird -- diese Funktion selbst
 # wirft nichts, sie berichtet nur (fail-safe: lieber ein zu ausfuehrlicher
 # Bericht als eine stille Fehlklassifikation).
-def audit_memory_scope_invariants() -> dict[str, Any]:
+def _collect_memory_scope_invariants(conn) -> dict[str, Any]:
+    """Liest die Rohdaten fuer den Invarianten-Bericht ueber EINE gegebene
+    Connection -- ausschliesslich SELECTs, kein Transaktions-/
+    Verbindungsmanagement hier (das entscheidet der Aufrufer, siehe
+    audit_memory_scope_invariants())."""
+    from sqlalchemy import func
+
+    total = conn.execute(select(func.count()).select_from(memory_items)).scalar_one()
+
+    user_memory_missing_owner = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "user_memory")
+        .where(memory_items.c.owner_user_id.is_(None))
+    ).scalars().all()
+
+    company_memory_missing_tenant = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "company_memory")
+        .where(memory_items.c.tenant_id.is_(None))
+    ).scalars().all()
+
+    company_memory_with_owner = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "company_memory")
+        .where(memory_items.c.owner_user_id.isnot(None))
+    ).scalars().all()
+
+    unknown_scope = conn.execute(
+        select(memory_items.c.id, memory_items.c.scope)
+        .where(memory_items.c.scope.notin_(list(_VALID_MEMORY_SCOPES)))
+    ).all()
+
+    legacy_user_memory_null_tenant = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "user_memory")
+        .where(memory_items.c.tenant_id.is_(None))
+        .where(memory_items.c.owner_user_id.isnot(None))
+    ).scalars().all()
+
+    active_without_visibility = conn.execute(
+        select(memory_items.c.id)
+        .select_from(memory_items.outerjoin(
+            memory_visibility, memory_visibility.c.memory_item_id == memory_items.c.id,
+        ))
+        .where(memory_items.c.status == "active")
+        .where(memory_visibility.c.id.is_(None))
+    ).scalars().all()
+
+    return dict(
+        total=total,
+        user_memory_missing_owner=user_memory_missing_owner,
+        company_memory_missing_tenant=company_memory_missing_tenant,
+        company_memory_with_owner=company_memory_with_owner,
+        unknown_scope=unknown_scope,
+        legacy_user_memory_null_tenant=legacy_user_memory_null_tenant,
+        active_without_visibility=active_without_visibility,
+    )
+
+
+def audit_memory_scope_invariants(conn=None) -> dict[str, Any]:
     """Liefert einen Bestandsbericht ueber memory_items, der alle
     Verletzungen der Scope-/Owner-/Tenant-Invarianten auflistet, OHNE
     irgendetwas zu veraendern. Gedacht als Trockenlauf/Repair-Report vor
-    einer kuenftigen Migration."""
-    from sqlalchemy import func
-    with engine.begin() as conn:
-        total = conn.execute(select(func.count()).select_from(memory_items)).scalar_one()
+    einer kuenftigen Migration.
 
-        user_memory_missing_owner = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "user_memory")
-            .where(memory_items.c.owner_user_id.is_(None))
-        ).scalars().all()
+    `conn`: optionale, bereits geoeffnete Connection (z.B. eine dedizierte
+    Read-only-Verbindung des CLI-Audits, siehe
+    audit_memory_scope_cli.py). Ohne Angabe wird wie bisher die
+    anwendungsweite `engine` verwendet -- bestehende Aufrufer (Tests,
+    interne Nutzung) sind unveraendert."""
+    if conn is not None:
+        raw = _collect_memory_scope_invariants(conn)
+    else:
+        with engine.begin() as conn:
+            raw = _collect_memory_scope_invariants(conn)
 
-        company_memory_missing_tenant = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "company_memory")
-            .where(memory_items.c.tenant_id.is_(None))
-        ).scalars().all()
-
-        company_memory_with_owner = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "company_memory")
-            .where(memory_items.c.owner_user_id.isnot(None))
-        ).scalars().all()
-
-        unknown_scope = conn.execute(
-            select(memory_items.c.id, memory_items.c.scope)
-            .where(memory_items.c.scope.notin_(list(_VALID_MEMORY_SCOPES)))
-        ).all()
-
-        legacy_user_memory_null_tenant = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "user_memory")
-            .where(memory_items.c.tenant_id.is_(None))
-            .where(memory_items.c.owner_user_id.isnot(None))
-        ).scalars().all()
-
-        active_without_visibility = conn.execute(
-            select(memory_items.c.id)
-            .select_from(memory_items.outerjoin(
-                memory_visibility, memory_visibility.c.memory_item_id == memory_items.c.id,
-            ))
-            .where(memory_items.c.status == "active")
-            .where(memory_visibility.c.id.is_(None))
-        ).scalars().all()
+    total = raw["total"]
+    user_memory_missing_owner = raw["user_memory_missing_owner"]
+    company_memory_missing_tenant = raw["company_memory_missing_tenant"]
+    company_memory_with_owner = raw["company_memory_with_owner"]
+    unknown_scope = raw["unknown_scope"]
+    legacy_user_memory_null_tenant = raw["legacy_user_memory_null_tenant"]
+    active_without_visibility = raw["active_without_visibility"]
 
     violations = {
         "user_memory_missing_owner": list(user_memory_missing_owner),
