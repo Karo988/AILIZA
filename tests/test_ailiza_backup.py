@@ -78,6 +78,56 @@ def test_verify_wrong_password_fails_closed(tmp_path: Path, quelle: Path) -> Non
     assert "passt NICHT" in r.stderr
 
 
+def _make_sqlite_with_fk_violation(path: Path) -> None:
+    """Elternzeile wird nach dem Einfuegen der Kindzeile geloescht, OHNE
+    foreign_keys=ON zu setzen -- SQLite erlaubt das (Fremdschluessel sind
+    standardmaessig nicht erzwungen), foreign_key_check muss die
+    verwaiste Zeile trotzdem finden."""
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE eltern (id INTEGER PRIMARY KEY)")
+    con.execute(
+        "CREATE TABLE kinder (id INTEGER PRIMARY KEY, eltern_id INTEGER "
+        "REFERENCES eltern(id))"
+    )
+    con.execute("INSERT INTO eltern (id) VALUES (1)")
+    con.execute("INSERT INTO kinder (eltern_id) VALUES (1)")
+    con.execute("DELETE FROM eltern WHERE id = 1")
+    con.commit()
+    con.close()
+
+
+def test_verify_reports_foreign_key_violation_as_error(tmp_path: Path) -> None:
+    """Gate 1 Backup/Restore-Finalisierung: integrity_check allein findet
+    verwaiste Fremdschluessel NICHT (physische Seitenstruktur bleibt
+    intakt) -- foreign_key_check muss das separat erkennen und verify
+    fehlschlagen lassen, statt eine strukturell "ok", aber inhaltlich
+    inkonsistente Sicherung als gut zu melden."""
+    quelle = tmp_path / "fk_verletzt.sqlite"
+    _make_sqlite_with_fk_violation(quelle)
+    paket = tmp_path / "fk_verletzt.bak"
+
+    r = _run(["backup", "--datenbank", str(quelle), "--ausgabe", str(paket)], "geheim\n")
+    assert r.returncode == 0, r.stderr
+
+    r = _run(["verify", "--paket", str(paket)], "geheim\n")
+    assert r.returncode == 1, f"erwartet EXIT_FEHLER=1, bekam {r.returncode}: {r.stdout} {r.stderr}"
+    assert "foreign_key_check" in r.stderr
+    assert "Verify OK." not in r.stdout
+
+
+def test_restore_refuses_database_with_foreign_key_violation(tmp_path: Path) -> None:
+    quelle = tmp_path / "fk_verletzt2.sqlite"
+    _make_sqlite_with_fk_violation(quelle)
+    paket = tmp_path / "fk_verletzt2.bak"
+    _run(["backup", "--datenbank", str(quelle), "--ausgabe", str(paket)], "geheim\n")
+
+    ziel = tmp_path / "restored_fk.sqlite"
+    r = _run(["restore", "--paket", str(paket), "--ziel", str(ziel)], "geheim\n")
+    assert r.returncode == 1, f"erwartet EXIT_FEHLER=1, bekam {r.returncode}: {r.stdout} {r.stderr}"
+    assert "foreign_key_check" in r.stderr
+    assert not ziel.exists(), "Restore darf bei FK-Verletzung keine Zieldatei anlegen"
+
+
 def test_empty_database_backup_verify_reports_incomplete_not_ok(tmp_path: Path) -> None:
     """B7-Regression: eine inhaltlich leere Sicherung darf NICHT Exit 0
     melden — sonst hält der Betreiber eine wertlose Sicherung für gut."""

@@ -124,6 +124,36 @@ def _open_readonly_sqlite_engine(db_path: str):
     return ro_engine
 
 
+def _open_readonly_postgres_engine(database_url: str):
+    """Oeffnet fuer PostgreSQL (Render/Neon-Dialekt: postgresql+psycopg://)
+    eine EIGENE Engine, deren Verbindungen ALLE Anweisungen in einer
+    READ ONLY-Transaktion ausfuehren -- serverseitig durchgesetzt (nicht
+    nur clientseitiger Code-Verzicht auf Schreib-SQL).
+
+    Technik: `execution_options(postgresql_readonly=True)` laesst
+    SQLAlchemys PostgreSQL-Dialekt bei Verbindungsaufbau
+    `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` (psycopg2/
+    psycopg) setzen. Ein INSERT/UPDATE/DELETE auf einer so geoeffneten
+    Verbindung wird vom PostgreSQL-Server selbst mit
+    `psycopg.errors.ReadOnlySqlTransaction` ("cannot execute ... in a
+    read-only transaction") abgewiesen -- lokal gegen eine isolierte
+    Testinstanz nachgewiesen, siehe
+    tests/test_memory_audit_cli.py::test_postgres_readonly_connection_rejects_a_deliberate_write.
+
+    Getrennt von der schreibfaehigen, anwendungsweiten `engine` aus
+    database.py -- eine vollstaendig unabhaengige zweite Engine, nur fuer
+    die Dauer dieses Audit-Laufs. SQLite-Verhalten (siehe
+    _open_readonly_sqlite_engine oben) bleibt davon unberuehrt."""
+    from sqlalchemy import create_engine
+
+    ro_engine = create_engine(database_url).execution_options(postgresql_readonly=True)
+    return ro_engine
+
+
+def _is_postgres_url(database_url: str) -> bool:
+    return database_url.startswith("postgresql")
+
+
 def _summarize(report: dict) -> dict:
     """Reduziert einen Bericht auf reine Zaehlwerte -- keine internen
     ID-Listen. Fuer Ausgaben in oeffentlich einsehbare Logs (siehe
@@ -203,13 +233,20 @@ def main() -> int:
             # nicht mehr angefasst.
             ro_engine = _open_readonly_sqlite_engine(db_path)
             target_engine = ro_engine
+        elif _is_postgres_url(DATABASE_URL):
+            # PostgreSQL (Render/Neon): serverseitig durchgesetzte
+            # READ ONLY-Transaktion statt des SQLite-spezifischen
+            # mode=ro-URI-Tricks -- siehe _open_readonly_postgres_engine().
+            # Auch hier ausschliesslich ueber eine dedizierte, von der
+            # schreibfaehigen App-Engine getrennte Verbindung.
+            ro_engine = _open_readonly_postgres_engine(DATABASE_URL)
+            target_engine = ro_engine
         else:
-            # ":memory:"-Datenbanken (nur in Tests relevant) oder ein
-            # anderer Dialekt (z.B. PostgreSQL): der mode=ro-URI-Trick ist
-            # SQLite-spezifisch. Fallback auf die bestehende, code-seitige
-            # Read-only-Garantie (nur SELECTs, siehe
-            # audit_memory_scope_invariants()) -- keine zusaetzliche
-            # Verbindungs-Ebene-Schranke fuer diese Faelle.
+            # ":memory:"-SQLite-Datenbanken (nur in Tests relevant) oder
+            # ein anderer, nicht gesondert behandelter Dialekt: Fallback
+            # auf die bestehende, code-seitige Read-only-Garantie (nur
+            # SELECTs, siehe audit_memory_scope_invariants()) -- keine
+            # zusaetzliche Verbindungs-Ebene-Schranke fuer diese Faelle.
             target_engine = engine
 
         # Rein lesende Existenzpruefung -- kein init_db()/create_all() mehr:

@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "apps" / "backend" / "audit_memory_scope_cli.py"
 
@@ -608,6 +610,128 @@ with engine.begin() as conn:
         assert GEHEIM not in result.stderr
         assert "Zugangsdaten" not in result.stdout
         assert "Geheimnisverwaltung" not in result.stdout
+
+
+# ── Gate 1 Phase 3: PostgreSQL Read-only-Schranke (separat, nicht in CI) ────
+#
+# Diese Tests laufen NUR, wenn AILIZA_TEST_POSTGRES_ADMIN_URL gesetzt ist --
+# eine Verbindung mit CREATEDB-Recht auf eine LOKALE/ISOLIERTE Testinstanz,
+# NIEMALS Render/Neon. Ohne diese Variable werden sie uebersprungen (auch
+# in CI, wo kein PostgreSQL-Service konfiguriert ist) -- bewusst getrennt
+# vom Standard-Testlauf, wie von Karo verlangt ("PostgreSQL-Testumgebung
+# getrennt pruefen").
+
+import contextlib
+
+_PG_ADMIN_URL = os.environ.get("AILIZA_TEST_POSTGRES_ADMIN_URL")
+
+pg_only = pytest.mark.skipif(
+    not _PG_ADMIN_URL,
+    reason="AILIZA_TEST_POSTGRES_ADMIN_URL nicht gesetzt -- PostgreSQL-Tests "
+    "laufen nur explizit gegen eine lokale/isolierte Testinstanz.",
+)
+
+
+@contextlib.contextmanager
+def _fresh_postgres_database(name: str):
+    """Legt ueber die Admin-URL eine frische, isolierte Testdatenbank an
+    und loescht sie danach wieder -- niemals Render/Neon, ausschliesslich
+    die in AILIZA_TEST_POSTGRES_ADMIN_URL konfigurierte lokale Instanz."""
+    import psycopg
+    from urllib.parse import urlsplit, urlunsplit
+
+    admin = psycopg.connect(_PG_ADMIN_URL.replace("postgresql+psycopg://", "postgresql://"))
+    admin.autocommit = True
+    try:
+        with admin.cursor() as cur:
+            cur.execute(f'DROP DATABASE IF EXISTS "{name}"')
+            cur.execute(f'CREATE DATABASE "{name}"')
+        parts = urlsplit(_PG_ADMIN_URL)
+        db_url = urlunsplit(parts._replace(path=f"/{name}"))
+        try:
+            yield db_url
+        finally:
+            with admin.cursor() as cur:
+                cur.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    finally:
+        admin.close()
+
+
+def _pg_init_schema(db_url: str) -> None:
+    env = dict(os.environ)
+    env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+    env["AILIZA_DATABASE_URL"] = db_url
+    env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    setup = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.database import init_db
+init_db()
+"""
+    subprocess.run([sys.executable, "-c", setup], env=env, capture_output=True, text=True, check=True, timeout=60)
+
+
+@pg_only
+def test_postgres_readonly_connection_rejects_a_deliberate_write():
+    """Gegenprobe/Schutztest fuer PostgreSQL, analog zum SQLite-Pendant
+    oben: ein Schreibversuch UEBER DIESELBE Read-only-Verbindung, die das
+    Audit fuer PostgreSQL verwendet, muss serverseitig abgewiesen werden."""
+    with _fresh_postgres_database("ailiza_audit_cli_test_ro") as db_url:
+        _pg_init_schema(db_url)
+        env = dict(os.environ)
+        env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
+        env["AILIZA_DATABASE_URL"] = db_url
+        script = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from apps.backend.audit_memory_scope_cli import _open_readonly_postgres_engine
+from apps.backend.database import memory_items
+from sqlalchemy import insert
+from sqlalchemy.exc import DBAPIError
+from datetime import datetime, timezone
+
+ro_engine = _open_readonly_postgres_engine({db_url!r})
+now = datetime.now(timezone.utc)
+try:
+    with ro_engine.connect() as conn:
+        conn.execute(insert(memory_items).values(
+            tenant_id="default", scope="company_memory", owner_user_id=None,
+            title="t", content="c", purpose="p", source_id=None,
+            status="active", created_at=now, updated_at=now,
+        ))
+        conn.commit()
+    print("SCHREIBVERSUCH_ERFOLGREICH")
+except DBAPIError as exc:
+    print(f"SCHREIBVERSUCH_ABGEWIESEN: {{exc}}")
+finally:
+    ro_engine.dispose()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script], env=env, cwd=REPO_ROOT,
+            capture_output=True, text=True, timeout=30,
+        )
+        assert "SCHREIBVERSUCH_ABGEWIESEN" in result.stdout, (
+            f"Postgres-Read-only-Schutz hat einen Schreibversuch NICHT abgewiesen: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "read-only" in result.stdout.lower() or "readonly" in result.stdout.lower()
+
+
+@pg_only
+def test_postgres_audit_clean_db_exits_zero():
+    with _fresh_postgres_database("ailiza_audit_cli_test_clean") as db_url:
+        _pg_init_schema(db_url)
+        result = _run_script(db_url)
+        assert result.returncode == 0, result.stderr
+        assert "Keine Invarianten-Verletzungen" in result.stdout
+
+
+@pg_only
+def test_postgres_audit_missing_schema_exits_two():
+    with _fresh_postgres_database("ailiza_audit_cli_test_noschema") as db_url:
+        result = _run_script(db_url)
+        assert result.returncode == 2, result.stdout
+        assert "Tabelle(n) fehlen" in result.stderr
 
 
 def test_workflow_installs_cryptography_dependency():
