@@ -240,6 +240,12 @@ _APPROVAL_CHECK_FAILED_MESSAGE = (
     "Diese Anfrage konnte nicht sicher geprüft werden und wird deshalb "
     "nicht zur Freigabe gespeichert. Bitte versuchen Sie es erneut."
 )
+_APPROVAL_CLARIFICATION_REQUIRED_MESSAGE = (
+    "Ich kann die Aufgabe weiterbearbeiten, brauche für diesen Schritt "
+    "aber noch eine Angabe: ein Teil der Parameter konnte nicht eindeutig "
+    "eingeordnet werden. Bitte prüfen und die Anfrage präzisiert erneut "
+    "senden."
+)
 
 def _pruefe_textfragment(text: str, ergebnis: dict[str, bool]) -> None:
     """Kernpruefung EINES Textfragments (String-Wert oder String-Schluessel)
@@ -407,20 +413,31 @@ def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageE
             nutzerhinweis=_APPROVAL_CHECK_FAILED_MESSAGE,
         )
 
-    # Reihenfolge bewusst: Secret vor Special Category. Ein Text mit beidem
-    # soll als "secret_detected" gemeldet werden -- die konkretere Diagnose
-    # gewinnt, auch wenn beide Faelle hier zur Ablehnung fuehren.
-    if ergebnis.get("secret") or ergebnis.get("nicht_bewertbar"):
+    # Reihenfolge bewusst: Secret zuerst. Ein Text mit Secret UND
+    # nicht_bewertbarem Rest soll als "secret_detected" gemeldet werden --
+    # die konkretere, sicherheitskritischere Diagnose gewinnt.
+    if ergebnis.get("secret"):
         return ApprovalStorageEntscheidung(
             erlaubt=False,
             parameter={},
             special_category_erkannt=False,
-            ablehnungsgrund="secret_detected" if ergebnis.get("secret") else "check_failed",
-            nutzerhinweis=(
-                _APPROVAL_SECRET_BLOCKED_MESSAGE
-                if ergebnis.get("secret")
-                else _APPROVAL_CHECK_FAILED_MESSAGE
-            ),
+            ablehnungsgrund="secret_detected",
+            nutzerhinweis=_APPROVAL_SECRET_BLOCKED_MESSAGE,
+        )
+
+    # nicht_bewertbar ist KEIN Sicherheitsfund -- hier fehlt lediglich
+    # Information fuer eine sichere Entscheidung (unbekannter Typ, zu tief
+    # verschachtelt, nicht-primitiver Dict-Schluessel). Betreiber-Korrektur:
+    # das ist "clarification_required", nicht "check_failed"/Secret-artig.
+    # agent_runtime.py behandelt diesen Grund gesondert und bricht den Lauf
+    # NICHT ab (siehe _ist_clarification_required() dort).
+    if ergebnis.get("nicht_bewertbar"):
+        return ApprovalStorageEntscheidung(
+            erlaubt=False,
+            parameter={},
+            special_category_erkannt=False,
+            ablehnungsgrund="clarification_required",
+            nutzerhinweis=_APPROVAL_CLARIFICATION_REQUIRED_MESSAGE,
         )
 
     # Special Category blockiert hier NICHT -- interne Verarbeitung ist

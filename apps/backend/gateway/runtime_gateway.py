@@ -76,6 +76,18 @@ def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> di
                 "risk": _safe_risk_summary(risk),
             },
         )
+        if entscheidung.ablehnungsgrund == "clarification_required":
+            # Strukturiertes detail statt reinem Text: agent_runtime.py muss
+            # diesen einen Grund maschinenlesbar erkennen koennen, um den
+            # Lauf NICHT abzubrechen (siehe _is_clarification_required_error()
+            # dort) -- ohne pauschal jede 422 oder eine Textphrase abzugreifen.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "reason": "clarification_required",
+                    "message": entscheidung.nutzerhinweis,
+                },
+            )
         raise HTTPException(status_code=422, detail=entscheidung.nutzerhinweis)
 
     approval = create_approval_request(

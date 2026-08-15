@@ -291,10 +291,16 @@ def test_tenant_und_owner_bindung_unveraendert(monkeypatch):
 
 def test_unbekannter_typ_wird_fail_closed_behandelt():
     """Sicherheitsreview-Fund: bytes und andere nicht behandelte Typen
-    wurden zuvor stillschweigend als unauffällig durchgereicht."""
+    wurden zuvor stillschweigend als unauffällig durchgereicht.
+
+    Betreiber-Korrektur: dieser Fall ist kein Sicherheitsfund wie ein
+    Secret, sondern fehlende Information für eine sichere Entscheidung --
+    daher "clarification_required", nicht "check_failed". Weiterhin
+    erlaubt=False: der Parameter wird nicht gespeichert, ohne Klärung."""
     entscheidung = prepare_for_approval_storage({"payload": b"\\x00\\x01raw-bytes"})
     assert entscheidung.erlaubt is False
-    assert entscheidung.ablehnungsgrund == "check_failed"
+    assert entscheidung.parameter == {}
+    assert entscheidung.ablehnungsgrund == "clarification_required"
 
 
 # ── Finalisierung: kanonische Redaktionsmarker vs. echte Special Category ──
@@ -403,3 +409,47 @@ def test_gespeicherte_parameter_enthalten_weiterhin_original_marker(monkeypatch)
     assert entscheidung.erlaubt is True
     assert _GESUNDHEITS_MARKER in entscheidung.parameter["query"]
     assert "[AILIZA_REDACTED]" not in entscheidung.parameter["query"]
+
+
+# ── clarification_required (Betreiber-Korrektur, Sackgassen-Vermeidung) ──
+
+def test_request_approval_gibt_strukturiertes_detail_bei_clarification(monkeypatch):
+    """1. Verdrahtungsnachweis: request_approval_if_needed() signalisiert
+    clarification_required über ein strukturiertes detail-Dict (nicht über
+    Textabgleich), damit agent_runtime.py es maschinenlesbar erkennen kann."""
+    monkeypatch.setattr(rg, "write_audit_entry", lambda **kw: {})
+    monkeypatch.setattr(rg, "create_approval_request", lambda **kw: {"id": 1, **kw})
+
+    with pytest.raises(HTTPException) as exc:
+        rg.request_approval_if_needed("custom_action", {"payload": b"raw-bytes"})
+
+    assert exc.value.status_code == 422
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("reason") == "clarification_required"
+    assert exc.value.detail.get("message")
+
+
+def test_zu_tiefe_struktur_ergibt_clarification_required():
+    tief = {"a": "ende"}
+    for _ in range(45):
+        tief = {"a": tief}
+    entscheidung = prepare_for_approval_storage(tief)
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "clarification_required"
+
+
+def test_nutzerhinweis_bei_clarification_required_ist_konkret():
+    """4. Nutzer erhält eine konkrete Rückfrage, keine Verbotssprache."""
+    entscheidung = prepare_for_approval_storage({"payload": b"raw-bytes"})
+    hinweis = entscheidung.nutzerhinweis or ""
+    assert "weiterbearbeiten" in hinweis
+    assert "abgebrochen" not in hinweis.lower()
+    assert "nicht zulässig" not in hinweis.lower()
+
+
+def test_secret_bleibt_unabhaengig_von_clarification_required_blockierend():
+    """8. Secret-/Credential-Block bleibt unverändert -- eigener Grund,
+    nicht mit clarification_required vermischt."""
+    entscheidung = prepare_for_approval_storage({"token": f"Bearer {GEHEIM}"})
+    assert entscheidung.erlaubt is False
+    assert entscheidung.ablehnungsgrund == "secret_detected"

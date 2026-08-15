@@ -69,6 +69,23 @@ def _is_missing_provider_error(exc: HTTPException) -> bool:
     )
 
 
+def _is_clarification_required_error(exc: HTTPException) -> bool:
+    """Erkennt EXAKT den `clarification_required`-Fall aus
+    governance/payload_check.py -- keine generische 422-Behandlung.
+
+    Betreiber-Freigabe: `payload_check.prepare_for_approval_storage()`
+    unterscheidet einen echten Sicherheitsfund (Secret) von einer nicht
+    eindeutig klassifizierbaren Nutzlast, fuer die schlicht Information
+    fehlt. Nur Letzteres darf den Lauf NICHT abbrechen. `runtime_gateway.py`
+    signalisiert das ueber ein strukturiertes `detail` (nicht ueber
+    Textabgleich, der bei einer Formulierungsaenderung stillschweigend
+    brechen wuerde) -- exakt so, wie `_is_missing_provider_error()` oben
+    einen anderen Sonderfall am `detail` erkennt, nur maschinenlesbar statt
+    string-basiert.
+    """
+    return isinstance(exc.detail, dict) and exc.detail.get("reason") == "clarification_required"
+
+
 def _is_research_task(task: str) -> bool:
     lower = task.lower()
     return any(kw in lower for kw in _RESEARCH_KEYWORDS)
@@ -326,6 +343,31 @@ class AgentRuntime:
                         flush=True,
                     )
                     return local_result
+                if _is_clarification_required_error(exc):
+                    # Eng begrenzter Sonderfall (Betreiber-Freigabe): fehlt
+                    # nur Information fuer eine sichere Entscheidung, ist das
+                    # kein Abbruchgrund. Bereits erzeugte Schritte bleiben
+                    # erhalten, der Lauf endet NICHT als "failed"/"blocked".
+                    rueckfrage = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    clarification_result = {
+                        "run_id": run_id,
+                        "status": "clarification_required",
+                        "message": rueckfrage,
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="clarification_required", result=clarification_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.clarification_required",
+                        {"run_id": run_id, "step": index, "tool": call.tool},
+                    )
+                    return clarification_result
                 status = "blocked" if exc.status_code == 403 else "failed"
                 self.update_run_record(
                     run_id,
@@ -571,6 +613,28 @@ class AgentRuntime:
                         },
                     )
                     yield stream_event("local_only", local_result)
+                    return
+                if _is_clarification_required_error(exc):
+                    rueckfrage = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    clarification_result = {
+                        "run_id": run_id,
+                        "status": "clarification_required",
+                        "message": rueckfrage,
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="clarification_required", result=clarification_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.clarification_required",
+                        {"run_id": run_id, "step": index, "tool": call.tool, "streaming": True},
+                    )
+                    yield stream_event("clarification_required", clarification_result)
                     return
                 status = "blocked" if exc.status_code == 403 else "failed"
                 event_name = "blocked" if exc.status_code == 403 else "error"
