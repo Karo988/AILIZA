@@ -240,14 +240,6 @@ _APPROVAL_CHECK_FAILED_MESSAGE = (
     "Diese Anfrage konnte nicht sicher geprüft werden und wird deshalb "
     "nicht zur Freigabe gespeichert. Bitte versuchen Sie es erneut."
 )
-_APPROVAL_SPECIAL_CATEGORY_BLOCKED_MESSAGE = (
-    "Diese Aktion enthält besonders schutzbedürftige Informationen und "
-    "kann über diesen allgemeinen Freigabepfad derzeit nicht sicher "
-    "gespeichert werden. Bitte verwenden Sie den dafür vorgesehenen "
-    "geschützten Fachprozess oder lassen Sie die Aktion durch eine "
-    "berechtigte Person prüfen."
-)
-
 
 def _pruefe_textfragment(text: str, ergebnis: dict[str, bool]) -> None:
     """Kernpruefung EINES Textfragments (String-Wert oder String-Schluessel)
@@ -385,19 +377,18 @@ def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageE
         stille Fehlausfuehrung mit vermeintlichem Erfolg -- schlimmer als
         eine klare Ablehnung mit verstaendlichem naechsten Schritt.
 
-      * Eine erkannte besondere Kategorie (Art. 9/10 DSGVO) fuehrt in
-        DIESEM generischen Pfad ebenfalls zur Ablehnung -- aber aus einem
-        anderen Grund als beim Geheimnis: request_approval_if_needed()
-        besitzt hier keinen belastbaren Tenant-/Owner-Kontext
-        (create_approval_request() faellt auf Default-Tenant und
-        owner_user_id=None zurueck, siehe Betreiber-Freigabe zur
-        Phase-1-Finalisierung). Eine rohe Persistenz besonders
-        schutzbeduerftiger Inhalte ohne verlaessliche Zugriffsbindung waere
-        unkontrolliert. Das ist AUSDRUECKLICH keine generelle Aussage --
-        besondere Kategorien sind in autorisierten, tenant-/ownergebundenen
-        internen Geschaeftsspeichern nicht grundsaetzlich verboten. Sobald
-        dieser Pfad einen belastbaren Kontext erhaelt, ist diese Regel neu
-        zu bewerten (separates Arbeitspaket, nicht Teil dieser Aenderung).
+      * Eine erkannte besondere Kategorie (Art. 9/10 DSGVO) wird NICHT
+        blockiert. Betreiber-Korrektur nach einer ersten Fassung, die hier
+        einen Hardblock einfuehrte: interne Verarbeitung ist kein Egress.
+        prepare_for_approval_storage() entscheidet ausschliesslich ueber
+        einen INTERNEN technischen Ausfuehrungsspeicher -- ob ein Inhalt
+        anschliessend an einen externen Provider/Dritten gehen darf, ist
+        eine eigene, spaeter an der tatsaechlichen Egress-Entscheidung zu
+        treffende Frage (eigenes Arbeitspaket: Responsibility Handoff bei
+        nicht automatisch freigegebenem Egress). Besondere Kategorien
+        werden hier nur markiert (special_category_erkannt=True) und
+        auditiert, damit die Persistenz nicht unkontrolliert -- also
+        unsichtbar -- erfolgt.
 
     Rueckgabe: ApprovalStorageEntscheidung. Bei erlaubt=False darf KEIN
     approval_requests-Datensatz angelegt werden.
@@ -432,19 +423,13 @@ def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageE
             ),
         )
 
-    if ergebnis.get("special_category"):
-        return ApprovalStorageEntscheidung(
-            erlaubt=False,
-            parameter={},
-            special_category_erkannt=True,
-            ablehnungsgrund="special_category_no_binding_context",
-            nutzerhinweis=_APPROVAL_SPECIAL_CATEGORY_BLOCKED_MESSAGE,
-        )
-
+    # Special Category blockiert hier NICHT -- interne Verarbeitung ist
+    # kein Egress (Betreiber-Korrektur). Sie wird lediglich markiert, damit
+    # eine spaetere Egress-Entscheidung sie erkennen kann.
     return ApprovalStorageEntscheidung(
         erlaubt=True,
         parameter=parameters,
-        special_category_erkannt=False,
+        special_category_erkannt=bool(ergebnis.get("special_category")),
         ablehnungsgrund=None,
         nutzerhinweis=None,
     )

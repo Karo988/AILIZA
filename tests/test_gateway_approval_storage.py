@@ -96,26 +96,17 @@ def test_secret_als_dict_schluessel_wird_erkannt():
     assert entscheidung.erlaubt is False
 
 
-def test_special_category_wird_im_generischen_pfad_blockiert():
-    """Finalisierung: solange dieser generische Approval-Pfad keinen
-    belastbaren Tenant-/Owner-Kontext besitzt, wird eine besondere
-    Kategorie nicht roh persistiert -- weder gelöscht noch verändert
-    ausgeführt, sondern die Freigabeanfrage gar nicht erst angelegt.
-
-    Wichtig: das ist KEINE generelle Aussage, dass AILIZA besondere
-    Kategorien nie intern speichern darf -- nur für diesen konkreten,
-    ownerlosen technischen Speicher."""
+def test_echte_special_category_bleibt_intern_erlaubt_aber_markiert():
+    """Betreiber-Korrektur: interne Verarbeitung ist kein Egress.
+    prepare_for_approval_storage() entscheidet nur über einen internen
+    technischen Speicher -- eine besondere Kategorie wird deshalb NICHT
+    blockiert, nur klassifiziert/markiert, damit eine spätere
+    Egress-Entscheidung sie erkennen kann."""
     entscheidung = prepare_for_approval_storage({"notiz": GESUNDHEIT})
-    assert entscheidung.erlaubt is False
-    assert entscheidung.parameter == {}
+    assert entscheidung.erlaubt is True
+    assert entscheidung.parameter == {"notiz": GESUNDHEIT}
     assert entscheidung.special_category_erkannt is True
-    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
-
-
-def test_special_category_nutzerhinweis_ohne_rohinhalt():
-    entscheidung = prepare_for_approval_storage({"notiz": GESUNDHEIT})
-    assert GESUNDHEIT not in (entscheidung.nutzerhinweis or "")
-    assert entscheidung.nutzerhinweis, "Nutzerin muss einen verständlichen Hinweis erhalten"
+    assert entscheidung.ablehnungsgrund is None
 
 
 def test_secret_gewinnt_vor_special_category_in_der_diagnose():
@@ -205,29 +196,27 @@ def test_audit_bei_ablehnung_enthaelt_kein_secret(monkeypatch):
     assert GEHEIM not in als_text
 
 
-def test_special_category_kein_approval_datensatz_wird_angelegt(monkeypatch):
-    """Finalisierung: kein create_approval_request()-Aufruf, wenn eine
-    besondere Kategorie ohne belastbaren Tenant-/Owner-Kontext erkannt
-    wird -- analog zum bestehenden Secret-Verhalten."""
-    aufgerufen = {"create": False}
+def test_special_category_approval_datensatz_wird_angelegt(monkeypatch):
+    """Betreiber-Korrektur: eine besondere Kategorie blockiert die interne
+    Speicherung nicht -- create_approval_request() wird ganz normal
+    aufgerufen, wie bei jedem anderen erlaubten Parameter."""
+    gespeichert = {}
 
     def _fake_create(**kwargs):
-        aufgerufen["create"] = True
+        gespeichert.update(kwargs)
         return {"id": 1, **kwargs}
 
     monkeypatch.setattr(rg, "write_audit_entry", lambda **kw: {})
     monkeypatch.setattr(rg, "create_approval_request", _fake_create)
 
-    with pytest.raises(HTTPException) as exc:
-        rg.request_approval_if_needed("custom_action", {"notiz": GESUNDHEIT})
+    ergebnis = rg.request_approval_if_needed("custom_action", {"notiz": GESUNDHEIT})
 
-    assert exc.value.status_code == 422
-    assert aufgerufen["create"] is False, (
-        "Trotz erkannter besonderer Kategorie wurde ein Approval-Datensatz angelegt"
-    )
+    assert ergebnis["status"] == "pending"
+    assert gespeichert["input_params"] == {"notiz": GESUNDHEIT}
 
 
-def test_audit_bei_special_category_ablehnung_enthaelt_keinen_rohinhalt(monkeypatch):
+def test_audit_markiert_special_category_ohne_rohinhalt(monkeypatch):
+    """Audit enthält nur das Klassifikationssignal, keine Rohdaten."""
     audit_eintraege = []
 
     monkeypatch.setattr(
@@ -236,11 +225,10 @@ def test_audit_bei_special_category_ablehnung_enthaelt_keinen_rohinhalt(monkeypa
     )
     monkeypatch.setattr(rg, "create_approval_request", lambda **kw: {"id": 1, **kw})
 
-    with pytest.raises(HTTPException):
-        rg.request_approval_if_needed("custom_action", {"notiz": GESUNDHEIT})
+    rg.request_approval_if_needed("custom_action", {"notiz": GESUNDHEIT})
 
-    blockiert = next(e for e in audit_eintraege if e["action"] == "approval.storage_blocked")
-    assert blockiert["metadata"]["reason"] == "special_category_no_binding_context"
+    requested = next(e for e in audit_eintraege if e["action"] == "approval.requested")
+    assert requested["metadata"]["special_category_detected"] is True
     assert GESUNDHEIT not in json.dumps(audit_eintraege, ensure_ascii=False)
 
 
@@ -333,24 +321,27 @@ def test_nur_kanonischer_gewerkschaftsmarker_bleibt_erlaubt():
     assert entscheidung.erlaubt is True
 
 
-def test_kanonischer_marker_plus_echte_special_category_bleibt_blockiert():
+def test_kanonischer_marker_plus_echte_special_category_bleibt_erlaubt_und_markiert():
     """3. Der Marker allein neutralisiert nur sich selbst -- echter
-    Restinhalt bleibt vollständig prüfbar."""
+    Restinhalt bleibt vollständig prüfbar (weiterhin als special_category
+    erkannt), blockiert aber intern nicht mehr."""
     entscheidung = prepare_for_approval_storage(
         {"query": f"{_GESUNDHEITS_MARKER} Patient hat ausserdem HIV."}
     )
-    assert entscheidung.erlaubt is False
-    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
+    assert entscheidung.erlaubt is True
+    assert entscheidung.special_category_erkannt is True
 
 
-def test_unbekannter_erfundener_marker_bleibt_blockiert():
+def test_unbekannter_erfundener_marker_bleibt_erkennbar():
     """4. Ein Marker, der so nie von RedactionEngineV2 erzeugt wird, gilt
-    nicht automatisch als vertrauenswürdig -- keine Wildcard-Ausnahme."""
+    nicht automatisch als vertrauenswürdig -- keine Wildcard-Ausnahme.
+    Blockiert intern nicht mehr, wird aber weiterhin als special_category
+    erkannt (kein stiller False Negative)."""
     entscheidung = prepare_for_approval_storage(
         {"query": "[GESCHWAERZT: HIV - Art. 9 DSGVO]"}
     )
-    assert entscheidung.erlaubt is False
-    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
+    assert entscheidung.erlaubt is True
+    assert entscheidung.special_category_erkannt is True
 
 
 def test_secret_neben_manipuliertem_marker_bleibt_blockiert():
@@ -372,11 +363,13 @@ def test_secret_im_kanonischen_markerkontext_bleibt_blockiert():
     assert entscheidung.ablehnungsgrund == "secret_detected"
 
 
-def test_special_category_im_dict_key_bleibt_blockiert():
-    """6. Derselbe Textfragment-Scanner gilt für Schlüssel und Werte."""
+def test_special_category_im_dict_key_bleibt_erkennbar():
+    """6. Derselbe Textfragment-Scanner gilt für Schlüssel und Werte --
+    erkennt, blockiert aber nicht mehr."""
     entscheidung = prepare_for_approval_storage({"HIV": True})
-    assert entscheidung.erlaubt is False
-    assert entscheidung.ablehnungsgrund == "special_category_no_binding_context"
+    assert entscheidung.erlaubt is True
+    assert entscheidung.special_category_erkannt is True
+    assert entscheidung.parameter == {"HIV": True}
 
 
 def test_gewoehnliche_pii_bleibt_nach_finalisierung_erlaubt():
