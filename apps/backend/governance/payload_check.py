@@ -16,6 +16,7 @@ Dateiendung.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import re
@@ -217,6 +218,149 @@ def pruefe_nutzlast(
     # ein Fehler -- und wird nicht ungeprueft durchgereicht.
     zaehler["gesperrte_felder"] = zaehler.get("gesperrte_felder", 0) + 1
     return FELD_ZURUECKGEHALTEN
+
+
+@dataclass
+class ApprovalStorageEntscheidung:
+    """Ergebnis von prepare_for_approval_storage() -- siehe dort."""
+
+    erlaubt: bool
+    parameter: dict[str, Any]
+    special_category_erkannt: bool
+    ablehnungsgrund: str | None
+    nutzerhinweis: str | None
+
+
+_APPROVAL_SECRET_BLOCKED_MESSAGE = (
+    "Diese Aktion kann nicht zur Freigabe gespeichert werden, weil die "
+    "Parameter Zugangsdaten enthalten. Bitte entfernen Sie das Geheimnis "
+    "aus der Anfrage und versuchen Sie es erneut."
+)
+_APPROVAL_CHECK_FAILED_MESSAGE = (
+    "Diese Anfrage konnte nicht sicher geprüft werden und wird deshalb "
+    "nicht zur Freigabe gespeichert. Bitte versuchen Sie es erneut."
+)
+
+
+def _scanne_tool_parameter(wert: Any, ergebnis: dict[str, bool], tiefe: int = 0) -> None:
+    """Klassifiziert Tool-Parameter LESEND -- ohne sie zu veraendern.
+
+    Anders als pruefe_nutzlast() (die einen bereinigten Wert zurueckgibt)
+    darf diese Funktion die Werte nicht umschreiben: Tool-Parameter werden
+    spaeter unveraendert zur Ausfuehrung gebraucht, ein Platzhaltersystem
+    wie bei Text-Antworten existiert dafuer nicht. Sie meldet nur, OB ein
+    Geheimnis-Muster oder eine besondere Kategorie vorkommt.
+    """
+    if tiefe > MAX_NUTZLAST_TIEFE:
+        ergebnis["nicht_bewertbar"] = True
+        return
+
+    if isinstance(wert, str):
+        if not wert:
+            return
+        _, geheimnis_muster = strip_secrets_with_placeholder(wert)
+        klassifikation = classify(wert)
+        klassen = set(getattr(klassifikation, "data_classes", []) or [])
+        if geheimnis_muster or DataClass.CREDENTIALS in klassen:
+            ergebnis["secret"] = True
+        if DataClass.SPECIAL_CATEGORY in klassen:
+            ergebnis["special_category"] = True
+        return
+
+    if isinstance(wert, dict):
+        for schluessel, unterwert in wert.items():
+            if isinstance(schluessel, str) and schluessel:
+                _, schluessel_geheimnis = strip_secrets_with_placeholder(schluessel)
+                if schluessel_geheimnis:
+                    ergebnis["secret"] = True
+            _scanne_tool_parameter(unterwert, ergebnis, tiefe + 1)
+        return
+
+    if isinstance(wert, (list, tuple)):
+        for element in wert:
+            _scanne_tool_parameter(element, ergebnis, tiefe + 1)
+        return
+
+    if wert is None or isinstance(wert, (bool, int, float)):
+        # Kein Textinhalt -- nichts, worin ein Geheimnis oder eine
+        # besondere Kategorie stehen koennte.
+        return
+
+    # Unbekannter Typ (z.B. bytes): nicht sicher als "kein Geheimnis"
+    # einstufbar. Sicherheitsreview-Fund: die erste Fassung liess einen
+    # nicht behandelten Typ stillschweigend als unauffaellig durch. Fail-
+    # closed statt zu raten.
+    ergebnis["nicht_bewertbar"] = True
+
+
+def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageEntscheidung:
+    """Klassifiziert Tool-Parameter vor der Persistenz in approval_requests.
+
+    approval_requests.input_params ist technischer Ausfuehrungsspeicher:
+    execute_approved_tool() liest genau diese Werte spaeter zur tatsaechlichen
+    Ausfuehrung der genehmigten Aktion. Deshalb gilt hier eine andere Policy
+    als bei einer Provider-Antwort oder einem Laufergebnis:
+
+      * Operative Geschaeftsdaten und gewoehnliche personenbezogene Daten
+        bleiben UNVERAENDERT. Eine Wiedereinsetzung wie bei Text-Antworten
+        ist hier nicht moeglich -- es gibt kein Platzhaltersystem fuer
+        Tool-Parameter. Ein veraenderter Wert wuerde spaeter eine andere,
+        nicht die genehmigte Aktion ausfuehren.
+
+      * Ein erkanntes Geheimnis fuehrt zur SOFORTIGEN Ablehnung der
+        Freigabeanfrage -- nicht zur stillen Entfernung. Im Repository
+        existiert kein sicherer Credential-/Referenz-Speicher (geprueft:
+        `routers/vault.py`/`audit/vault.py` sind ein Audit-Hashkettenspeicher,
+        kein Secret-Store). Ohne einen solchen Speicher gibt es keine
+        Moeglichkeit, den echten Wert bei der spaeteren Ausfuehrung wieder
+        bereitzustellen; eine Ausfuehrung mit einem Platzhalter waere eine
+        stille Fehlausfuehrung mit vermeintlichem Erfolg -- schlimmer als
+        eine klare Ablehnung mit verstaendlichem naechsten Schritt.
+
+      * Eine erkannte besondere Kategorie (Art. 9/10 DSGVO) wird NICHT
+        blockiert. Solche Inhalte sind in normalen Geschaeftsvorgaengen
+        nicht grundsaetzlich verboten (z.B. eine Support-Suche zu einer
+        Diagnose). Sie wird aber ausdruecklich markiert und auditiert,
+        damit die Persistenz nicht unkontrolliert -- also unsichtbar --
+        erfolgt.
+
+    Rueckgabe: ApprovalStorageEntscheidung. Bei erlaubt=False darf KEIN
+    approval_requests-Datensatz angelegt werden.
+    """
+    ergebnis: dict[str, bool] = {}
+    try:
+        _scanne_tool_parameter(parameters, ergebnis)
+    except Exception:
+        # Fail-closed: eine nicht bewertbare Nutzlast wird wie ein
+        # Geheimnis-Fund behandelt, nicht stillschweigend gespeichert.
+        return ApprovalStorageEntscheidung(
+            erlaubt=False,
+            parameter={},
+            special_category_erkannt=False,
+            ablehnungsgrund="check_failed",
+            nutzerhinweis=_APPROVAL_CHECK_FAILED_MESSAGE,
+        )
+
+    if ergebnis.get("secret") or ergebnis.get("nicht_bewertbar"):
+        return ApprovalStorageEntscheidung(
+            erlaubt=False,
+            parameter={},
+            special_category_erkannt=False,
+            ablehnungsgrund="secret_detected" if ergebnis.get("secret") else "check_failed",
+            nutzerhinweis=(
+                _APPROVAL_SECRET_BLOCKED_MESSAGE
+                if ergebnis.get("secret")
+                else _APPROVAL_CHECK_FAILED_MESSAGE
+            ),
+        )
+
+    return ApprovalStorageEntscheidung(
+        erlaubt=True,
+        parameter=parameters,
+        special_category_erkannt=bool(ergebnis.get("special_category")),
+        ablehnungsgrund=None,
+        nutzerhinweis=None,
+    )
 
 
 def sichere_fassung_fuer_speicherung(wert: Any) -> Any:
