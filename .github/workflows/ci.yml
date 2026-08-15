@@ -39,6 +39,70 @@ jobs:
       # - name: Tests (Backend, verwaist -- vorerst deaktiviert)
       #   run: PYTHONPATH=. pytest apps/backend/tests/ -v --tb=short
 
+  # Eigener Job statt Erweiterung des "test"-Jobs: der Postgres-Read-only-
+  # Nachweis (Gate 1) braucht einen isolierten PostgreSQL-Service, den der
+  # bestehende SQLite-Job nicht hat. Getrennter Job haelt den Standard-
+  # Testlauf unveraendert schnell/einfach und macht einen Postgres-
+  # Infrastrukturfehler klar vom eigentlichen Testergebnis unterscheidbar.
+  postgres-audit:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        # Nur temporaere, rein CI-lokale Zugangsdaten -- kein Repository-
+        # Secret, keine Render-/Neon-Verbindung. Der Container existiert
+        # ausschliesslich fuer die Laufzeit dieses Jobs.
+        env:
+          POSTGRES_USER: ailiza_ci
+          POSTGRES_PASSWORD: ailiza_ci_ephemeral_test_only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      AILIZA_DATABASE_URL: "sqlite:///:memory:"
+      AILIZA_EXTERNAL_LLM_ENABLED: "false"
+      AILIZA_DEFAULT_TENANT_ID: default
+      AILIZA_SECRET_KEY: ci-postgres-audit-secret-key-not-for-production
+      # Zeigt AUSSCHLIESSLICH auf den isolierten CI-Service oben --
+      # niemals auf Render/Neon oder eine andere echte Datenbank. Die
+      # damit getesteten Tests (tests/test_memory_audit_cli.py, Praefix
+      # test_postgres_) legen und loeschen ihre eigenen, pro Testfall
+      # frischen Datenbanken ueber diese Admin-Verbindung.
+      AILIZA_TEST_POSTGRES_ADMIN_URL: "postgresql+psycopg://ailiza_ci:ailiza_ci_ephemeral_test_only@localhost:5432/postgres"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements-core.txt
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r apps/backend/requirements-core.txt pytest pytest-asyncio httpx bcrypt pyotp python-jose[cryptography]
+
+      - name: PostgreSQL-Audit-Tests (verpflichtend -- dürfen NICHT übersprungen werden)
+        run: |
+          set -o pipefail
+          pytest tests/test_memory_audit_cli.py -k postgres -v --tb=short | tee /tmp/pg_audit_output.txt
+          if grep -q "skipped" /tmp/pg_audit_output.txt; then
+            echo "FEHLER: PostgreSQL-Audit-Tests wurden übersprungen -- in diesem Job nicht zulässig (AILIZA_TEST_POSTGRES_ADMIN_URL fehlt oder Service nicht erreichbar)."
+            exit 1
+          fi
+          if ! grep -q "3 passed" /tmp/pg_audit_output.txt; then
+            echo "FEHLER: Erwartet genau 3 bestandene PostgreSQL-Audit-Tests."
+            exit 1
+          fi
+
   # Eigener Job statt zusaetzlicher Schritt im bestehenden "test"-Job: ein
   # Browser- oder Server-Startfehler im E2E-Lauf soll das Python-Testergebnis
   # nicht unuebersichtlich machen (getrennte, klar zuordenbare CI-Ergebnisse).

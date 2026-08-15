@@ -658,17 +658,36 @@ def _fresh_postgres_database(name: str):
 
 
 def _pg_init_schema(db_url: str) -> None:
+    """Erzeugt das Testschema AUSSCHLIESSLICH ueber `alembic upgrade head`
+    -- kein Ersatzweg. Render/Neon wird in der Praxis ausschliesslich per
+    Migration aufgesetzt, nie per `init_db()`/`create_all()`; ein Fallback
+    auf die SQLAlchemy-Metadata-Variante wuerde bei einem echten Alembic-
+    Fehler (z.B. einer defekten Migration) stillschweigend ein anderes,
+    nicht repraesentatives Schema erzeugen und den eigentlichen Fehler
+    verdecken, statt den Test fehlschlagen zu lassen. Scheitert Alembic,
+    schlaegt dieser Aufruf deshalb sofort fehl (AssertionError) -- kein
+    automatischer Rueckfall auf init_db()/create_all()/
+    ensure_sqlite_schema().
+
+    Die Fehlermeldung enthaelt bewusst NICHT die volle stderr-Ausgabe
+    (koennte die Datenbank-URL/Zugangsdaten aus der Alembic-Log-Ausgabe
+    enthalten), sondern nur den Exit-Code und die letzten Codezeilen."""
     env = dict(os.environ)
     env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
     env["AILIZA_DATABASE_URL"] = db_url
     env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
-    setup = f"""
-import sys
-sys.path.insert(0, {str(REPO_ROOT)!r})
-from apps.backend.database import init_db
-init_db()
-"""
-    subprocess.run([sys.executable, "-c", setup], env=env, capture_output=True, text=True, check=True, timeout=60)
+
+    alembic_result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=REPO_ROOT / "apps" / "backend", env=env,
+        capture_output=True, text=True, timeout=120,
+    )
+    assert alembic_result.returncode == 0, (
+        f"alembic upgrade head fehlgeschlagen (Exit {alembic_result.returncode}) "
+        "-- kein Fallback auf init_db(). Siehe CI-Logausgabe von "
+        "'alembic upgrade head' fuer Details (dort ggf. Verbindungsdetails "
+        "sichtbar, deshalb hier nicht wiederholt)."
+    )
 
 
 @pg_only
