@@ -177,7 +177,7 @@ def test_agent_run_includes_knowledge_context_in_llm_task(client, monkeypatch):
     h = _auth("alice")
     captured: dict[str, str] = {}
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         captured["task"] = task
         return f"Laut [Quelle 1] sind es 30 Tage.", None, {}
 
@@ -205,7 +205,7 @@ def test_agent_run_normal_chat_without_hits_has_no_hint(client, monkeypatch):
     create_user(user_id="alice", tenant_id="default", role="user", hashed_password="hash")
     h = _auth("alice")
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Das Wetter ist heute sonnig.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
@@ -232,7 +232,7 @@ def test_agent_run_search_failure_does_not_break_chat(client, monkeypatch):
 
     monkeypatch.setattr(main_module, "build_knowledge_context", _boom)
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Normale Antwort trotz kaputter Suche.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
@@ -249,7 +249,7 @@ def test_agent_run_search_failure_does_not_break_chat(client, monkeypatch):
 def test_agent_run_without_token_skips_knowledge_context(client, monkeypatch):
     import apps.backend.main as main_module
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Anonyme Antwort.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)

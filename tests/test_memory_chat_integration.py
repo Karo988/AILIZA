@@ -173,7 +173,7 @@ def test_agent_run_creates_suggestion_without_blocking_answer(client, monkeypatc
     _make_user_with_settings("alice")
     h = _auth("alice")
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Verstanden, notiert.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)

@@ -320,7 +320,7 @@ def _erzwinge_dritten_pfad(monkeypatch, llm_antwort: str):
     monkeypatch.setattr(main_module, "AgentRuntime", _FakeRuntimeOhneTools)
     monkeypatch.setattr(
         main_module, "_ask_llm_directly",
-        lambda task, history=None: (llm_antwort, None, {}),
+        lambda task, history=None, **kw: (llm_antwort, None, {}),
     )
     return aufgabe
 
@@ -392,7 +392,7 @@ def test_wiring_first_call_site_blocks_model_generated_secret(client, monkeypatc
     geheim = "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD"
     monkeypatch.setattr(
         main_module, "_ask_llm_directly",
-        lambda task, history=None: (f"Gerne: {geheim}", None, {}),
+        lambda task, history=None, **kw: (f"Gerne: {geheim}", None, {}),
     )
 
     resp = client.post(
