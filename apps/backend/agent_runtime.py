@@ -86,6 +86,20 @@ def _is_clarification_required_error(exc: HTTPException) -> bool:
     return isinstance(exc.detail, dict) and exc.detail.get("reason") == "clarification_required"
 
 
+def _is_credential_input_blocked_error(exc: HTTPException) -> bool:
+    """Erkennt EXAKT den `credential_input_blocked`-Fall (erkanntes Secret).
+
+    Betreiber-Freigabe "OK Secret-UX-Finalisierung": ein Secret in den
+    Tool-Parametern darf nur diesen einen Schritt zurueckhalten, nicht den
+    gesamten Lauf abbrechen. Anders als `clarification_required` ist dieser
+    Zustand NICHT technisch fortsetzbar (kein sicherer Credential-Kanal
+    vorhanden) -- der Lauf endet kontrolliert, bereits erzeugte Schritte
+    bleiben erhalten. Erkennung ausschliesslich ueber das strukturierte
+    `detail`, keine Textphrasen-Heuristik.
+    """
+    return isinstance(exc.detail, dict) and exc.detail.get("reason") == "credential_input_blocked"
+
+
 def _is_research_task(task: str) -> bool:
     lower = task.lower()
     return any(kw in lower for kw in _RESEARCH_KEYWORDS)
@@ -368,6 +382,35 @@ class AgentRuntime:
                         {"run_id": run_id, "step": index, "tool": call.tool},
                     )
                     return clarification_result
+                if _is_credential_input_blocked_error(exc):
+                    # Betreiber-Freigabe "OK Secret-UX-Finalisierung": ein
+                    # erkanntes Secret blockiert nur diesen Schritt, nicht
+                    # den gesamten Lauf. Anders als clarification_required
+                    # ist dieser Zustand NICHT fortsetzbar -- kein sicherer
+                    # Credential-Kanal vorhanden. Der Lauf endet kontrolliert,
+                    # bereits erzeugte Schritte bleiben erhalten. Das Secret
+                    # selbst steht nirgends in message/steps/results/Audit.
+                    hinweis = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    credential_result = {
+                        "run_id": run_id,
+                        "status": "credential_input_blocked",
+                        "message": hinweis,
+                        "next_action": "remove_credentials_and_retry",
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="credential_input_blocked", result=credential_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.credential_input_blocked",
+                        {"run_id": run_id, "step": index, "tool": call.tool},
+                    )
+                    return credential_result
                 status = "blocked" if exc.status_code == 403 else "failed"
                 self.update_run_record(
                     run_id,
@@ -635,6 +678,33 @@ class AgentRuntime:
                         {"run_id": run_id, "step": index, "tool": call.tool, "streaming": True},
                     )
                     yield stream_event("clarification_required", clarification_result)
+                    return
+                if _is_credential_input_blocked_error(exc):
+                    # Betreiber-Freigabe "OK Secret-UX-Finalisierung": siehe
+                    # Kommentar im analogen run()-Zweig oben. Kein sicherer
+                    # Credential-Kanal vorhanden -- Lauf endet kontrolliert,
+                    # bereits erzeugte Schritte bleiben im Ergebnis.
+                    hinweis = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    credential_result = {
+                        "run_id": run_id,
+                        "status": "credential_input_blocked",
+                        "message": hinweis,
+                        "next_action": "remove_credentials_and_retry",
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="credential_input_blocked", result=credential_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.credential_input_blocked",
+                        {"run_id": run_id, "step": index, "tool": call.tool, "streaming": True},
+                    )
+                    yield stream_event("credential_input_blocked", credential_result)
                     return
                 status = "blocked" if exc.status_code == 403 else "failed"
                 event_name = "blocked" if exc.status_code == 403 else "error"

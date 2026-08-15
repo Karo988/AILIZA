@@ -159,6 +159,12 @@ def test_request_approval_lehnt_secret_ab_ohne_zu_speichern(monkeypatch):
     assert aufgerufen["create"] is False, (
         "Trotz erkanntem Geheimnis wurde ein Approval-Datensatz angelegt"
     )
+    # Betreiber-Freigabe "OK Secret-UX-Finalisierung": strukturiertes detail
+    # statt reinem Text, damit agent_runtime.py den Fall maschinenlesbar von
+    # anderen 422-Fehlern unterscheiden kann (analog clarification_required).
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("reason") == "credential_input_blocked"
+    assert GEHEIM not in exc.value.detail.get("message", "")
 
 
 def test_request_approval_speichert_operative_daten_normal(monkeypatch):

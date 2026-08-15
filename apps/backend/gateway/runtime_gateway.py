@@ -88,6 +88,18 @@ def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> di
                     "message": entscheidung.nutzerhinweis,
                 },
             )
+        if entscheidung.ablehnungsgrund == "secret_detected":
+            # Analog zu clarification_required, aber semantisch getrennt
+            # (Betreiber-Freigabe "OK Secret-UX-Finalisierung"): ein Secret
+            # blockiert nur diesen einen Schritt, nicht den gesamten Lauf.
+            # entscheidung.nutzerhinweis enthaelt nie den Secret-Wert selbst.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "reason": "credential_input_blocked",
+                    "message": entscheidung.nutzerhinweis,
+                },
+            )
         raise HTTPException(status_code=422, detail=entscheidung.nutzerhinweis)
 
     approval = create_approval_request(
