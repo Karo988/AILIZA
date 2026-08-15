@@ -1505,6 +1505,170 @@ def _governance_pre_check(
     return {"decision": "allow", "task": task}
 
 
+# Nutzertext fuer eine blockierte Ausgabe. Bewusst ohne Rohinhalt und ohne
+# "Trotzdem anzeigen"-Angebot: was hier greift, sind die nicht uebersteuerbaren
+# Faelle (Geheimnisse, Art.-9-Daten). Eine Freigabe waere hier keine
+# Nutzerentscheidung, sondern ein Sicherheitsvorfall auf Knopfdruck.
+_OUTPUT_BLOCKED_MESSAGE = (
+    "Die Antwort wurde zurückgehalten, weil sie Zugangsdaten oder besonders "
+    "geschützte personenbezogene Daten enthält. Ihre Eingabe bleibt erhalten — "
+    "bitte formulieren Sie die Anfrage um, sodass solche Angaben nicht "
+    "benötigt werden."
+)
+
+
+def _governance_post_check(
+    answer: str | None,
+    reinsertion_map: dict[str, str],
+    tenant_id: str,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Rueckweg-Governance: pruefen, DANN wiedereinsetzen.
+
+    Bisher lief es umgekehrt: die Provider-Antwort ging direkt in reinsert()
+    und von dort in die Anzeige. Was das Modell selbst neu erzeugt hatte --
+    etwa einen ausgedachten API-Schluessel oder Gesundheitsdaten -- wurde nie
+    geprueft. Diese Funktion dreht die Reihenfolge um und ist der einzige
+    Ort, an dem eine Providerantwort fuer die Anzeige freigegeben wird.
+
+    Ablauf:
+      1. technische Pruefung (ueberhaupt eine verwertbare Antwort?)
+      2. Geheimnis-Pruefung auf der ROHEN Antwort -> immer entfernen
+      3. Klassifikation der ROHEN Antwort -> Art.-9-Daten blockieren
+      4. erst danach Wiedereinsetzung der bekannten Platzhalter
+      5. Audit ohne jeden Rohinhalt
+
+    Warum nicht jede neu erzeugte PII blockiert wird: Wer einen Kundenbrief
+    entwerfen laesst, bekommt zwangslaeufig Namen und Anschriften zurueck --
+    das ist das bestellte Arbeitsergebnis und geht an dieselbe Person, die
+    danach gefragt hat, nicht an Dritte. Ein Hartblock waere hier kein
+    Datenschutz, sondern eine unbrauchbare Anwendung. Blockiert wird
+    deshalb gezielt, was auch mit Zustimmung nicht hinausgehen darf:
+    Zugangsdaten und besondere Kategorien nach Art. 9 DSGVO. Gewoehnliche
+    personenbezogene Daten in der Antwort werden gezaehlt und auditiert,
+    aber angezeigt.
+
+    Rueckgabe:
+      decision: "pass" | "sanitized" | "blocked"
+      message:  anzuzeigender Text (bei "blocked" der Hinweistext)
+      notice:   optionaler Zusatzhinweis fuer die Nutzerin
+      fully_reinserted: ob alle Platzhalter aufgeloest werden konnten
+    """
+    # 1. Technische Pruefung -- fail-closed: eine unbrauchbare Antwort wird
+    #    nicht "irgendwie" weitergereicht.
+    if answer is None or not isinstance(answer, str) or not answer.strip():
+        return {
+            "decision": "blocked",
+            "message": "Es kam keine verwertbare Antwort zurück. Bitte erneut versuchen.",
+            "notice": None,
+            "fully_reinserted": True,
+            "reason": "empty_or_invalid",
+        }
+
+    secrets_found = False
+    special_category = False
+    try:
+        # 2. Geheimnisse: auf der ROHEN Antwort, vor jeder Wiedereinsetzung.
+        #    Ein vom Modell erzeugter oder aus dem Kontext wiederholter
+        #    Schluessel darf die Anzeige nie erreichen.
+        answer, secrets_found = strip_secrets_with_placeholder(answer)
+
+        # 3. Klassifikation der Modellantwort.
+        out_classification = classify(answer)
+        out_classes = set(getattr(out_classification, "data_classes", []) or [])
+        special_category = bool(
+            out_classes & {DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY}
+        )
+    except Exception:
+        # Fail-closed: schlaegt die Ausgangspruefung selbst fehl, wird NICHT
+        # die ungepruefte Rohantwort gezeigt.
+        logger.exception("Ausgangspruefung fehlgeschlagen -- Antwort wird zurueckgehalten.")
+        write_audit_entry(
+            action="governance.output_check_failed",
+            tenant_id=tenant_id,
+            metadata={"provider": provider, "model": model},
+        )
+        return {
+            "decision": "blocked",
+            "message": (
+                "Die Antwort konnte nicht sicher geprüft werden und wird "
+                "deshalb nicht angezeigt. Ihre Eingabe bleibt erhalten."
+            ),
+            "notice": None,
+            "fully_reinserted": True,
+            "reason": "check_failed",
+        }
+
+    if special_category:
+        write_audit_entry(
+            action="governance.output_blocked",
+            tenant_id=tenant_id,
+            metadata={
+                "reason": "special_category_or_credentials",
+                "provider": provider,
+                "model": model,
+            },
+        )
+        return {
+            "decision": "blocked",
+            "message": _OUTPUT_BLOCKED_MESSAGE,
+            "notice": None,
+            "fully_reinserted": True,
+            "reason": "special_category_or_credentials",
+        }
+
+    # 4. Erst jetzt wiedereinsetzen -- und nur ERLAUBTE Werte.
+    #    redact() nimmt Geheimnisse zwar gar nicht erst in die Abbildung auf
+    #    (dort nur Ersetzung durch [SECRET_REMOVED] ohne Map-Eintrag, belegt in
+    #    test_secrets_are_never_in_reinsertion_map). Darauf allein zu bauen
+    #    waere aber zu knapp: Schritt 2 entfernt Geheimnisse aus der Antwort,
+    #    und eine Abbildung mit Geheimnis wuerde sie hier direkt wieder
+    #    hineinschreiben -- die Entfernung waere wirkungslos. Deshalb wird
+    #    jeder Wert vor dem Einsetzen geprueft; auffaellige bleiben als
+    #    Platzhalter stehen.
+    fully_reinserted = True
+    blocked_values = 0
+    if reinsertion_map:
+        erlaubte_map: dict[str, str] = {}
+        for platzhalter, wert in reinsertion_map.items():
+            _, wert_enthaelt_secret = strip_secrets_with_placeholder(wert)
+            if wert_enthaelt_secret:
+                blocked_values += 1
+                continue
+            erlaubte_map[platzhalter] = wert
+        answer, fully_reinserted = reinsert(answer, erlaubte_map)
+        if blocked_values:
+            fully_reinserted = False
+
+    notice = None
+    if not fully_reinserted:
+        notice = "Originaldaten konnten nicht vollständig automatisch eingesetzt werden."
+
+    # 5. Audit: nur Entscheidung und Kennzahlen, niemals Inhalt.
+    write_audit_entry(
+        action="governance.output_checked",
+        tenant_id=tenant_id,
+        metadata={
+            "decision": "sanitized" if (secrets_found or blocked_values) else "pass",
+            "secrets_removed": secrets_found,
+            "blocked_reinsertion_values": blocked_values,
+            "reinsertion_used": bool(reinsertion_map),
+            "fully_reinserted": fully_reinserted,
+            "provider": provider,
+            "model": model,
+        },
+    )
+
+    return {
+        "decision": "sanitized" if (secrets_found or blocked_values) else "pass",
+        "message": answer,
+        "notice": notice,
+        "fully_reinserted": fully_reinserted,
+        "reason": None,
+    }
+
+
 def _summarize_with_llm(task: str, search_text: str, context: Any = None) -> tuple[str | None, str | None]:
     """
     Fasst ein Suchergebnis ueber den Provider-Orchestrator zusammen.
@@ -2167,10 +2331,20 @@ def _run_agent_core(
             flush=True,
         )
         if answer is not None:
-            if reinsertion_map:
-                answer, fully = reinsert(answer, reinsertion_map)
-                if not fully:
-                    pass  # partial reinsertion — kein Block, nur Statistik
+            # Ausgangspruefung VOR der Wiedereinsetzung (Paket D).
+            _out = _governance_post_check(
+                answer, reinsertion_map, tenant_id=tenant,
+                provider=_used_provider, model=_used_model,
+            )
+            if _out["decision"] == "blocked":
+                return {
+                    "status": "output_blocked",
+                    "message": _out["message"],
+                    "ai_response": _out["message"],
+                    "steps": [],
+                    "results": [],
+                }
+            answer = _out["message"]
             final = {
                 "status": "draft" if governance_is_draft else "completed",
                 "message": answer,
@@ -2246,21 +2420,20 @@ def _run_agent_core(
     if result.get("status") in ("local_only", "degraded"):
         answer, error_code, provider_errors = _ask_llm_directly(effective_task)
         if answer is not None:
+            # Ausgangspruefung VOR der Wiedereinsetzung (Paket D).
+            _out = _governance_post_check(answer, reinsertion_map, tenant_id=tenant)
+            if _out["decision"] == "blocked":
+                return {
+                    "status": "output_blocked",
+                    "message": _out["message"],
+                    "ai_response": _out["message"],
+                    "steps": [],
+                    "results": [],
+                }
             result["status"] = "completed"
-            result["message"] = answer
-            # PII-Reinsertion auch hier anwenden
-            if reinsertion_map:
-                reinserted, fully = reinsert(answer, reinsertion_map)
-                result["message"] = reinserted
-                if not fully:
-                    result["reinsertion_notice"] = (
-                        "Originaldaten konnten nicht vollständig automatisch eingesetzt werden."
-                    )
-                write_audit_entry(
-                    action="governance.reinsertion_applied",
-                    tenant_id=tenant,
-                    metadata={"reinsertion_used": True, "fully_reinserted": fully},
-                )
+            result["message"] = _out["message"]
+            if _out["notice"]:
+                result["reinsertion_notice"] = _out["notice"]
             result["ai_response"] = result["message"]
             result["tenant_id"] = tenant
             if pii_detected:
@@ -2311,23 +2484,41 @@ def _run_agent_core(
             if provider_errors:
                 result["provider_errors"] = provider_errors
 
-    # PII-Reinsertion: Originalwerte lokal wieder einsetzen (NUR RAM, nie loggen)
+    # Ausgangspruefung VOR der Wiedereinsetzung (Paket D). Frueher stand hier
+    # ein direkter reinsert()-Aufruf: die Providerantwort ging ungeprueft in
+    # die Anzeige, sobald sie ueber den Agenten-/Suchpfad kam.
+    #
+    # BEWUSST NICHT in "if reinsertion_map:" gekapselt. Der erste Entwurf
+    # dieser Aenderung hatte genau das -- mit der Folge, dass die Pruefung
+    # ausgerechnet dann ausfiel, wenn der Eingabetext gar keine PII enthielt
+    # (der haeufigste Fall). Uebrig blieb die ungeprueft angezeigte
+    # Rohantwort -- und damit genau die heikelsten Faelle ungeschuetzt: ein
+    # vom Modell halluzinierter Zugangsschluessel oder unaufgefordert
+    # ausgegebene Gesundheitsdaten haben mit der Eingabe nichts zu tun.
+    # Aufgedeckt im Sicherheitsreview, bevor etwas committet wurde.
+    #
+    # Bedingung ist jetzt "gibt es ueberhaupt eine Antwort", nicht "gab es PII
+    # in der Eingabe": eine leere Nachricht kann hier legitim vorkommen (z.B.
+    # lokaler Betrieb ohne Provider) und enthaelt nichts, was zu pruefen oder
+    # zu schuetzen waere -- sie darf deshalb nicht als "blockiert" gelten.
     reinsertion_used = False
-    if reinsertion_map:
-        current_message = result.get("message", "")
-        reinserted, fully_reinserted = reinsert(current_message, reinsertion_map)
-        result["message"] = reinserted
-        reinsertion_used = True
-        if not fully_reinserted:
-            result["reinsertion_notice"] = (
-                "Originaldaten konnten nicht vollständig automatisch eingesetzt werden."
-            )
-        write_audit_entry(
-            action="governance.reinsertion_applied",
-            tenant_id=tenant,
-            # Nur Statistik loggen — keine Originalwerte, kein Mapping-Inhalt
-            metadata={"reinsertion_used": True, "fully_reinserted": fully_reinserted},
+    _current_message = result.get("message", "")
+    if _current_message:
+        _out = _governance_post_check(
+            _current_message, reinsertion_map, tenant_id=tenant,
         )
+        if _out["decision"] == "blocked":
+            return {
+                "status": "output_blocked",
+                "message": _out["message"],
+                "ai_response": _out["message"],
+                "steps": [],
+                "results": [],
+            }
+        result["message"] = _out["message"]
+        reinsertion_used = bool(reinsertion_map)
+        if _out["notice"]:
+            result["reinsertion_notice"] = _out["notice"]
 
     # Governance Draft-Markierung übernehmen (HR/LEGAL/FINANCIAL nach Redaction)
     if governance_is_draft and result.get("status") not in ("draft", "blocked"):
