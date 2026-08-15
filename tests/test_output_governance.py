@@ -17,6 +17,7 @@ os.environ.setdefault("AILIZA_EXTERNAL_LLM_ENABLED", "false")
 
 import pytest
 
+import apps.backend.governance.payload_check as payload_check
 from apps.backend.main import _governance_post_check
 
 
@@ -128,7 +129,7 @@ def test_check_failure_blocks_instead_of_showing_raw_answer(monkeypatch):
     def _explodiert(*a, **kw):
         raise RuntimeError("Klassifikation kaputt")
 
-    monkeypatch.setattr(main_module, "classify", _explodiert)
+    monkeypatch.setattr(payload_check, "classify", _explodiert)
 
     geheim = "Die Diagnose lautet HIV-positiv."
     ergebnis = _governance_post_check(geheim, {}, tenant_id="default")
@@ -224,8 +225,8 @@ def test_check_runs_before_reinsertion(monkeypatch):
 
     ablauf: list[str] = []
 
-    original_classify = main_module.classify
-    original_reinsert = main_module.reinsert
+    original_classify = payload_check.classify
+    original_reinsert = payload_check.reinsert
 
     def spy_classify(text):
         ablauf.append("classify")
@@ -235,8 +236,8 @@ def test_check_runs_before_reinsertion(monkeypatch):
         ablauf.append("reinsert")
         return original_reinsert(text, mapping)
 
-    monkeypatch.setattr(main_module, "classify", spy_classify)
-    monkeypatch.setattr(main_module, "reinsert", spy_reinsert)
+    monkeypatch.setattr(payload_check, "classify", spy_classify)
+    monkeypatch.setattr(payload_check, "reinsert", spy_reinsert)
 
     _governance_post_check(
         "Hallo [NAME_1].", {"[NAME_1]": "Frau Müller"}, tenant_id="default",

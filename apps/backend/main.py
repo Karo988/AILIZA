@@ -33,7 +33,7 @@ try:
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_approval_request, consume_compliance_consent,
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
-        get_accessible_agent_run,
+        get_accessible_agent_run, get_approval_request,
     )
     from .permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from .gateway import guarded_tool_call
@@ -67,6 +67,13 @@ try:
     from .governance.redaction import redact, reinsert
     from .governance.data_matrix import check_data_target, PolicyDecision
     from .governance.send_preview import PreviewRejected, send_preview_store
+    from .governance import payload_check as _payload_check
+    from .governance.payload_check import (
+        erlaubte_reinsertion_map, pruefe_texteinheit, pruefe_nutzlast,
+        strip_secrets_with_placeholder,
+        sichere_fassung_fuer_speicherung,
+        MAX_NUTZLAST_KNOTEN, MAX_NUTZLAST_TIEFE, FELD_ZURUECKGEHALTEN,
+    )
     from .compliance_auditor import evaluate_compliance, Severity
     from .kill_switch import enforce_kill_switch
     from .knowledge.rag_context import (
@@ -100,7 +107,7 @@ except ImportError:
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
         export_user_data, delete_own_account_data,
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
-        get_accessible_agent_run,
+        get_accessible_agent_run, get_approval_request,
     )
     from apps.backend.permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from apps.backend.gateway import guarded_tool_call
@@ -117,6 +124,13 @@ except ImportError:
     from apps.backend.governance.redaction import redact, reinsert
     from apps.backend.governance.data_matrix import check_data_target, PolicyDecision
     from apps.backend.governance.send_preview import PreviewRejected, send_preview_store
+    from apps.backend.governance import payload_check as _payload_check
+    from apps.backend.governance.payload_check import (
+        erlaubte_reinsertion_map, pruefe_texteinheit, pruefe_nutzlast,
+        strip_secrets_with_placeholder,
+        sichere_fassung_fuer_speicherung,
+        MAX_NUTZLAST_KNOTEN, MAX_NUTZLAST_TIEFE, FELD_ZURUECKGEHALTEN,
+    )
     from apps.backend.compliance_auditor import evaluate_compliance, Severity
     from apps.backend.kill_switch import enforce_kill_switch
     from apps.backend.knowledge.rag_context import (
@@ -1618,129 +1632,16 @@ _OUTPUT_BLOCKED_MESSAGE = (
 )
 
 
-def _erlaubte_reinsertion_map(
-    reinsertion_map: dict[str, str] | None,
-) -> tuple[dict[str, str], int]:
-    """Filtert die Wiedereinsetzungs-Abbildung auf unbedenkliche Werte.
-
-    redact() nimmt Geheimnisse zwar gar nicht erst in die Abbildung auf
-    (dort nur Ersetzung durch [SECRET_REMOVED] ohne Map-Eintrag, belegt in
-    test_secrets_are_never_in_reinsertion_map). Darauf allein zu bauen waere
-    aber zu knapp: die Ausgangspruefung entfernt Geheimnisse aus der Antwort,
-    und eine Abbildung mit Geheimnis wuerde sie direkt wieder hineinschreiben
-    -- die Entfernung waere wirkungslos. Auffaellige Werte bleiben deshalb als
-    Platzhalter stehen.
-
-    Rueckgabe: (erlaubte Abbildung, Anzahl zurueckgehaltener Werte)
-    """
-    erlaubt: dict[str, str] = {}
-    zurueckgehalten = 0
-    for platzhalter, wert in (reinsertion_map or {}).items():
-        _, wert_enthaelt_secret = strip_secrets_with_placeholder(wert)
-        if wert_enthaelt_secret:
-            zurueckgehalten += 1
-            continue
-        erlaubt[platzhalter] = wert
-    return erlaubt, zurueckgehalten
-
-
-def _pruefe_texteinheit(text: str) -> tuple[str, bool, bool]:
-    """Kernpruefung EINER Texteinheit -- die einzige Stelle, an der entschieden
-    wird, ob ein Inhalt geheimnisbehaftet oder gesperrt ist.
-
-    Bewusst ohne Audit, ohne Nutzertext und ohne Fehlerbehandlung: der
-    jeweilige Aufrufer kennt seinen Kontext (einzelne Antwort, Feld eines
-    Tool-Ergebnisses, Streaming-Ereignis) und entscheidet dort fail-closed.
-    Genau dadurch teilen sich REST-Antwort, Streaming und strukturierte
-    Nutzlast dieselbe Bewertung: gleicher Inhalt -> gleiches Urteil.
-
-    Rueckgabe: (bereinigter Text, Geheimnis entfernt, gesperrte Klasse)
-    """
-    bereinigt, geheimnis_entfernt = strip_secrets_with_placeholder(text)
-    klassifikation = classify(bereinigt)
-    klassen = set(getattr(klassifikation, "data_classes", []) or [])
-    gesperrt = bool(klassen & {DataClass.CREDENTIALS, DataClass.SPECIAL_CATEGORY})
-    return bereinigt, geheimnis_entfernt, gesperrt
-
-
-# Obergrenze fuer die Tiefenpruefung strukturierter Nutzlasten. Ein Tool-
-# Ergebnis mit zehntausenden Knoten ist kein normaler Betriebsfall, sondern
-# entweder ein Fehler oder ein Versuch, die Pruefung durch Aufwand
-# auszuhebeln. Ueberschreitung fuehrt fail-closed zur Sperre, nicht zum
-# ungeprueften Durchreichen.
-_MAX_NUTZLAST_KNOTEN = 20_000
-_MAX_NUTZLAST_TIEFE = 40
-
-# Ersatztext fuer ein einzelnes zurueckgehaltenes Feld. Absichtlich auf
-# Feldebene: ein Tool-Ergebnis mit zwanzig Feldern, von denen eines
-# problematisch ist, soll nicht vollstaendig verworfen werden (Auftrag §17).
-_FELD_ZURUECKGEHALTEN = "[Zurückgehalten: geschützte Daten]"
-
-
-def _pruefe_nutzlast(
-    wert: Any,
-    erlaubte_map: dict[str, str],
-    zaehler: dict[str, int],
-    tiefe: int = 0,
-) -> Any:
-    """Prueft eine beliebige Nutzlast rekursiv -- Text, Liste, Verschachtelung.
-
-    Der Governance-Auftrag lautet: geprueft wird der Inhalt, nicht der
-    Transportweg. Ein Zugangsschluessel in einem Tool-Ergebnisfeld ist derselbe
-    Vorfall wie derselbe Schluessel im Antworttext; er darf nicht deshalb
-    durchgehen, weil er in einem Dictionary steckt.
-
-    Verhalten je Knoten:
-      * Text            -> Kernpruefung, danach Wiedereinsetzung
-      * Dict/Liste      -> rekursiv, Struktur bleibt erhalten
-      * Zahl/Bool/None  -> unveraendert (kein Textinhalt)
-      * alles andere    -> fail-closed ersetzt (nicht sicher bewertbar)
-
-    Zaehlt in `zaehler`, ohne je Inhalt zurueckzugeben oder zu protokollieren.
-    Wirft bei Ueberschreitung der Groessen-/Tiefengrenze -- der Aufrufer
-    behandelt das fail-closed.
-    """
-    zaehler["knoten"] = zaehler.get("knoten", 0) + 1
-    if zaehler["knoten"] > _MAX_NUTZLAST_KNOTEN or tiefe > _MAX_NUTZLAST_TIEFE:
-        raise ValueError("Nutzlast zu gross oder zu tief fuer eine sichere Pruefung")
-
-    if isinstance(wert, str):
-        if not wert:
-            return wert
-        bereinigt, geheimnis_entfernt, gesperrt = _pruefe_texteinheit(wert)
-        if gesperrt:
-            zaehler["gesperrte_felder"] = zaehler.get("gesperrte_felder", 0) + 1
-            return _FELD_ZURUECKGEHALTEN
-        if geheimnis_entfernt:
-            zaehler["bereinigte_felder"] = zaehler.get("bereinigte_felder", 0) + 1
-        if erlaubte_map:
-            bereinigt, vollstaendig = reinsert(bereinigt, erlaubte_map)
-            if not vollstaendig:
-                zaehler["offene_platzhalter"] = zaehler.get("offene_platzhalter", 0) + 1
-        return bereinigt
-
-    if isinstance(wert, dict):
-        return {
-            schluessel: _pruefe_nutzlast(unterwert, erlaubte_map, zaehler, tiefe + 1)
-            for schluessel, unterwert in wert.items()
-        }
-
-    if isinstance(wert, (list, tuple)):
-        geprueft = [
-            _pruefe_nutzlast(element, erlaubte_map, zaehler, tiefe + 1) for element in wert
-        ]
-        return type(wert)(geprueft) if isinstance(wert, tuple) else geprueft
-
-    if wert is None or isinstance(wert, (bool, int, float)):
-        # Kein Textinhalt -- nichts, worin ein Geheimnis oder personenbezogene
-        # Daten stehen koennten.
-        return wert
-
-    # Unbekannter Typ: nicht sicher bewertbar. Streaming-Ereignisse und
-    # Tool-Ergebnisse werden ohnehin als JSON gesendet, ein exotischer Typ ist
-    # hier also bereits ein Fehler -- und wird nicht ungeprueft durchgereicht.
-    zaehler["gesperrte_felder"] = zaehler.get("gesperrte_felder", 0) + 1
-    return _FELD_ZURUECKGEHALTEN
+# Die Kernpruefung liegt jetzt in governance/payload_check.py -- sie wird
+# ausser hier auch im agent_runtime gebraucht (Pruefung VOR dem Speichern),
+# und zwei Fassungen derselben Sicherheitsregel driften auseinander, bis eine
+# davon falsch ist. Die bisherigen Namen bleiben als Aliase erhalten.
+_erlaubte_reinsertion_map = erlaubte_reinsertion_map
+_pruefe_texteinheit = pruefe_texteinheit
+_pruefe_nutzlast = pruefe_nutzlast
+_MAX_NUTZLAST_KNOTEN = MAX_NUTZLAST_KNOTEN
+_MAX_NUTZLAST_TIEFE = MAX_NUTZLAST_TIEFE
+_FELD_ZURUECKGEHALTEN = FELD_ZURUECKGEHALTEN
 
 
 def _gepruefte_antwort(
@@ -1977,7 +1878,10 @@ def _governance_post_check(
     blocked_values = 0
     if reinsertion_map:
         erlaubte_map, blocked_values = _erlaubte_reinsertion_map(reinsertion_map)
-        answer, fully_reinserted = reinsert(answer, erlaubte_map)
+        # Ueber das gemeinsame Modul, nicht ueber den lokalen Namen: so gibt
+        # es genau eine Wiedereinsetzungs-Stelle, die auch in Tests
+        # eindeutig beobachtbar ist.
+        answer, fully_reinserted = _payload_check.reinsert(answer, erlaubte_map)
         if blocked_values:
             fully_reinserted = False
 
@@ -2188,13 +2092,41 @@ def _ask_llm_directly(
         "\n\n"
         "Antworte immer auf Deutsch, außer der Nutzer schreibt in einer anderen Sprache."
     )
+    # Gespraechsverlauf: geht mit an den Anbieter und muss deshalb dieselbe
+    # Behandlung erfahren wie die Aufgabe selbst. Frueher wurde er nur auf
+    # 2.000 Zeichen gekuerzt und unveraendert eingefuegt -- eine Nachricht
+    # wie "Schreibe das freundlicher" ist harmlos, waehrend im Verlauf
+    # darueber Name, Diagnose und Zugangsdaten stehen konnten. Die
+    # Eingangspruefung sah davon nichts, weil sie nur den aktuellen Text
+    # bewertete.
+    #
+    # Bewusst OHNE Zusammenfuehren der Platzhalter-Abbildungen: Verlauf und
+    # Aufgabe getrennt zu schwaerzen erzeugt in beiden "[NAME_1]" -- fuer
+    # verschiedene Personen. Ein Zusammenfuehren wuerde in der Antwort still
+    # den falschen Namen einsetzen. Verlaufs-Platzhalter bleiben deshalb
+    # stehen; das ist sichtbar und harmlos, eine Verwechslung waere es nicht.
     safe_history = []
     if history:
         for msg in history[-10:]:  # max. 10 vorherige Nachrichten
             role = msg.get("role", "")
             content = msg.get("content", "")
-            if role in ("user", "assistant") and content:
-                safe_history.append({"role": role, "content": content[:2000]})
+            if role not in ("user", "assistant") or not content:
+                continue
+            gekuerzt = content[:2000]
+            try:
+                gekuerzt, _ = strip_secrets_with_placeholder(gekuerzt)
+                _verlauf_klassifikation = classify(gekuerzt)
+                _verlauf_klassen = set(
+                    getattr(_verlauf_klassifikation, "data_classes", []) or []
+                )
+                if _verlauf_klassen - {DataClass.PUBLIC}:
+                    gekuerzt = redact(gekuerzt, _verlauf_klassifikation).redacted_text
+            except Exception:
+                # Fail-closed: laesst sich eine Verlaufsnachricht nicht
+                # bewerten, wird sie weggelassen statt ungeprueft mitgesendet.
+                logger.exception("Verlaufsnachricht nicht bewertbar -- wird ausgelassen.")
+                continue
+            safe_history.append({"role": role, "content": gekuerzt})
     messages = [
         {"role": "system", "content": system_prompt},
         *safe_history,
@@ -2205,7 +2137,12 @@ def _ask_llm_directly(
             messages,
             context=governance_context,
             zweck=Zweck.NUTZER_AUSGABE,
-            ingress_source=task,
+            # Der Spiegel-Lint muss den tatsaechlich versendeten Gesamtinhalt
+            # sehen, nicht nur die aktuelle Aufgabe -- sonst bleibt der
+            # mitgesendete Verlauf fuer ihn unsichtbar.
+            ingress_source="\n\n".join(
+                [task] + [m["content"] for m in safe_history]
+            ),
         )
         print(
             f"AILIZA LLM OK | request_id={rid} result=ok chars={len(answer)}",
@@ -2497,8 +2434,20 @@ def _run_agent_core(
     # waere die Anonymisierungs-Abkuerzung, die AILIZA ausdruecklich verbietet
     # (Redaction ist kein Gateway-Bypass). Der Anbieter bekommt weiterhin nur
     # den geschwaerzten Text -- aber das Gate weiss, worum es urspruenglich ging.
+    # Der Verlauf geht mit an den Anbieter -- also bestimmt er die
+    # Anbieterwahl mit. Eine harmlose aktuelle Aufgabe darf nicht dazu
+    # fuehren, dass ein Verlauf mit Gesundheitsdaten als PUBLIC eingestuft
+    # und an einen dafuer ungeeigneten Anbieter geschickt wird.
+    _kontext_quelle = "\n\n".join(
+        [payload.task]
+        + [
+            str(m.get("content", ""))[:2000]
+            for m in (payload.history or [])[-10:]
+            if m.get("role") in ("user", "assistant")
+        ]
+    )
     _llm_kontext = _leite_governance_kontext_ab(
-        payload.task,
+        _kontext_quelle,
         tenant_id=tenant,
         user_id=token.user_id if token else None,
         redaction_applied=redaction_applied,
@@ -2889,7 +2838,22 @@ def _run_agent_core(
 
     if search_text:
         # Tool (Tavily) hat Ergebnisse geliefert → LLM fasst zusammen
-        answer, error_code = _summarize_with_llm(effective_task, search_text)
+        # Der Suchtext geht dem Anbieter mit -- also muss er auch die
+        # Anbieterwahl bestimmen. Frueher wurde hier gar kein Kontext
+        # uebergeben; der Orchestrator nahm dann PUBLIC und
+        # redaction_applied=False an, obwohl search_text roher Fremdinhalt
+        # ist und personenbezogene Daten enthalten kann, die in der Frage
+        # der Nutzerin gar nicht vorkamen. Bewertet wird deshalb der
+        # tatsaechlich versendete Gesamtinhalt, nicht nur die Frage.
+        _such_kontext = _leite_governance_kontext_ab(
+            f"{payload.task}\n\n{search_text}",
+            tenant_id=tenant,
+            user_id=token.user_id if token else None,
+            redaction_applied=redaction_applied,
+        )
+        answer, error_code = _summarize_with_llm(
+            effective_task, search_text, context=_such_kontext,
+        )
         if answer is not None:
             result["message"] = answer
         else:
@@ -3115,6 +3079,52 @@ def stream_agent_run_post(
     )
 
 
+def _freigabe_zugriff_pruefen(
+    approval_id: int, token: "TokenData | None", tenant: str,
+) -> None:
+    """Bindet eine Freigabe-Fortsetzung an Mandant und Eigentuemerin.
+
+    Bisher genuegte die Freigabe-Nummer. Wer eine fremde Nummer kannte oder
+    durchprobierte, konnte einen fremden Vorgang fortsetzen und dessen
+    Ergebnis abrufen -- ueber Mandantengrenzen hinweg und ohne Anmeldung, da
+    die Routen nur ein optionales Token verlangen. `execute_approved_tool()`
+    prueft ausschliesslich den Status der Freigabe, nie die aufrufende Person.
+
+    Einheitliche 404-Antwort: eine Unterscheidung zwischen "gibt es nicht" und
+    "gehoert jemand anderem" verriete bereits, welche Nummern existieren.
+    """
+    freigabe = get_approval_request(approval_id)
+    if freigabe is None:
+        _grund = "not_found"
+    elif (freigabe.get("tenant_id") or DEFAULT_TENANT_ID) != tenant:
+        _grund = "tenant_mismatch"
+    else:
+        besitzerin = freigabe.get("owner_user_id")
+        _grund = (
+            "owner_mismatch"
+            if besitzerin and (token is None or token.user_id != besitzerin)
+            else None
+        )
+    if _grund is not None:
+        # Der Audit-Schreibzugriff laeuft in JEDEM Ablehnungsfall gleich --
+        # auch wenn die Freigabe gar nicht existiert. Ein Sicherheitsreview
+        # fand sonst einen Zeitkanal: nur die Mismatch-Faelle loesten einen
+        # DB-Write vor der Antwort aus, "existiert nicht" nicht. Damit war
+        # per Antwortzeit unterscheidbar, ob eine Nummer ueberhaupt vergeben
+        # ist -- genau das soll die einheitliche 404-Antwort verhindern.
+        write_audit_entry(
+            action="approval.access_denied",
+            tenant_id=tenant,
+            metadata={"approval_id": approval_id, "reason": _grund},
+        )
+        raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
+    # Bleibt bewusst offen und ist als Rest-Risiko dokumentiert: eine ohne
+    # Anmeldung entstandene Freigabe hat keine Eigentuemerin, an die gebunden
+    # werden koennte. Eine Bindung an die anonyme Sitzung setzt voraus, dass
+    # `approval_requests` diese speichert -- das waere ein Schemawechsel und
+    # gehoert nicht in dieses Paket.
+
+
 # Zu den drei Fortsetzungs-Routen: hier wird bewusst KEIN Pruefbeleg verlangt.
 # Der Beleg bindet einen konkreten Versandtext an Nutzerin, Mandant und Zweck --
 # bei der Fortsetzung nach einer Freigabe gibt es aber keinen neuen Text der
@@ -3133,6 +3143,7 @@ def continue_agent_after_approval(
     token: TokenData | None = Depends(get_current_user),
 ) -> dict[str, Any]:
     tenant = _tenant_id(token)
+    _freigabe_zugriff_pruefen(approval_id, token, tenant)
     runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=tenant)
     return _gepruefte_antwort(runtime.continue_after_approval(approval_id), tenant_id=tenant)
 
@@ -3146,6 +3157,7 @@ def stream_agent_after_approval(
     # keinen Aufgabentext -- der Grund fuer die Entfernung der GET-Variante von
     # /agent/run/stream trifft hier also nicht zu.
     tenant = _tenant_id(token)
+    _freigabe_zugriff_pruefen(approval_id, token, tenant)
     runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=tenant)
     return sse_response(runtime.stream_after_approval(approval_id), tenant_id=tenant)
 
@@ -3156,6 +3168,7 @@ def stream_agent_after_approval_post(
     token: TokenData | None = Depends(get_current_user),
 ) -> StreamingResponse:
     tenant = _tenant_id(token)
+    _freigabe_zugriff_pruefen(approval_id, token, tenant)
     runtime = AgentRuntime(owner_user_id=token.user_id if token else None, tenant_id=tenant)
     return sse_response(runtime.stream_after_approval(approval_id), tenant_id=tenant)
 
@@ -4831,25 +4844,10 @@ def contains_secret(text: str) -> bool:
 # anders als PII wird ein Secret nicht nach der KI-Antwort zurueckgesetzt,
 # sonst koennte der echte Key am Ende unbemerkt in einem fertigen Entwurf
 # landen, den der Nutzer dann verschickt.
-_SECRET_STRIP_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"\bsk-[\w\-]{15,}\b"),
-    re.compile(r"\bgsk_[\w\-]{15,}\b"),
-    re.compile(r"\beyJ[\w\-\.]+\b"),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}\b"),
-]
-
-def strip_secrets_with_placeholder(text: str) -> tuple[str, bool]:
-    """
-    Entfernt erkannte Geheimnisse aus dem Text und ersetzt sie durch einen
-    sichtbaren Platzhalter. Gibt (bereinigter_text, gefunden) zurueck.
-    Der Originalwert wird an keiner Stelle zurueckgegeben oder gespeichert.
-    """
-    found = False
-    for pattern in _SECRET_STRIP_PATTERNS:
-        text, count = pattern.subn("[API-KEY ENTFERNT]", text)
-        if count:
-            found = True
-    return text, found
+# strip_secrets_with_placeholder liegt jetzt in governance/payload_check.py
+# (dort als Governance-Grundfunktion, weil auch der Speicherpfad sie braucht).
+# Der Name bleibt hier verfuegbar, damit bestehende Aufrufer unveraendert
+# funktionieren.
 
 def detect_prompt_injection(text: str) -> bool:
     """Prüft auf bekannte Prompt-Injection Muster"""

@@ -23,6 +23,7 @@ try:
         write_audit_entry,
     )
     from .gateway import execute_approved_tool, guarded_tool_call
+    from .governance.payload_check import sichere_fassung_fuer_speicherung
 except ImportError:
     from apps.backend.classifier import classify, InputRiskLevel
     from apps.backend.redactor import redact
@@ -36,6 +37,7 @@ except ImportError:
         write_audit_entry,
     )
     from apps.backend.gateway import execute_approved_tool, guarded_tool_call
+    from apps.backend.governance.payload_check import sichere_fassung_fuer_speicherung
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], dict[str, Any]]
@@ -131,9 +133,17 @@ class AgentRuntime:
         self.tenant_id = tenant_id or DEFAULT_TENANT_ID
 
     def create_run_record(self, run_id: str, task: str, streaming: bool = False) -> None:
+        """Legt den Laufdatensatz an -- mit geschuetzter, nicht mit roher Aufgabe.
+
+        Speichern ist Verarbeitung. Bisher wurde der Datensatz VOR dem
+        Precheck mit dem Rohtext angelegt: die Ausgabe an die Nutzerin war
+        geschuetzt, in `agent_runs` stand der ungeschwaerzte Text trotzdem --
+        mitsamt Namen, Diagnosen oder Zugangsdaten, und dort blieb er.
+        """
         if self.persist_runs:
             create_agent_run(
-                run_id, task, run_metadata={"streaming": streaming},
+                run_id, sichere_fassung_fuer_speicherung(task),
+                run_metadata={"streaming": streaming},
                 tenant_id=self.tenant_id, owner_user_id=self.owner_user_id,
             )
 
@@ -154,7 +164,13 @@ class AgentRuntime:
         if pending_approval_id is not _UNSET:
             kwargs["pending_approval_id"] = pending_approval_id
         if result is not _UNSET:
-            kwargs["result"] = result
+            # Auch das Ergebnis wird geprueft, bevor es in die Datenbank geht.
+            # Es enthaelt rohe Tool-Ergebnisse und abgerufene Webinhalte; die
+            # Ausgangspruefung in main.py schuetzt nur die Anzeige, nicht den
+            # bereits geschriebenen Datensatz.
+            kwargs["result"] = (
+                sichere_fassung_fuer_speicherung(result) if result is not None else None
+            )
         if kwargs:
             update_agent_run(run_id, **kwargs)
 
@@ -210,7 +226,13 @@ class AgentRuntime:
             if self.persist_runs:
                 approval = create_approval_request(
                     tool="agent_input",
-                    input_params={"task": task[:500], "risk_categories": classification.detected_categories},
+                    # Nicht der Rohtext: die Freigabeanfrage speichert bis zu
+                    # 500 Zeichen dauerhaft, und genau High-Risk-Eingaben sind
+                    # die, bei denen das am wenigsten passieren darf.
+                    input_params={
+                        "task": sichere_fassung_fuer_speicherung(task[:500]),
+                        "risk_categories": classification.detected_categories,
+                    },
                     risk_level=classification.risk_level.value,
                     risk_reason=classification.reason,
                     tenant_id=self.tenant_id,

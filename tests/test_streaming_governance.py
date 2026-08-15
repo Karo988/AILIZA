@@ -24,6 +24,7 @@ os.environ.setdefault("AILIZA_EXTERNAL_LLM_ENABLED", "false")
 import pytest
 from fastapi.testclient import TestClient
 
+import apps.backend.governance.payload_check as payload_check
 import apps.backend.main as main_module
 from apps.backend.main import (
     _erlaubte_reinsertion_map,
@@ -208,7 +209,7 @@ def test_stream_bricht_fail_closed_ab_wenn_pruefung_scheitert(monkeypatch):
     def _kaputt(_text):
         raise RuntimeError("Scanner nicht verfügbar")
 
-    monkeypatch.setattr(main_module, "strip_secrets_with_placeholder", _kaputt)
+    monkeypatch.setattr(payload_check, "strip_secrets_with_placeholder", _kaputt)
     strom = [
         {"event": "run_completed", "data": {"message": "irgendetwas"}},
         {"event": "danach", "data": {"message": "darf nicht mehr kommen"}},
@@ -326,6 +327,22 @@ def test_geheimnis_wird_nicht_ueber_die_abbildung_wieder_eingesetzt():
 
 # ── Testklasse 6: Fortsetzung nach Freigabe ──────────────────────────────
 
+def _eigene_freigabe(tenant_id: str = "default") -> int:
+    """Legt eine Freigabe an, die zur Testsitzung passt (kein Login, kein
+    Owner) -- seit dem Mandant-/Owner-Bindungs-Fix (siehe
+    tests/test_governance_review_findings.py) braucht ein Fortsetzungstest
+    eine tatsächlich zugängliche Freigabe, sonst greift schon das
+    Zugriffs-Gate vor der hier zu prüfenden Ausgangskontrolle."""
+    from apps.backend.database import create_approval_request
+
+    freigabe = create_approval_request(
+        tool="search", input_params={"query": "beliebig"},
+        risk_level="low", risk_reason="Test",
+        tenant_id=tenant_id, owner_user_id=None,
+    )
+    return freigabe["id"]
+
+
 def test_fortsetzung_nach_freigabe_wird_ebenfalls_geprueft(client, monkeypatch):
     """Die Freigabe einer Aktion ist keine Freigabe späterer Inhalte."""
     class _RuntimeFortsetzung:
@@ -340,7 +357,8 @@ def test_fortsetzung_nach_freigabe_wird_ebenfalls_geprueft(client, monkeypatch):
             }
 
     monkeypatch.setattr(main_module, "AgentRuntime", _RuntimeFortsetzung)
-    resp = client.post("/agent/approvals/1/continue")
+    freigabe_id = _eigene_freigabe()
+    resp = client.post(f"/agent/approvals/{freigabe_id}/continue")
     assert resp.status_code == 200
     assert GEHEIM not in resp.text
 
@@ -354,7 +372,8 @@ def test_fortsetzung_streaming_wird_ebenfalls_geprueft(client, monkeypatch):
             yield {"event": "run_completed", "data": {"message": f"Key: {GEHEIM}"}}
 
     monkeypatch.setattr(main_module, "AgentRuntime", _RuntimeFortsetzungStream)
-    resp = client.post("/agent/approvals/1/continue/stream")
+    freigabe_id = _eigene_freigabe()
+    resp = client.post(f"/agent/approvals/{freigabe_id}/continue/stream")
     assert resp.status_code == 200
     assert GEHEIM not in resp.text
 
@@ -363,7 +382,7 @@ def test_gepruefte_antwort_faellt_fail_closed_aus(monkeypatch):
     def _kaputt(_text):
         raise RuntimeError("Scanner nicht verfügbar")
 
-    monkeypatch.setattr(main_module, "strip_secrets_with_placeholder", _kaputt)
+    monkeypatch.setattr(payload_check, "strip_secrets_with_placeholder", _kaputt)
     ergebnis = _gepruefte_antwort({"message": "irgendetwas"}, tenant_id="default")
     assert ergebnis["status"] == "output_blocked"
     assert "irgendetwas" not in json.dumps(ergebnis, ensure_ascii=False)
