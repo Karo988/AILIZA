@@ -1540,6 +1540,19 @@ def create_memory_source(tenant_id: str, source_type: str, *,
     return {"id": source_id, "tenant_id": tenant_id, "source_type": source_type}
 
 
+def _require_tenant(tenant_id: str | None, *, funktion: str) -> str:
+    """Fail-closed Tenant-Pflichtpruefung (Knowledge Phase 1 -- Memory
+    Tenant Integrity). None, "" und reine Whitespace-Werte gelten als
+    fehlend. Kein automatischer Default-Tenant, kein Erraten -- der
+    Aufrufer muss einen echten, serverseitig ermittelten Tenant liefern."""
+    if tenant_id is None or not tenant_id.strip():
+        raise MemoryValidationError(
+            f"{funktion}: tenant_id fehlt oder ist leer -- Vorgang abgelehnt "
+            "(kein automatischer Default-Tenant)."
+        )
+    return tenant_id
+
+
 def _validate_memory_item(scope: str, tenant_id: str | None, owner_user_id: str | None,
                           status: str, source_id: int | None, purpose: str | None) -> None:
     if scope not in _VALID_MEMORY_SCOPES:
@@ -1575,8 +1588,13 @@ def create_memory_item(tenant_id: str | None, scope: str, title: str, content: s
                        created_by: str | None = None, approved_by: str | None = None) -> dict[str, Any]:
     """Legt einen Memory-Eintrag an. Kein automatischer Aufrufpfad -- diese
     Funktion wird nur explizit aufgerufen (siehe test_no_automatic_chat_to_memory_path_exists).
-    Pflichtregeln (Scope/Zweck/Quelle/Besitzer) werden hier durchgesetzt,
-    nicht erst in einer spaeteren Schicht (fail-closed)."""
+    Pflichtregeln (Scope/Zweck/Quelle/Besitzer/Tenant) werden hier
+    durchgesetzt, nicht erst in einer spaeteren Schicht (fail-closed).
+
+    Knowledge Phase 1 (Memory Tenant Integrity): tenant_id ist fuer JEDEN
+    Scope Pflicht (auch user_memory) -- kein neuer Eintrag darf je ohne
+    Tenant entstehen, siehe _require_tenant()."""
+    tenant_id = _require_tenant(tenant_id, funktion="create_memory_item")
     _validate_memory_item(scope, tenant_id, owner_user_id, status, source_id, purpose)
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
@@ -1595,12 +1613,28 @@ def create_memory_item(tenant_id: str | None, scope: str, title: str, content: s
                 allowed_roles=[], allowed_user_ids=[], allowed_org_id=vis["allowed_org_id"],
                 project_id=None, created_at=now, updated_at=now,
             ))
-    return get_memory_item(item_id)
-
-
-def get_memory_item(item_id: int) -> dict[str, Any] | None:
-    with engine.begin() as conn:
+        # Bewusst NICHT ueber get_memory_item(): dort ist tenant_id ab
+        # Phase 1 Pflicht und dient als Zugriffskontrolle -- die Rueckgabe
+        # der gerade selbst angelegten Zeile braucht das nicht, sondern
+        # liest direkt in derselben Transaktion zurueck.
         row = conn.execute(select(memory_items).where(memory_items.c.id == item_id)).mappings().first()
+    return dict(row)
+
+
+def get_memory_item(item_id: int, *, tenant_id: str) -> dict[str, Any] | None:
+    """Liest einen Memory-Eintrag NUR, wenn er zum angegebenen Tenant
+    gehoert (Knowledge Phase 1). tenant_id ist Pflicht-Keyword -- ein
+    Aufruf ohne serverseitig ermittelten Tenant ist nicht mehr moeglich.
+    Fremder Tenant erhaelt None, exakt wie "existiert nicht" (kein
+    Unterschied in der Antwort, der die Existenz eines fremden Eintrags
+    verraten wuerde)."""
+    tenant_id = _require_tenant(tenant_id, funktion="get_memory_item")
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(memory_items)
+            .where(memory_items.c.id == item_id)
+            .where(memory_items.c.tenant_id == tenant_id)
+        ).mappings().first()
     return dict(row) if row else None
 
 
@@ -1609,19 +1643,18 @@ def list_active_memory_items_for_user(user_id: str, tenant_id: str = DEFAULT_TEN
     fremden Eintraege und kein company_memory (M1: expliziter scope-Filter,
     vorher implizit ueber owner_user_id).
 
-    Uebergangsregel (M1): Legacy-user_memory mit tenant_id=NULL (aus der
-    Zeit vor Tenant-Pflicht) MUSS weiterhin fuer den Owner auffindbar,
-    exportierbar und loeschbar bleiben -- SQL-NULL-Vergleich
-    (`tenant_id == tenant_id`) liefert bei NULL sonst nie True und wuerde
-    diese Zeilen unsichtbar machen. Kein Erraten/Nachtragen eines
-    Tenant-Werts -- nur zusaetzlich sichtbar machen."""
+    Knowledge Phase 1: die fruehere Uebergangsregel (Legacy-user_memory mit
+    tenant_id=NULL zusaetzlich sichtbar machen) entfaellt. memory_items.tenant_id
+    ist jetzt NOT NULL (siehe Migration) -- jede Zeile hat einen Tenant.
+    Verbleibende Alt-Datenbanken ohne Migration werden ueber den fail-closed
+    Migrations-Guard blockiert, nicht stillschweigend hier kompensiert."""
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         rows = conn.execute(
             select(memory_items)
             .where(memory_items.c.scope == "user_memory")
             .where(memory_items.c.owner_user_id == user_id)
-            .where(or_(memory_items.c.tenant_id == tenant_id, memory_items.c.tenant_id.is_(None)))
+            .where(memory_items.c.tenant_id == tenant_id)
             .where(memory_items.c.status == "active")
         ).mappings().all()
     return [dict(r) for r in rows if r["expires_at"] is None or _as_aware(r["expires_at"]) > now]
@@ -1650,60 +1683,100 @@ def _as_aware(dt: datetime) -> datetime:
 #   company_memory: scope=="company_memory", tenant_id PFLICHT, owner_user_id MUSS NULL sein
 #
 # Diese Funktion VERAENDERT NIEMALS Daten (rein lesend) -- sie liefert nur
-# einen Bericht. tenant_id=NULL bei user_memory ist im Uebergang gueltig
-# (siehe list_active_memory_items_for_user) und wird daher NICHT als
-# Verletzung gezaehlt, sondern separat als Info ausgewiesen. Aufrufer
+# einen Bericht. Seit Knowledge Phase 1 (Migration c8ff9bb332ba) ist
+# memory_items.tenant_id NOT NULL -- eine solche Zeile kann in einer
+# migrierten Datenbank technisch nicht mehr existieren. legacy_user_memory_null_tenant
+# bleibt als Diagnosefeld fuer NICHT migrierte Alt-Datenbanken (z.B. vor
+# der NOT-NULL-Migration) bestehen und wird dort weiterhin als Info statt
+# harter Verletzung gemeldet -- kein automatischer Abbruch, das entscheidet
+# der Aufrufer. Aufrufer
 # (z.B. ein Migrations-/Deploy-Skript) entscheiden selbst, ob bei
 # gefundenen echten Verletzungen abgebrochen wird -- diese Funktion selbst
 # wirft nichts, sie berichtet nur (fail-safe: lieber ein zu ausfuehrlicher
 # Bericht als eine stille Fehlklassifikation).
-def audit_memory_scope_invariants() -> dict[str, Any]:
+def _collect_memory_scope_invariants(conn) -> dict[str, Any]:
+    """Liest die Rohdaten fuer den Invarianten-Bericht ueber EINE gegebene
+    Connection -- ausschliesslich SELECTs, kein Transaktions-/
+    Verbindungsmanagement hier (das entscheidet der Aufrufer, siehe
+    audit_memory_scope_invariants())."""
+    from sqlalchemy import func
+
+    total = conn.execute(select(func.count()).select_from(memory_items)).scalar_one()
+
+    user_memory_missing_owner = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "user_memory")
+        .where(memory_items.c.owner_user_id.is_(None))
+    ).scalars().all()
+
+    company_memory_missing_tenant = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "company_memory")
+        .where(memory_items.c.tenant_id.is_(None))
+    ).scalars().all()
+
+    company_memory_with_owner = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "company_memory")
+        .where(memory_items.c.owner_user_id.isnot(None))
+    ).scalars().all()
+
+    unknown_scope = conn.execute(
+        select(memory_items.c.id, memory_items.c.scope)
+        .where(memory_items.c.scope.notin_(list(_VALID_MEMORY_SCOPES)))
+    ).all()
+
+    legacy_user_memory_null_tenant = conn.execute(
+        select(memory_items.c.id)
+        .where(memory_items.c.scope == "user_memory")
+        .where(memory_items.c.tenant_id.is_(None))
+        .where(memory_items.c.owner_user_id.isnot(None))
+    ).scalars().all()
+
+    active_without_visibility = conn.execute(
+        select(memory_items.c.id)
+        .select_from(memory_items.outerjoin(
+            memory_visibility, memory_visibility.c.memory_item_id == memory_items.c.id,
+        ))
+        .where(memory_items.c.status == "active")
+        .where(memory_visibility.c.id.is_(None))
+    ).scalars().all()
+
+    return dict(
+        total=total,
+        user_memory_missing_owner=user_memory_missing_owner,
+        company_memory_missing_tenant=company_memory_missing_tenant,
+        company_memory_with_owner=company_memory_with_owner,
+        unknown_scope=unknown_scope,
+        legacy_user_memory_null_tenant=legacy_user_memory_null_tenant,
+        active_without_visibility=active_without_visibility,
+    )
+
+
+def audit_memory_scope_invariants(conn=None) -> dict[str, Any]:
     """Liefert einen Bestandsbericht ueber memory_items, der alle
     Verletzungen der Scope-/Owner-/Tenant-Invarianten auflistet, OHNE
     irgendetwas zu veraendern. Gedacht als Trockenlauf/Repair-Report vor
-    einer kuenftigen Migration."""
-    from sqlalchemy import func
-    with engine.begin() as conn:
-        total = conn.execute(select(func.count()).select_from(memory_items)).scalar_one()
+    einer kuenftigen Migration.
 
-        user_memory_missing_owner = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "user_memory")
-            .where(memory_items.c.owner_user_id.is_(None))
-        ).scalars().all()
+    `conn`: optionale, bereits geoeffnete Connection (z.B. eine dedizierte
+    Read-only-Verbindung des CLI-Audits, siehe
+    audit_memory_scope_cli.py). Ohne Angabe wird wie bisher die
+    anwendungsweite `engine` verwendet -- bestehende Aufrufer (Tests,
+    interne Nutzung) sind unveraendert."""
+    if conn is not None:
+        raw = _collect_memory_scope_invariants(conn)
+    else:
+        with engine.begin() as conn:
+            raw = _collect_memory_scope_invariants(conn)
 
-        company_memory_missing_tenant = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "company_memory")
-            .where(memory_items.c.tenant_id.is_(None))
-        ).scalars().all()
-
-        company_memory_with_owner = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "company_memory")
-            .where(memory_items.c.owner_user_id.isnot(None))
-        ).scalars().all()
-
-        unknown_scope = conn.execute(
-            select(memory_items.c.id, memory_items.c.scope)
-            .where(memory_items.c.scope.notin_(list(_VALID_MEMORY_SCOPES)))
-        ).all()
-
-        legacy_user_memory_null_tenant = conn.execute(
-            select(memory_items.c.id)
-            .where(memory_items.c.scope == "user_memory")
-            .where(memory_items.c.tenant_id.is_(None))
-            .where(memory_items.c.owner_user_id.isnot(None))
-        ).scalars().all()
-
-        active_without_visibility = conn.execute(
-            select(memory_items.c.id)
-            .select_from(memory_items.outerjoin(
-                memory_visibility, memory_visibility.c.memory_item_id == memory_items.c.id,
-            ))
-            .where(memory_items.c.status == "active")
-            .where(memory_visibility.c.id.is_(None))
-        ).scalars().all()
+    total = raw["total"]
+    user_memory_missing_owner = raw["user_memory_missing_owner"]
+    company_memory_missing_tenant = raw["company_memory_missing_tenant"]
+    company_memory_with_owner = raw["company_memory_with_owner"]
+    unknown_scope = raw["unknown_scope"]
+    legacy_user_memory_null_tenant = raw["legacy_user_memory_null_tenant"]
+    active_without_visibility = raw["active_without_visibility"]
 
     violations = {
         "user_memory_missing_owner": list(user_memory_missing_owner),
@@ -1712,7 +1785,7 @@ def audit_memory_scope_invariants() -> dict[str, Any]:
         "unknown_scope": [{"id": r[0], "scope": r[1]} for r in unknown_scope],
     }
     info_only = {
-        # Kein Fehler -- gueltiger Uebergangszustand, siehe Docstring oben.
+        # Kein Fehler -- Diagnosefeld fuer nicht migrierte Alt-DBs, siehe Docstring oben.
         "legacy_user_memory_null_tenant": list(legacy_user_memory_null_tenant),
         # Kein harter Fehler dieser Pruefung, aber relevant fuer M2/M3
         # (Default-Deny beim Lesen einer sichtbarkeits-losen aktiven Zeile).
@@ -1728,9 +1801,42 @@ def audit_memory_scope_invariants() -> dict[str, Any]:
     }
 
 
-def set_memory_visibility(memory_item_id: int, *, visibility_scope: str,
+def count_unassigned_memory_items(conn=None) -> int:
+    """Rein lesende Diagnose (Knowledge Phase 1): Anzahl memory_items ohne
+    eindeutigen Tenant (NULL oder reiner Whitespace). Gedacht als
+    Vorab-Pruefung vor der NOT-NULL-Migration bzw. als wiederverwendbarer
+    Nachweis, dass Altbestand weder automatisch zugeordnet noch geloescht
+    wurde -- veraendert nichts."""
+    from sqlalchemy import func
+
+    query = select(func.count()).select_from(memory_items).where(
+        or_(memory_items.c.tenant_id.is_(None), func.trim(memory_items.c.tenant_id) == "")
+    )
+    if conn is not None:
+        return conn.execute(query).scalar_one()
+    with engine.begin() as conn:
+        return conn.execute(query).scalar_one()
+
+
+def set_memory_visibility(memory_item_id: int, *, tenant_id: str, visibility_scope: str,
+                          owner_user_id: str | None = None,
                           allowed_roles: list | None = None, allowed_user_ids: list | None = None,
                           allowed_org_id: str | None = None, project_id: str | None = None) -> dict[str, Any]:
+    """Knowledge Phase 1: memory_visibility hat selbst keine tenant_id-Spalte
+    (bewusst -- eine zweite, potenziell abweichende Tenant-Quelle waere ein
+    Risiko). Die Tenant-Zugehoerigkeit wird deshalb ZUERST ueber das
+    verknuepfte memory_item verifiziert (get_memory_item() ist bereits
+    tenant-gefiltert) -- erst danach wird memory_visibility geaendert.
+    owner_user_id (falls angegeben): zusaetzliche Eigentuemer-Bindung fuer
+    persoenliche Eintraege -- ein anderer Nutzer desselben Tenants darf die
+    Sichtbarkeit eines fremden user_memory-Eintrags nicht aendern."""
+    tenant_id = _require_tenant(tenant_id, funktion="set_memory_visibility")
+    item = get_memory_item(memory_item_id, tenant_id=tenant_id)
+    if item is None:
+        raise MemoryValidationError("Memory-Eintrag nicht gefunden.")
+    if item["scope"] == "user_memory" and owner_user_id is not None and item["owner_user_id"] != owner_user_id:
+        raise MemoryValidationError("Memory-Eintrag gehoert einer anderen Person.")
+
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         existing = conn.execute(
@@ -1756,12 +1862,26 @@ def set_memory_visibility(memory_item_id: int, *, visibility_scope: str,
     return dict(row)
 
 
-def mark_memory_item_deleted(item_id: int) -> None:
+def mark_memory_item_deleted(item_id: int, *, tenant_id: str, owner_user_id: str | None = None) -> None:
     """Soft-Delete: status='deleted'. Geloeschte Eintraege werden von den
-    list_active_*-Funktionen nie zurueckgegeben (Status-Filter auf 'active')."""
+    list_active_*-Funktionen nie zurueckgegeben (Status-Filter auf 'active').
+
+    Knowledge Phase 1: tenant_id ist Pflicht -- ein fremder Tenant kann ein
+    Item weder hart noch weich loeschen. owner_user_id (falls angegeben):
+    zusaetzliche Eigentuemer-Bindung fuer persoenliche Eintraege innerhalb
+    desselben Tenants."""
+    tenant_id = _require_tenant(tenant_id, funktion="mark_memory_item_deleted")
+    item = get_memory_item(item_id, tenant_id=tenant_id)
+    if item is None:
+        raise MemoryValidationError("Memory-Eintrag nicht gefunden.")
+    if item["scope"] == "user_memory" and owner_user_id is not None and item["owner_user_id"] != owner_user_id:
+        raise MemoryValidationError("Memory-Eintrag gehoert einer anderen Person.")
+
     with engine.begin() as conn:
         conn.execute(
-            update(memory_items).where(memory_items.c.id == item_id)
+            update(memory_items)
+            .where(memory_items.c.id == item_id)
+            .where(memory_items.c.tenant_id == tenant_id)
             .values(status="deleted", updated_at=datetime.now(timezone.utc))
         )
 
@@ -2078,11 +2198,20 @@ def create_memory_suggestion(*, user_id: str, tenant_id: str, suggested_scope: s
     return _get_memory_suggestion(suggestion_id)
 
 
-def _get_memory_suggestion(suggestion_id: int) -> dict[str, Any] | None:
+def _get_memory_suggestion(suggestion_id: int, *, tenant_id: str | None = None,
+                           user_id: str | None = None) -> dict[str, Any] | None:
+    """Knowledge Phase 1: optionale tenant_id/user_id-Filter. memory_suggestions
+    hat (anders als memory_visibility) eine eigene tenant_id-Spalte -- die
+    wird hier direkt im SQL-WHERE genutzt statt nur nachtraeglich in Python
+    zu vergleichen. Ohne Angabe (interner Aufruf direkt nach eigenem
+    INSERT) bleibt das Verhalten unveraendert ungefiltert."""
+    query = select(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
+    if tenant_id is not None:
+        query = query.where(memory_suggestions.c.tenant_id == tenant_id)
+    if user_id is not None:
+        query = query.where(memory_suggestions.c.user_id == user_id)
     with engine.begin() as conn:
-        row = conn.execute(
-            select(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
-        ).mappings().first()
+        row = conn.execute(query).mappings().first()
     if not row:
         return None
     result = dict(row)
@@ -2110,36 +2239,79 @@ def list_memory_suggestions_for_user(user_id: str, tenant_id: str = DEFAULT_TENA
     return out
 
 
-def reject_memory_suggestion(suggestion_id: int, *, reviewed_by: str) -> None:
-    """Abgelehnte Vorschlaege erzeugen NIE ein memory_item."""
+def reject_memory_suggestion(suggestion_id: int, *, reviewed_by: str, tenant_id: str,
+                             user_id: str | None = None) -> None:
+    """Abgelehnte Vorschlaege erzeugen NIE ein memory_item.
+
+    Knowledge Phase 1: tenant_id ist Pflicht und wird im UPDATE-WHERE
+    durchgesetzt (nicht nur vom Aufrufer vorab geprueft -- Verteidigung in
+    der Datenschicht selbst, TOCTOU-sicher). user_id (falls angegeben):
+    zusaetzliche Eigentuemer-Bindung, damit ein anderer Nutzer desselben
+    Tenants einen fremden Vorschlag nicht ablehnen kann. rowcount==0
+    bedeutet: kein passender Vorschlag (falscher Tenant/Owner oder nicht
+    vorhanden) -- wird einheitlich als "nicht gefunden" gemeldet."""
+    tenant_id = _require_tenant(tenant_id, funktion="reject_memory_suggestion")
+    query = (
+        update(memory_suggestions)
+        .where(memory_suggestions.c.id == suggestion_id)
+        .where(memory_suggestions.c.tenant_id == tenant_id)
+    )
+    if user_id is not None:
+        query = query.where(memory_suggestions.c.user_id == user_id)
     with engine.begin() as conn:
-        conn.execute(
-            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
-            .values(status="rejected", reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
+        result = conn.execute(
+            query.values(status="rejected", reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
         )
+    if result.rowcount == 0:
+        raise MemoryValidationError("Vorschlag nicht gefunden.")
 
 
-def mark_memory_suggestion_blocked(suggestion_id: int, *, reviewed_by: str | None = None) -> None:
-    """Blockiert + entfernt den Rohinhalt (Datensparsamkeit)."""
+def mark_memory_suggestion_blocked(suggestion_id: int, *, tenant_id: str,
+                                   reviewed_by: str | None = None, user_id: str | None = None) -> None:
+    """Blockiert + entfernt den Rohinhalt (Datensparsamkeit).
+
+    Knowledge Phase 1: tenant_id Pflicht, im UPDATE-WHERE durchgesetzt --
+    siehe reject_memory_suggestion() fuer Details."""
+    tenant_id = _require_tenant(tenant_id, funktion="mark_memory_suggestion_blocked")
+    query = (
+        update(memory_suggestions)
+        .where(memory_suggestions.c.id == suggestion_id)
+        .where(memory_suggestions.c.tenant_id == tenant_id)
+    )
+    if user_id is not None:
+        query = query.where(memory_suggestions.c.user_id == user_id)
     with engine.begin() as conn:
-        conn.execute(
-            update(memory_suggestions).where(memory_suggestions.c.id == suggestion_id)
-            .values(status="blocked", risk_level="blocked",
-                    suggested_content="[BLOCKIERT: sensibler Inhalt nicht gespeichert]",
-                    reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
+        result = conn.execute(
+            query.values(status="blocked", risk_level="blocked",
+                        suggested_content="[BLOCKIERT: sensibler Inhalt nicht gespeichert]",
+                        reviewed_at=datetime.now(timezone.utc), reviewed_by=reviewed_by)
         )
+    if result.rowcount == 0:
+        raise MemoryValidationError("Vorschlag nicht gefunden.")
 
 
-def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
-                              reviewer_role: str = "user") -> dict[str, Any]:
+def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str, tenant_id: str,
+                              reviewer_role: str = "user", user_id: str | None = None) -> dict[str, Any]:
     """Ueberfuehrt einen bestaetigten Vorschlag in das Gedaechtnis:
     memory_source + memory_item + memory_visibility (via create_memory_item).
     company_memory verlangt Admin-Rolle (bestehendes Rollenmodell: admin/manager).
     Nur Status open/needs_admin_approval sind bestaetigbar -- rejected/expired/
-    blocked erzeugen nie ein memory_item."""
-    suggestion = _get_memory_suggestion(suggestion_id)
+    blocked erzeugen nie ein memory_item.
+
+    Knowledge Phase 1: tenant_id ist Pflicht und wird direkt beim Laden des
+    Vorschlags gefiltert (_get_memory_suggestion(tenant_id=...)) -- vorher
+    wurde der Vorschlag komplett ungefiltert geladen und `suggestion["tenant_id"]`
+    blind fuer die Item-Erstellung uebernommen; ein fremder Tenant konnte so
+    theoretisch einen fremden Vorschlag bestaetigen. user_id (falls
+    angegeben): zusaetzliche Eigentuemer-Bindung fuer user_memory-Vorschlaege
+    -- gilt unabhaengig von der Rolle (auch ein Manager darf keinen fremden
+    persoenlichen Vorschlag bestaetigen)."""
+    tenant_id = _require_tenant(tenant_id, funktion="confirm_memory_suggestion")
+    suggestion = _get_memory_suggestion(suggestion_id, tenant_id=tenant_id)
     if suggestion is None:
         raise MemoryValidationError("Vorschlag nicht gefunden.")
+    if suggestion["suggested_scope"] == "user_memory" and user_id is not None and suggestion["user_id"] != user_id:
+        raise MemoryValidationError("Vorschlag gehoert einer anderen Person.")
     if suggestion["status"] not in ("open", "needs_admin_approval"):
         raise MemoryValidationError(
             f"Vorschlag mit Status {suggestion['status']!r} kann nicht bestaetigt werden."
@@ -2174,10 +2346,13 @@ def confirm_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
     return {"suggestion_id": suggestion_id, "memory_item_id": item["id"], "source_id": source["id"]}
 
 
-def apply_confirmed_memory_suggestion(suggestion_id: int, *, confirmed_by: str,
-                                      reviewer_role: str = "user") -> dict[str, Any]:
+def apply_confirmed_memory_suggestion(suggestion_id: int, *, confirmed_by: str, tenant_id: str,
+                                      reviewer_role: str = "user", user_id: str | None = None) -> dict[str, Any]:
     """Alias gemaess Spec-Namensvorschlag -- identisch zu confirm_memory_suggestion."""
-    return confirm_memory_suggestion(suggestion_id, confirmed_by=confirmed_by, reviewer_role=reviewer_role)
+    return confirm_memory_suggestion(
+        suggestion_id, confirmed_by=confirmed_by, tenant_id=tenant_id,
+        reviewer_role=reviewer_role, user_id=user_id,
+    )
 
 
 # ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ──────────
@@ -2210,14 +2385,14 @@ def _soft_delete_owned_memory_items(conn: Any, user_id: str, tenant_id: str, now
     Filter allein schon ausgeschlossen, der scope-Filter macht das aber
     unmissverstaendlich explizit statt implizit).
 
-    Uebergangsregel (M1): schliesst wie list_active_memory_items_for_user()
-    Legacy-Zeilen mit tenant_id=NULL mit ein, damit Accountloeschung auch
-    fuer Alt-Daten vollstaendig greift."""
+    Knowledge Phase 1: die fruehere Uebergangsregel (Legacy-NULL-Zeilen
+    zusaetzlich einschliessen) entfaellt -- memory_items.tenant_id ist NOT
+    NULL, siehe list_active_memory_items_for_user()."""
     conn.execute(
         update(memory_items)
         .where(memory_items.c.scope == "user_memory")
         .where(memory_items.c.owner_user_id == user_id)
-        .where(or_(memory_items.c.tenant_id == tenant_id, memory_items.c.tenant_id.is_(None)))
+        .where(memory_items.c.tenant_id == tenant_id)
         .values(status="deleted", updated_at=now)
     )
 

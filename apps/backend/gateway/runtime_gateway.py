@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from ..approval import ApprovalStatus, assess_tool_risk
 from ..database import create_approval_request, get_approval_request, write_audit_entry
+from ..governance.payload_check import prepare_for_approval_storage
 from ..policy import check_tool_call
 from ..tools import execute_tool
 
@@ -56,9 +57,54 @@ def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> di
         )
         return None
 
+    # Paket-D-Nachbesserung: bisher wurde `parameters` roh persistiert
+    # (`input_params=parameters`). Ein Zugangsschluessel im Tool-Aufruf
+    # landete damit im Klartext in approval_requests. prepare_for_approval_storage()
+    # verwendet dieselbe zentrale Klassifikation wie der Rest der Governance
+    # (governance/payload_check.py), aber eine eigene, zweckspezifische
+    # Behandlung: Tool-Parameter werden spaeter unveraendert ausgefuehrt, ein
+    # Platzhaltersystem wie bei Text-Antworten wuerde die genehmigte Aktion
+    # inhaltlich veraendern. Ein Geheimnis wird deshalb nicht entfernt und
+    # gespeichert, sondern die Freigabeanfrage wird gar nicht erst angelegt.
+    entscheidung = prepare_for_approval_storage(parameters)
+    if not entscheidung.erlaubt:
+        write_audit_entry(
+            action="approval.storage_blocked",
+            metadata={
+                "tool": tool_name,
+                "reason": entscheidung.ablehnungsgrund,
+                "risk": _safe_risk_summary(risk),
+            },
+        )
+        if entscheidung.ablehnungsgrund == "clarification_required":
+            # Strukturiertes detail statt reinem Text: agent_runtime.py muss
+            # diesen einen Grund maschinenlesbar erkennen koennen, um den
+            # Lauf NICHT abzubrechen (siehe _is_clarification_required_error()
+            # dort) -- ohne pauschal jede 422 oder eine Textphrase abzugreifen.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "reason": "clarification_required",
+                    "message": entscheidung.nutzerhinweis,
+                },
+            )
+        if entscheidung.ablehnungsgrund == "secret_detected":
+            # Analog zu clarification_required, aber semantisch getrennt
+            # (Betreiber-Freigabe "OK Secret-UX-Finalisierung"): ein Secret
+            # blockiert nur diesen einen Schritt, nicht den gesamten Lauf.
+            # entscheidung.nutzerhinweis enthaelt nie den Secret-Wert selbst.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "reason": "credential_input_blocked",
+                    "message": entscheidung.nutzerhinweis,
+                },
+            )
+        raise HTTPException(status_code=422, detail=entscheidung.nutzerhinweis)
+
     approval = create_approval_request(
         tool=tool_name,
-        input_params=parameters,
+        input_params=entscheidung.parameter,
         risk_level=risk.risk_level,
         risk_reason=risk.reason,
     )
@@ -70,6 +116,10 @@ def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> di
             "parameters": _safe_param_summary(parameters),
             "risk": _safe_risk_summary(risk),
             "approval_status": ApprovalStatus.PENDING.value,
+            # Nur ein boolesches Signal, kein Inhalt: macht die Persistenz
+            # nachvollziehbar/auditierbar statt unkontrolliert, ohne den
+            # eigentlich unbedenklichen Geschaeftsvorgang zu blockieren.
+            "special_category_detected": entscheidung.special_category_erkannt,
         },
     )
 
@@ -79,7 +129,7 @@ def request_approval_if_needed(tool_name: str, parameters: dict[str, Any]) -> di
         "message": f"Approval required: {risk.reason}",
         "risk_level": risk.risk_level,
         "tool": tool_name,
-        "parameters": parameters,
+        "parameters": entscheidung.parameter,
     }
 
 

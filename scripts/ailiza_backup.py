@@ -321,17 +321,32 @@ def cmd_verify(args: argparse.Namespace) -> int:
         try:
             integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
             if integrity != "ok":
-                print(f"FEHLER: [3/5] SQLite integrity_check fehlgeschlagen: {integrity}", file=sys.stderr)
+                print(f"FEHLER: [3/6] SQLite integrity_check fehlgeschlagen: {integrity}", file=sys.stderr)
                 return EXIT_FEHLER
-            print("[3/5] SQLite integrity_check: ok.")
+            print("[3/6] SQLite integrity_check: ok.")
+
+            # foreign_key_check ist eigenstaendig -- integrity_check prueft die
+            # physische Seitenstruktur, nicht Fremdschluessel-Konsistenz. Eine
+            # Sicherung kann strukturell "ok" sein und trotzdem verwaiste
+            # Fremdschluessel enthalten (z.B. durch eine fruehere, ausserhalb
+            # der Anwendung erfolgte manuelle Aenderung).
+            fk_verletzungen = con.execute("PRAGMA foreign_key_check").fetchall()
+            if fk_verletzungen:
+                print(
+                    f"FEHLER: [4/6] SQLite foreign_key_check: {len(fk_verletzungen)} "
+                    "Verletzung(en) gefunden.",
+                    file=sys.stderr,
+                )
+                return EXIT_FEHLER
+            print("[4/6] SQLite foreign_key_check: keine Verletzungen.")
 
             tabellen = con.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
             if not tabellen:
-                print("FEHLER: [4/5] Keine Tabellen in der Sicherung gefunden — leeres oder falsches Paket.", file=sys.stderr)
+                print("FEHLER: [5/6] Keine Tabellen in der Sicherung gefunden — leeres oder falsches Paket.", file=sys.stderr)
                 return EXIT_FEHLER
-            print(f"[4/5] {len(tabellen)} Tabelle(n) gefunden.")
+            print(f"[5/6] {len(tabellen)} Tabelle(n) gefunden.")
 
             gesamt_zeilen = 0
             for (name,) in tabellen:
@@ -341,9 +356,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
                     continue
 
             if gesamt_zeilen == 0:
-                print("FEHLER: [5/5] Kein Inhalt vorhanden — Sicherung ist inhaltlich leer.", file=sys.stderr)
+                print("FEHLER: [6/6] Kein Inhalt vorhanden — Sicherung ist inhaltlich leer.", file=sys.stderr)
                 return EXIT_UNVOLLSTAENDIG
-            print(f"[5/5] {gesamt_zeilen} Zeile(n) über alle Tabellen — Sicherung ist inhaltlich intakt.")
+            print(f"[6/6] {gesamt_zeilen} Zeile(n) über alle Tabellen — Sicherung ist inhaltlich intakt.")
         finally:
             con.close()
 
@@ -380,6 +395,7 @@ def cmd_restore(args: argparse.Namespace) -> int:
         try:
             con = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
             integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+            fk_verletzungen_vor = con.execute("PRAGMA foreign_key_check").fetchall()
             con.close()
         except sqlite3.Error as exc:
             print(f"FEHLER: Entschlüsselte Datenbank ist beschädigt: {exc}", file=sys.stderr)
@@ -387,12 +403,40 @@ def cmd_restore(args: argparse.Namespace) -> int:
         if integrity != "ok":
             print(f"FEHLER: integrity_check vor Restore fehlgeschlagen: {integrity}", file=sys.stderr)
             return EXIT_FEHLER
+        if fk_verletzungen_vor:
+            print(
+                f"FEHLER: foreign_key_check vor Restore fehlgeschlagen: "
+                f"{len(fk_verletzungen_vor)} Verletzung(en).",
+                file=sys.stderr,
+            )
+            return EXIT_FEHLER
 
         ziel.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(tmp_db, ziel)
         _nur_eigentuemer(ziel)
 
-    print(f"Restore abgeschlossen: {ziel}")
+        # Erneute VOLLSTAENDIGE Pruefung der Datei am tatsaechlichen
+        # Zielort -- nicht nur der temporaeren Entschluesselungskopie.
+        # Beweist, dass der Kopiervorgang selbst nichts beschaedigt hat.
+        con = sqlite3.connect(f"file:{ziel}?mode=ro", uri=True)
+        try:
+            integrity_ziel = con.execute("PRAGMA integrity_check").fetchone()[0]
+            fk_verletzungen_ziel = con.execute("PRAGMA foreign_key_check").fetchall()
+        finally:
+            con.close()
+        if integrity_ziel != "ok" or fk_verletzungen_ziel:
+            print(
+                "FEHLER: Wiederhergestellte Datei an Zielort besteht die erneute "
+                f"Pruefung nicht (integrity={integrity_ziel!r}, "
+                f"fk_violations={len(fk_verletzungen_ziel)}).",
+                file=sys.stderr,
+            )
+            return EXIT_FEHLER
+        print(
+            f"Restore abgeschlossen und erneut geprueft (integrity=ok, "
+            f"foreign_key_check=ok): {ziel}"
+        )
+
     return EXIT_OK
 
 

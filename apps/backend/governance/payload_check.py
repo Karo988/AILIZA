@@ -16,6 +16,7 @@ Dateiendung.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import re
@@ -217,6 +218,238 @@ def pruefe_nutzlast(
     # ein Fehler -- und wird nicht ungeprueft durchgereicht.
     zaehler["gesperrte_felder"] = zaehler.get("gesperrte_felder", 0) + 1
     return FELD_ZURUECKGEHALTEN
+
+
+@dataclass
+class ApprovalStorageEntscheidung:
+    """Ergebnis von prepare_for_approval_storage() -- siehe dort."""
+
+    erlaubt: bool
+    parameter: dict[str, Any]
+    special_category_erkannt: bool
+    ablehnungsgrund: str | None
+    nutzerhinweis: str | None
+
+
+_APPROVAL_SECRET_BLOCKED_MESSAGE = (
+    "Diese Aktion kann nicht zur Freigabe gespeichert werden, weil die "
+    "Parameter Zugangsdaten enthalten. Bitte entfernen Sie das Geheimnis "
+    "aus der Anfrage und versuchen Sie es erneut."
+)
+_APPROVAL_CHECK_FAILED_MESSAGE = (
+    "Diese Anfrage konnte nicht sicher geprüft werden und wird deshalb "
+    "nicht zur Freigabe gespeichert. Bitte versuchen Sie es erneut."
+)
+_APPROVAL_CLARIFICATION_REQUIRED_MESSAGE = (
+    "Ich kann die Aufgabe weiterbearbeiten, brauche für diesen Schritt "
+    "aber noch eine Angabe: ein Teil der Parameter konnte nicht eindeutig "
+    "eingeordnet werden. Bitte prüfen und die Anfrage präzisiert erneut "
+    "senden."
+)
+
+def _pruefe_textfragment(text: str, ergebnis: dict[str, bool]) -> None:
+    """Kernpruefung EINES Textfragments (String-Wert oder String-Schluessel)
+    fuer prepare_for_approval_storage().
+
+    Secret-Erkennung auf dem Original, Special-Category-Erkennung auf der
+    um kanonische Redaktionsmarker bereinigten Kopie -- siehe
+    _klassifikationskopie().
+    """
+    _, geheimnis_muster = strip_secrets_with_placeholder(text)
+    klassifikation_original = classify(text)
+    klassen_original = set(getattr(klassifikation_original, "data_classes", []) or [])
+    if geheimnis_muster or DataClass.CREDENTIALS in klassen_original:
+        ergebnis["secret"] = True
+
+    klassifikationstext = _klassifikationskopie(text)
+    klassifikation = classify(klassifikationstext)
+    klassen = set(getattr(klassifikation, "data_classes", []) or [])
+    if DataClass.SPECIAL_CATEGORY in klassen:
+        ergebnis["special_category"] = True
+
+
+def _kanonische_marker() -> frozenset[str]:
+    try:
+        from .redaction_v2 import RedactionEngineV2
+    except ImportError:  # pragma: no cover
+        from governance.redaction_v2 import RedactionEngineV2
+    return RedactionEngineV2.canonical_violet_markers()
+
+
+def _klassifikationskopie(text: str) -> str:
+    """Neutralisiert AUSSCHLIESSLICH die kanonischen AILIZA-Redaktionsmarker
+    (z.B. "[GESCHWAERZT: Gesundheit - Art. 9 DSGVO]") fuer die erneute
+    Klassifikation -- NICHT fuer Secret-Erkennung, NICHT fuer die
+    gespeicherte/ausgefuehrte Nutzlast.
+
+    Hintergrund (Fall-2-Regression, Betreiber-Freigabe): der Marker selbst
+    enthaelt woertlich den Kategorienamen ("Gesundheit") und die
+    Rechtsgrundlage ("Art. 9 DSGVO"). classify() erkennt darin -- korrekt
+    nach seinen eigenen Regeln, aber hier fehlerhaft angewendet -- erneut
+    SPECIAL_CATEGORY, obwohl an dieser Stelle bereits redigiert wurde. Der
+    Marker beschreibt nur, DASS redigiert wurde, er enthaelt selbst keine
+    besondere personenbezogene Information.
+
+    Nur EXAKTE kanonische Marker werden ersetzt (String-Vergleich, keine
+    Wildcard wie r"\\[GESCHWAERZT:.*\\]"). Ein erfundener oder manipulierter
+    Marker -- z.B. "[GESCHWAERZT: HIV - Art. 9 DSGVO]", der so nie von
+    RedactionEngineV2 erzeugt wird -- bleibt unveraendert und damit
+    klassifizierbar.
+    """
+    for marker in _kanonische_marker():
+        text = text.replace(marker, "[AILIZA_REDACTED]")
+    return text
+
+
+def _scanne_tool_parameter(wert: Any, ergebnis: dict[str, bool], tiefe: int = 0) -> None:
+    """Klassifiziert Tool-Parameter LESEND -- ohne sie zu veraendern.
+
+    Anders als pruefe_nutzlast() (die einen bereinigten Wert zurueckgibt)
+    darf diese Funktion die Werte nicht umschreiben: Tool-Parameter werden
+    spaeter unveraendert zur Ausfuehrung gebraucht, ein Platzhaltersystem
+    wie bei Text-Antworten existiert dafuer nicht. Sie meldet nur, OB ein
+    Geheimnis-Muster oder eine besondere Kategorie vorkommt.
+
+    Secret-Pruefung IMMER auf dem Originaltext -- niemals auf der
+    Klassifikationskopie, sonst koennte ein manipuliertes Markerformat ein
+    Secret verstecken. Special-Category-Pruefung dagegen auf der
+    Klassifikationskopie, in der nur die kanonischen Redaktionsmarker
+    neutralisiert sind (siehe _klassifikationskopie()).
+    """
+    if tiefe > MAX_NUTZLAST_TIEFE:
+        ergebnis["nicht_bewertbar"] = True
+        return
+
+    if isinstance(wert, str):
+        if not wert:
+            return
+        _pruefe_textfragment(wert, ergebnis)
+        return
+
+    if isinstance(wert, dict):
+        for schluessel, unterwert in wert.items():
+            # Derselbe Scanner fuer Schluessel wie fuer Werte -- ein
+            # Schluessel wie {"HIV": True} ist genauso Inhalt wie ein Wert
+            # (Betreiber-Freigabe: bisher wurden Schluessel nur auf
+            # Geheimnisse geprueft, nicht auf besondere Kategorien).
+            if isinstance(schluessel, str) and schluessel:
+                _pruefe_textfragment(schluessel, ergebnis)
+            elif not isinstance(schluessel, (str, int, float, bool)) and schluessel is not None:
+                # Nicht-primitiver Schluesseltyp widerspricht dem fuer
+                # input_params vorgesehenen JSON-artigen Datenmodell --
+                # fail-closed statt zu raten.
+                ergebnis["nicht_bewertbar"] = True
+            _scanne_tool_parameter(unterwert, ergebnis, tiefe + 1)
+        return
+
+    if isinstance(wert, (list, tuple)):
+        for element in wert:
+            _scanne_tool_parameter(element, ergebnis, tiefe + 1)
+        return
+
+    if wert is None or isinstance(wert, (bool, int, float)):
+        # Kein Textinhalt -- nichts, worin ein Geheimnis oder eine
+        # besondere Kategorie stehen koennte.
+        return
+
+    # Unbekannter Typ (z.B. bytes): nicht sicher als "kein Geheimnis"
+    # einstufbar. Sicherheitsreview-Fund: die erste Fassung liess einen
+    # nicht behandelten Typ stillschweigend als unauffaellig durch. Fail-
+    # closed statt zu raten.
+    ergebnis["nicht_bewertbar"] = True
+
+
+def prepare_for_approval_storage(parameters: dict[str, Any]) -> ApprovalStorageEntscheidung:
+    """Klassifiziert Tool-Parameter vor der Persistenz in approval_requests.
+
+    approval_requests.input_params ist technischer Ausfuehrungsspeicher:
+    execute_approved_tool() liest genau diese Werte spaeter zur tatsaechlichen
+    Ausfuehrung der genehmigten Aktion. Deshalb gilt hier eine andere Policy
+    als bei einer Provider-Antwort oder einem Laufergebnis:
+
+      * Operative Geschaeftsdaten und gewoehnliche personenbezogene Daten
+        bleiben UNVERAENDERT. Eine Wiedereinsetzung wie bei Text-Antworten
+        ist hier nicht moeglich -- es gibt kein Platzhaltersystem fuer
+        Tool-Parameter. Ein veraenderter Wert wuerde spaeter eine andere,
+        nicht die genehmigte Aktion ausfuehren.
+
+      * Ein erkanntes Geheimnis fuehrt zur SOFORTIGEN Ablehnung der
+        Freigabeanfrage -- nicht zur stillen Entfernung. Im Repository
+        existiert kein sicherer Credential-/Referenz-Speicher (geprueft:
+        `routers/vault.py`/`audit/vault.py` sind ein Audit-Hashkettenspeicher,
+        kein Secret-Store). Ohne einen solchen Speicher gibt es keine
+        Moeglichkeit, den echten Wert bei der spaeteren Ausfuehrung wieder
+        bereitzustellen; eine Ausfuehrung mit einem Platzhalter waere eine
+        stille Fehlausfuehrung mit vermeintlichem Erfolg -- schlimmer als
+        eine klare Ablehnung mit verstaendlichem naechsten Schritt.
+
+      * Eine erkannte besondere Kategorie (Art. 9/10 DSGVO) wird NICHT
+        blockiert. Betreiber-Korrektur nach einer ersten Fassung, die hier
+        einen Hardblock einfuehrte: interne Verarbeitung ist kein Egress.
+        prepare_for_approval_storage() entscheidet ausschliesslich ueber
+        einen INTERNEN technischen Ausfuehrungsspeicher -- ob ein Inhalt
+        anschliessend an einen externen Provider/Dritten gehen darf, ist
+        eine eigene, spaeter an der tatsaechlichen Egress-Entscheidung zu
+        treffende Frage (eigenes Arbeitspaket: Responsibility Handoff bei
+        nicht automatisch freigegebenem Egress). Besondere Kategorien
+        werden hier nur markiert (special_category_erkannt=True) und
+        auditiert, damit die Persistenz nicht unkontrolliert -- also
+        unsichtbar -- erfolgt.
+
+    Rueckgabe: ApprovalStorageEntscheidung. Bei erlaubt=False darf KEIN
+    approval_requests-Datensatz angelegt werden.
+    """
+    ergebnis: dict[str, bool] = {}
+    try:
+        _scanne_tool_parameter(parameters, ergebnis)
+    except Exception:
+        # Fail-closed: eine nicht bewertbare Nutzlast wird wie ein
+        # Geheimnis-Fund behandelt, nicht stillschweigend gespeichert.
+        return ApprovalStorageEntscheidung(
+            erlaubt=False,
+            parameter={},
+            special_category_erkannt=False,
+            ablehnungsgrund="check_failed",
+            nutzerhinweis=_APPROVAL_CHECK_FAILED_MESSAGE,
+        )
+
+    # Reihenfolge bewusst: Secret zuerst. Ein Text mit Secret UND
+    # nicht_bewertbarem Rest soll als "secret_detected" gemeldet werden --
+    # die konkretere, sicherheitskritischere Diagnose gewinnt.
+    if ergebnis.get("secret"):
+        return ApprovalStorageEntscheidung(
+            erlaubt=False,
+            parameter={},
+            special_category_erkannt=False,
+            ablehnungsgrund="secret_detected",
+            nutzerhinweis=_APPROVAL_SECRET_BLOCKED_MESSAGE,
+        )
+
+    # nicht_bewertbar ist KEIN Sicherheitsfund -- hier fehlt lediglich
+    # Information fuer eine sichere Entscheidung (unbekannter Typ, zu tief
+    # verschachtelt, nicht-primitiver Dict-Schluessel). Betreiber-Korrektur:
+    # das ist "clarification_required", nicht "check_failed"/Secret-artig.
+    # agent_runtime.py behandelt diesen Grund gesondert und bricht den Lauf
+    # NICHT ab (siehe _ist_clarification_required() dort).
+    if ergebnis.get("nicht_bewertbar"):
+        return ApprovalStorageEntscheidung(
+            erlaubt=False,
+            parameter={},
+            special_category_erkannt=False,
+            ablehnungsgrund="clarification_required",
+            nutzerhinweis=_APPROVAL_CLARIFICATION_REQUIRED_MESSAGE,
+        )
+
+    # Special Category blockiert hier NICHT -- interne Verarbeitung ist
+    # kein Egress (Betreiber-Korrektur). Sie wird lediglich markiert, damit
+    # eine spaetere Egress-Entscheidung sie erkennen kann.
+    return ApprovalStorageEntscheidung(
+        erlaubt=True,
+        parameter=parameters,
+        special_category_erkannt=bool(ergebnis.get("special_category")),
+        ablehnungsgrund=None,
+        nutzerhinweis=None,
+    )
 
 
 def sichere_fassung_fuer_speicherung(wert: Any) -> Any:

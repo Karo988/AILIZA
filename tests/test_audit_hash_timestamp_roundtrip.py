@@ -75,7 +75,7 @@ def test_memory_suggestion_audit_entries_verify_ok():
         suggested_title="x", suggested_content="y",
         suggested_purpose="z", source_type="user_confirmation",
     )
-    dbmod.confirm_memory_suggestion(s["id"], confirmed_by="alice")
+    dbmod.confirm_memory_suggestion(s["id"], confirmed_by="alice", tenant_id="default")
     result = verify_audit_chain(tenant_id="default")
     assert result["ok"] is True
     assert result["first_invalid_id"] is None

@@ -4198,7 +4198,8 @@ def api_confirm_memory_suggestion(
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
     try:
         result = confirm_memory_suggestion(
-            suggestion_id, confirmed_by=user.user_id, reviewer_role=user.role,
+            suggestion_id, confirmed_by=user.user_id, tenant_id=user.tenant_id,
+            reviewer_role=user.role, user_id=user.user_id,
         )
     except MemoryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4214,7 +4215,12 @@ def api_reject_memory_suggestion(
     own = {s["id"] for s in list_memory_suggestions_for_user(user.user_id, user.tenant_id, status=None)}
     if suggestion_id not in own:
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.")
-    reject_memory_suggestion(suggestion_id, reviewed_by=user.user_id)
+    try:
+        reject_memory_suggestion(
+            suggestion_id, reviewed_by=user.user_id, tenant_id=user.tenant_id, user_id=user.user_id,
+        )
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.") from exc
     return {"status": "rejected", "id": suggestion_id}
 
 
