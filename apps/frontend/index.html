@@ -390,6 +390,8 @@ body{
     <div id="account-menu-wrap" style="position:relative">
       <button class="btn-ghost" id="topbar-auth-btn" onclick="toggleAccountMenu()" style="font-size:12px;padding:5px 10px">Anmelden</button>
       <div id="account-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--bg-elevated,#fff);border:1px solid var(--border,#ddd);border-radius:8px;min-width:210px;box-shadow:0 6px 16px rgba(0,0,0,.15);z-index:50;overflow:hidden">
+        <div class="side-item" onclick="showView('status',null);closeAccountMenu()"><span class="side-ic">🛡️</span><span>Compliance</span></div>
+        <div class="side-item" onclick="showView('wissen',null);closeAccountMenu()"><span class="side-ic">📚</span><span>Wissensbibliothek</span></div>
         <div class="side-item" onclick="showView('agb',null);closeAccountMenu()"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
         <div class="side-item" onclick="showView('impressum',null);closeAccountMenu()"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
         <div class="side-item" id="account-logout-item" style="display:none" onclick="doLogout();closeAccountMenu()"><span class="side-ic">🚪</span><span>Abmelden</span></div>
@@ -402,19 +404,19 @@ body{
   <div class="sidebar" id="sidebar">
     <div class="side-section">
       <div class="side-item active" onclick="newChat();this.classList.add('active');closeSidebar()"><span class="side-ic">💬</span><span>Neuer Chat</span></div>
-      <div class="side-item" onclick="showView('projects',this);closeSidebar()"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
+      <div class="side-item" onclick="toggleProjectList()"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
+      <div id="proj-panel" style="display:none;padding:0 10px 8px 34px">
+        <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div></div>
+        <div class="side-add" onclick="openProjModal()">＋ Neues Projekt</div>
+      </div>
       <div class="side-item" onclick="toggleFolderList()"><span class="side-ic">🗂️</span><span>Ordner</span></div>
+      <div id="folder-panel" style="display:none;padding:0 10px 8px 34px">
+        <div id="folder-list"></div>
+        <div class="side-add" onclick="addFolder()">＋ Ordner</div>
+      </div>
       <div class="side-item" onclick="showView('skills',this);closeSidebar()"><span class="side-ic">⚡</span><span>Skills</span></div>
-      <div class="side-item" onclick="showView('status',this);closeSidebar()"><span class="side-ic">🛡️</span><span>Compliance</span></div>
-      <div class="side-item" onclick="showView('wissen',this);closeSidebar()"><span class="side-ic">📚</span><span>Wissensbibliothek</span></div>
-    </div>
-    <div class="side-section">
-      <div class="side-label">Projekte</div>
-      <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div></div>
-      <div class="side-add" onclick="openProjModal()">＋ Neues Projekt</div>
-      <div class="side-label" style="cursor:pointer;margin-top:8px;user-select:none" onclick="toggleFolderList()"><span id="folder-toggle-ic">▸</span> Ordner</div>
-      <div id="folder-list" style="display:none"></div>
-      <div class="side-add" id="folder-add-btn" style="display:none" onclick="addFolder()">＋ Ordner</div>
+      <div class="side-item" onclick="showView('connectors',this);closeSidebar()"><span class="side-ic">🔌</span><span>Connectoren</span></div>
+      <div class="side-item" onclick="showView('database',this);closeSidebar()"><span class="side-ic">🗄️</span><span>Datenbank</span></div>
     </div>
     <div class="side-section">
       <div class="side-label">Letzte Chats</div>
@@ -668,6 +670,20 @@ body{
         <div class="page-head"><div><div class="page-title">Wissensbibliothek</div><div class="page-sub">Fertige Vorlagen und Prompts für KMU — einfach anklicken und loslegen</div></div></div>
         <div class="wissen-cats" id="wissen-cats"></div>
         <div class="wissen-grid" id="wissen-grid"></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-connectors">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Connectoren</div><div class="page-sub">In Vorbereitung</div></div></div>
+        <div style="padding:40px 10px;color:var(--text-muted);font-size:13px">Diese Ansicht ist noch nicht implementiert.</div>
+      </div>
+    </div>
+
+    <div class="view" id="view-database">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Datenbank</div><div class="page-sub">In Vorbereitung</div></div></div>
+        <div style="padding:40px 10px;color:var(--text-muted);font-size:13px">Diese Ansicht ist noch nicht implementiert.</div>
       </div>
     </div>
 
@@ -1705,11 +1721,12 @@ function renderFolders(){document.getElementById("folder-list").innerHTML=folder
 function addFolder(){const n=prompt("Ordnername:");if(!n)return;folders.push(n);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
 function deleteFolder(i){folders.splice(i,1);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
 function toggleFolderList(){
-  const list=document.getElementById("folder-list"),btn=document.getElementById("folder-add-btn"),ic=document.getElementById("folder-toggle-ic");
-  const open=list.style.display==="none";
-  list.style.display=open?"block":"none";
-  btn.style.display=open?"block":"none";
-  ic.textContent=open?"▾":"▸";
+  const panel=document.getElementById("folder-panel");
+  panel.style.display=panel.style.display==="none"?"block":"none";
+}
+function toggleProjectList(){
+  const panel=document.getElementById("proj-panel");
+  panel.style.display=panel.style.display==="none"?"block":"none";
 }
 function renderRecent(){
   const chats=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
