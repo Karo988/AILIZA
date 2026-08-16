@@ -387,7 +387,14 @@ body{
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
     <span id="sync-status" title="" style="font-size:12px;display:none;cursor:default"></span>
-    <button class="btn-ghost" id="topbar-auth-btn" onclick="openLoginModal()" style="font-size:12px;padding:5px 10px">Anmelden</button>
+    <div id="account-menu-wrap" style="position:relative">
+      <button class="btn-ghost" id="topbar-auth-btn" onclick="toggleAccountMenu()" style="font-size:12px;padding:5px 10px">Anmelden</button>
+      <div id="account-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--bg-elevated,#fff);border:1px solid var(--border,#ddd);border-radius:8px;min-width:210px;box-shadow:0 6px 16px rgba(0,0,0,.15);z-index:50;overflow:hidden">
+        <div class="side-item" onclick="showView('agb',null);closeAccountMenu()"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
+        <div class="side-item" onclick="showView('impressum',null);closeAccountMenu()"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
+        <div class="side-item" id="account-logout-item" style="display:none" onclick="doLogout();closeAccountMenu()"><span class="side-ic">🚪</span><span>Abmelden</span></div>
+      </div>
+    </div>
   </div>
 </div>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -396,26 +403,23 @@ body{
     <div class="side-section">
       <div class="side-item active" onclick="newChat();this.classList.add('active');closeSidebar()"><span class="side-ic">💬</span><span>Neuer Chat</span></div>
       <div class="side-item" onclick="showView('projects',this);closeSidebar()"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
+      <div class="side-item" onclick="toggleFolderList()"><span class="side-ic">🗂️</span><span>Ordner</span></div>
       <div class="side-item" onclick="showView('skills',this);closeSidebar()"><span class="side-ic">⚡</span><span>Skills</span></div>
       <div class="side-item" onclick="showView('status',this);closeSidebar()"><span class="side-ic">🛡️</span><span>Compliance</span></div>
-      <div class="side-item" onclick="showView('impressum',this);closeSidebar()"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
       <div class="side-item" onclick="showView('wissen',this);closeSidebar()"><span class="side-ic">📚</span><span>Wissensbibliothek</span></div>
-      <div class="side-item" onclick="showView('agb',this);closeSidebar()"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
-    </div>
-    <div class="side-section">
-      <div class="side-label">Letzte Chats</div>
-      <div class="side-scroll" id="recent-chats" style="max-height:200px"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div></div>
-      <div class="side-add" onclick="newChat()">＋ Neuer Chat</div>
     </div>
     <div class="side-section">
       <div class="side-label">Projekte</div>
       <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div></div>
       <div class="side-add" onclick="openProjModal()">＋ Neues Projekt</div>
+      <div class="side-label" style="cursor:pointer;margin-top:8px;user-select:none" onclick="toggleFolderList()"><span id="folder-toggle-ic">▸</span> Ordner</div>
+      <div id="folder-list" style="display:none"></div>
+      <div class="side-add" id="folder-add-btn" style="display:none" onclick="addFolder()">＋ Ordner</div>
     </div>
     <div class="side-section">
-      <div class="side-label">Ordner</div>
-      <div id="folder-list"></div>
-      <div class="side-add" onclick="addFolder()">＋ Ordner</div>
+      <div class="side-label">Letzte Chats</div>
+      <div class="side-scroll" id="recent-chats" style="max-height:200px"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div></div>
+      <div class="side-add" onclick="newChat()">＋ Neuer Chat</div>
     </div>
     <div style="flex:1"></div>
     <div class="side-footer">AILIZA · EU AI Act Art. 50<br><span style="color:var(--accent)">Limited Risk · DSGVO</span></div>
@@ -967,7 +971,7 @@ let currentChatId=null;
 let activeProjectId=null;
 let activeRedactionMap={}; // hält Platzhalter → Originalwert für aktuelle Anfrage
 let projects=[];
-let folders=["Compliance","Recherche","Entwürfe"];
+let folders=["Compliance","Recherche","Entwürfe","Buchhaltung","Fakturierung"];
 let tools={search:true,auto:true};
 let context=[];
 function reloadScopedState(){
@@ -975,7 +979,7 @@ function reloadScopedState(){
   currentChatId=localStorage.getItem(scopedKey("ailiza_current_chat_id"))||null;
   activeProjectId=localStorage.getItem(scopedKey("ailiza_active_project_id"))||null;
   projects=JSON.parse(localStorage.getItem(scopedKey("ailiza_projects"))||"[]");
-  folders=JSON.parse(localStorage.getItem(scopedKey("ailiza_folders"))||'["Compliance","Recherche","Entwürfe"]');
+  folders=JSON.parse(localStorage.getItem(scopedKey("ailiza_folders"))||'["Compliance","Recherche","Entwürfe","Buchhaltung","Fakturierung"]');
   tools=JSON.parse(localStorage.getItem(scopedKey("ailiza_tools"))||'{"search":true,"auto":true}');
   context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));
 }
@@ -985,7 +989,7 @@ function resetAppState(){
   // nutzerbezogene) Daten geladen werden. Keine Wiederverwendung alter
   // In-Memory-Objekte (neue Arrays/Objekte statt .length=0 etc.).
   chatHistory=[];currentChatId=null;activeProjectId=null;projects=[];
-  folders=["Compliance","Recherche","Entwürfe"];tools={search:true,auto:true};context=[];
+  folders=["Compliance","Recherche","Entwürfe","Buchhaltung","Fakturierung"];tools={search:true,auto:true};context=[];
   const input=document.getElementById("chat-input");
   if(input)input.value="";
 }
@@ -1543,8 +1547,10 @@ async function refreshAuthButton(){
       // demselben Browser), werden Chats/Projekte NEU aus dem eigenen,
       // scope-gebundenen localStorage geladen -- nie die des vorherigen Scopes.
       applyScopeAndRerender({type:"user",userId:me.user_id||"unknown",tenantId:me.tenant_id||"default"});
-      btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
-      btn.onclick=doLogout;
+      btn.textContent=`${me.user_id||"Konto"} ▾`;
+      btn.onclick=toggleAccountMenu;
+      const logoutItem=document.getElementById("account-logout-item");
+      if(logoutItem)logoutItem.style.display="block";
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
     }
@@ -1552,7 +1558,26 @@ async function refreshAuthButton(){
   applyScopeAndRerender({type:"anon"});
   btn.textContent="Anmelden";
   btn.onclick=openLoginModal;
+  closeAccountMenu();
+  const logoutItem=document.getElementById("account-logout-item");
+  if(logoutItem)logoutItem.style.display="none";
 }
+function toggleAccountMenu(){
+  const dd=document.getElementById("account-dropdown");
+  if(!dd)return;
+  // Ausgeloggt: Klick auf den Button oeffnet weiterhin direkt das Login-Modal,
+  // kein Dropdown noetig (account-logout-item ist dann ohnehin ausgeblendet).
+  if(document.getElementById("account-logout-item").style.display==="none"){openLoginModal();return;}
+  dd.style.display=dd.style.display==="none"?"block":"none";
+}
+function closeAccountMenu(){
+  const dd=document.getElementById("account-dropdown");
+  if(dd)dd.style.display="none";
+}
+document.addEventListener("click",function(e){
+  const wrap=document.getElementById("account-menu-wrap");
+  if(wrap&&!wrap.contains(e.target))closeAccountMenu();
+});
 async function doLogout(){
   // Sofort client-seitig auf anonymen Scope umschalten, BEVOR die
   // Netzwerk-Antwort abgewartet wird -- Chats/Projekte des Kontos duerfen
@@ -1679,6 +1704,13 @@ function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.
 function renderFolders(){document.getElementById("folder-list").innerHTML=folders.map((f,i)=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${f}</span><span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span></div>`).join("")}
 function addFolder(){const n=prompt("Ordnername:");if(!n)return;folders.push(n);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
 function deleteFolder(i){folders.splice(i,1);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
+function toggleFolderList(){
+  const list=document.getElementById("folder-list"),btn=document.getElementById("folder-add-btn"),ic=document.getElementById("folder-toggle-ic");
+  const open=list.style.display==="none";
+  list.style.display=open?"block":"none";
+  btn.style.display=open?"block":"none";
+  ic.textContent=open?"▾":"▸";
+}
 function renderRecent(){
   const chats=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
   const el=document.getElementById("recent-chats");
