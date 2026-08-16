@@ -103,6 +103,19 @@ jobs:
             exit 1
           fi
 
+      - name: PostgreSQL-Memory-Tenant-Migrationstests (verpflichtend -- dürfen NICHT übersprungen werden)
+        run: |
+          set -o pipefail
+          pytest tests/test_memory_tenant_migration_postgres.py -v --tb=short | tee /tmp/pg_tenant_migration_output.txt
+          if grep -q "skipped" /tmp/pg_tenant_migration_output.txt; then
+            echo "FEHLER: PostgreSQL-Memory-Tenant-Migrationstests wurden übersprungen -- in diesem Job nicht zulässig."
+            exit 1
+          fi
+          if ! grep -q "5 passed" /tmp/pg_tenant_migration_output.txt; then
+            echo "FEHLER: Erwartet genau 5 bestandene PostgreSQL-Memory-Tenant-Migrationstests."
+            exit 1
+          fi
+
   # Eigener Job statt zusaetzlicher Schritt im bestehenden "test"-Job: ein
   # Browser- oder Server-Startfehler im E2E-Lauf soll das Python-Testergebnis
   # nicht unuebersichtlich machen (getrennte, klar zuordenbare CI-Ergebnisse).
