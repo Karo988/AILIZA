@@ -6,12 +6,13 @@ Verbindliche Zielregeln:
   user_memory:    scope=="user_memory", owner_user_id PFLICHT
   company_memory: scope=="company_memory", tenant_id PFLICHT, owner_user_id MUSS NULL sein
 
-Diese Tests decken KEINE Migration von Bestandsdaten ab (Freigabe der
-Nutzerin: "keine bekannten Bestandsdaten" -- additiv, idempotent,
-fail-safe implementiert). Sie pruefen:
+Seit Knowledge Phase 1 (Revision c8ff9bb332ba) ist memory_items.tenant_id
+fuer JEDEN Scope Datenbank-Pflicht -- die fruehere Uebergangsregel fuer
+Legacy-user_memory mit tenant_id=NULL ist entfallen (siehe
+tests/test_memory_tenant_integrity.py fuer den direkten DB-Beweis und die
+Cross-Tenant-Negativtests). Diese Datei prueft:
   - Validierungsregeln (_validate_memory_item)
   - Sichtbarkeit fuer den Owner vs. fremde Nutzer/Tenants
-  - Uebergangsregel fuer Legacy-user_memory mit tenant_id=NULL
   - Export/Loeschung beruecksichtigen ausschliesslich user_memory
   - der rein lesende Audit-/Repair-Report (audit_memory_scope_invariants)
 """
@@ -92,27 +93,16 @@ def test_valid_company_memory_accepted():
     assert item["id"]
 
 
-# ── Legacy-Uebergang: user_memory mit tenant_id=NULL ────────────────────────
-
-def test_user_memory_with_null_tenant_is_listable_for_owner():
-    """Legacy-user_memory ohne Tenant (aus Zeit vor Tenant-Pflicht) muss
-    weiterhin fuer den Owner sichtbar sein, unabhaengig vom angefragten
-    Tenant."""
-    from apps.backend.database import engine, memory_items
-    from sqlalchemy import insert
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    with engine.begin() as conn:
-        conn.execute(insert(memory_items).values(
-            tenant_id=None, scope="user_memory", owner_user_id="legacy_alice",
-            title="alt", content="alt-inhalt", category=None, purpose="p",
-            source_id=None, status="active", created_at=now, updated_at=now,
-        ))
-    from apps.backend.database import list_active_memory_items_for_user
-    items = list_active_memory_items_for_user("legacy_alice", "default")
-    assert len(items) == 1
-    assert items[0]["tenant_id"] is None
-
+# ── Knowledge Phase 1: tenant_id ist jetzt fuer JEDEN Scope Pflicht ─────────
+# Die fruehere Uebergangsregel (Legacy-user_memory mit tenant_id=NULL bleibt
+# fuer den Owner sichtbar) ist mit der NOT-NULL-Migration (Revision
+# c8ff9bb332ba) entfallen: memory_items.tenant_id ist jetzt eine Datenbank-
+# Pflichtspalte, ein NULL-Insert ist technisch nicht mehr moeglich (siehe
+# tests/test_memory_tenant_integrity.py fuer den direkten DB-Beweis). Die
+# drei folgenden Tests ersetzen die vorherigen Legacy-NULL-Tests, die mit
+# der neuen Schema-Realitaet nicht mehr ausfuehrbar sind (ein INSERT mit
+# tenant_id=None schlaegt jetzt bereits an der DB-Constraint fehl, bevor
+# der eigentliche Testinhalt geprueft werden koennte).
 
 def test_legacy_user_memory_with_tenant_remains_findable():
     """user_memory MIT gesetztem Tenant (regulaerer Fall) bleibt selbstverstaendlich
@@ -125,20 +115,6 @@ def test_legacy_user_memory_with_tenant_remains_findable():
     )
     items = list_active_memory_items_for_user("bob", "default")
     assert len(items) == 1
-
-
-def test_null_tenant_user_memory_not_visible_to_other_users():
-    from apps.backend.database import engine, memory_items, list_active_memory_items_for_user
-    from sqlalchemy import insert
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    with engine.begin() as conn:
-        conn.execute(insert(memory_items).values(
-            tenant_id=None, scope="user_memory", owner_user_id="legacy_alice",
-            title="alt", content="alt-inhalt", purpose="p", source_id=None,
-            status="active", created_at=now, updated_at=now,
-        ))
-    assert list_active_memory_items_for_user("mallory", "default") == []
 
 
 # ── Fremder Tenant erhaelt kein company_memory ──────────────────────────────
@@ -208,26 +184,6 @@ def test_delete_own_account_data_removes_only_user_memory():
     assert len(list_active_memory_items_for_org("default")) == 1
 
 
-def test_delete_own_account_data_removes_legacy_null_tenant_user_memory():
-    from apps.backend.database import (
-        engine, memory_items, delete_own_account_data, create_user,
-        list_active_memory_items_for_user,
-    )
-    from sqlalchemy import insert
-    from datetime import datetime, timezone
-    import bcrypt
-    create_user("legacy_alice", "default", "user", bcrypt.hashpw(b"CorrectHorse123!", bcrypt.gensalt()).decode())
-    now = datetime.now(timezone.utc)
-    with engine.begin() as conn:
-        conn.execute(insert(memory_items).values(
-            tenant_id=None, scope="user_memory", owner_user_id="legacy_alice",
-            title="alt", content="c", purpose="p", source_id=None,
-            status="active", created_at=now, updated_at=now,
-        ))
-    delete_own_account_data("legacy_alice", "default")
-    assert list_active_memory_items_for_user("legacy_alice", "default") == []
-
-
 # ── Audit-/Repair-Report (rein lesend) ──────────────────────────────────────
 
 def test_audit_report_clean_state_no_violations():
@@ -242,22 +198,6 @@ def test_audit_report_clean_state_no_violations():
     assert report["violations"]["user_memory_missing_owner"] == []
     assert report["violations"]["company_memory_missing_tenant"] == []
     assert report["violations"]["company_memory_with_owner"] == []
-
-
-def test_audit_report_flags_legacy_null_tenant_as_info_not_violation():
-    from apps.backend.database import engine, memory_items, audit_memory_scope_invariants
-    from sqlalchemy import insert
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    with engine.begin() as conn:
-        conn.execute(insert(memory_items).values(
-            tenant_id=None, scope="user_memory", owner_user_id="legacy_alice",
-            title="alt", content="c", purpose="p", source_id=None,
-            status="active", created_at=now, updated_at=now,
-        ))
-    report = audit_memory_scope_invariants()
-    assert report["has_violations"] is False
-    assert len(report["info_only"]["legacy_user_memory_null_tenant"]) == 1
 
 
 def test_audit_report_detects_invariant_violation_bypassing_validation():

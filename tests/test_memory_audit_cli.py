@@ -156,6 +156,12 @@ def test_violation_json_output_is_valid_and_machine_readable(tmp_path):
     env["AILIZA_SECRET_KEY"] = "test-secret-key-minimum-32-chars-ok"
     env["AILIZA_DATABASE_URL"] = db_url
     env["AILIZA_EXTERNAL_LLM_ENABLED"] = "false"
+    # Knowledge Phase 1: memory_items.tenant_id ist jetzt NOT NULL -- ein
+    # simulierter "company_memory_missing_tenant"-Verstoss (tenant_id=None)
+    # ist damit technisch nicht mehr herstellbar (DB weist das ab, bevor
+    # der Bericht ueberhaupt geprueft werden koennte). Die andere,
+    # weiterhin moegliche Verletzung (company_memory MIT owner_user_id)
+    # dient hier als Ersatz, um denselben JSON-Berichtspfad zu pruefen.
     setup = f"""
 import sys
 sys.path.insert(0, {str(REPO_ROOT)!r})
@@ -166,7 +172,7 @@ init_db()
 now = datetime.now(timezone.utc)
 with engine.begin() as conn:
     conn.execute(insert(memory_items).values(
-        tenant_id=None, scope="company_memory", owner_user_id=None,
+        tenant_id="default", scope="company_memory", owner_user_id="sollte_leer_sein",
         title="invalid", content="c", purpose="p", source_id=None,
         status="active", created_at=now, updated_at=now,
     ))
@@ -177,7 +183,7 @@ with engine.begin() as conn:
     assert result.returncode == 1, result.stderr
     report = json.loads(result.stdout)
     assert report["has_violations"] is True
-    assert len(report["violations"]["company_memory_missing_tenant"]) == 1
+    assert len(report["violations"]["company_memory_with_owner"]) == 1
 
 
 def test_script_never_mutates_data_even_on_violation(tmp_path):

@@ -50,7 +50,7 @@ def _setup_user_with_data(user_id="alice"):
         suggested_title="Test", suggested_content="Inhalt",
         suggested_purpose="Zweck", source_type="user_confirmation",
     )
-    confirm_memory_suggestion(s["id"], confirmed_by=user_id)
+    confirm_memory_suggestion(s["id"], confirmed_by=user_id, tenant_id="default")
 
 
 # ── Export ────────────────────────────────────────────────────────────────
