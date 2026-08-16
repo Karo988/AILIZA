@@ -40,7 +40,7 @@ def test_clean_txt_is_forwarded_to_agent(monkeypatch, client):
 
     captured = {}
 
-    def fake_run_agent(request, payload, token=None):
+    def fake_run_agent(request, payload, response=None, token=None):
         captured["task"] = payload.task
         return {
             "status": "completed",
@@ -80,7 +80,7 @@ def test_prompt_injection_is_blocked_before_agent(monkeypatch, client):
 
     called = False
 
-    def fake_run_agent(request, payload, token=None):
+    def fake_run_agent(request, payload, response=None, token=None):
         nonlocal called
         called = True
         return {"status": "completed"}
@@ -112,7 +112,7 @@ def test_unsupported_extension_is_blocked(monkeypatch, client):
 
     called = False
 
-    def fake_run_agent(request, payload, token=None):
+    def fake_run_agent(request, payload, response=None, token=None):
         nonlocal called
         called = True
         return {"status": "completed"}
@@ -144,7 +144,7 @@ def test_empty_document_is_not_sent_to_agent(monkeypatch, client):
 
     called = False
 
-    def fake_run_agent(request, payload, token=None):
+    def fake_run_agent(request, payload, response=None, token=None):
         nonlocal called
         called = True
         return {"status": "completed"}
@@ -172,7 +172,7 @@ def test_document_character_limit_blocks_large_text(monkeypatch, client):
 
     called = False
 
-    def fake_run_agent(request, payload, token=None):
+    def fake_run_agent(request, payload, response=None, token=None):
         nonlocal called
         called = True
         return {"status": "completed"}
@@ -204,7 +204,7 @@ def test_consent_approval_id_is_forwarded(monkeypatch, client):
 
     captured = {}
 
-    def fake_run_agent(request, payload, token=None):
+    def fake_run_agent(request, payload, response=None, token=None):
         captured["consent_approval_id"] = payload.consent_approval_id
         return {
             "status": "completed",
@@ -255,3 +255,28 @@ def test_pii_document_uses_normal_governance_pipeline(client):
     # Keine Originaldaten in der Antwort.
     assert "Paula Ronder" not in str(body)
     assert "DE89370400440532013000" not in str(body)
+
+
+def test_anonymous_document_upload_self_issued_preview_is_actually_consumable(client):
+    """Sicherheitsreview-Fund: Ausstellung (send_preview_store.issue) und
+    Verbrauch (in _run_agent_core) des selbst ausgestellten Belegs liefen bei
+    anonymem Zugriff auf zwei VERSCHIEDENE Identitaeten
+    ("__anonymous__" vs. "anon:<session>") -- jeder anonyme Dokument-Upload
+    schlug dadurch mit preview_invalid fehl. Kein eingeloggter Nutzer, kein
+    consent_approval_id -- genau der Pfad, der den Fund verursachte."""
+    response = client.post(
+        "/documents/agent-run",
+        data={"task": "Fasse das Dokument kurz zusammen."},
+        files={
+            "file": (
+                "harmlos.txt",
+                b"Der Montag ist ein guter Tag fuer ein Teammeeting.",
+                "text/plain",
+            )
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] != "preview_invalid", (
+        f"Selbst ausgestellter Beleg war nicht einloesbar: {body}"
+    )

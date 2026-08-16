@@ -104,7 +104,7 @@ function UserBubble({ content }) {
 }
 
 // AILIZA-Blase: Mitte/links, öffnet sich animiert, Text fließt rein
-function AilizaBubble({ content, isError, notice, governance_notice, draft, isLoading }) {
+function AilizaBubble({ content, isError, isCredentialWarning, notice, governance_notice, draft, isLoading }) {
   const [displayed, setDisplayed] = useState("")
   const [open, setOpen] = useState(false)
 
@@ -141,8 +141,9 @@ function AilizaBubble({ content, isError, notice, governance_notice, draft, isLo
   }
 
   return (
-    <div className={`chat-msg assistant${isError ? " error" : ""}`}>
+    <div className={`chat-msg assistant${isError ? " error" : ""}${isCredentialWarning ? " credential-warning" : ""}`}>
       <div className={`msg-bubble ailiza-bubble ${open ? "ailiza-bubble--open" : "ailiza-bubble--closed"}`}>
+        {isCredentialWarning && <p className="chat-result-notice chat-credential-warning-label">⚠️ Sicherheitshinweis: Zugangsdaten erkannt und zurückgehalten</p>}
         <pre className="msg-text msg-text--stream">{displayed}</pre>
         {notice && <p className="chat-result-notice">{notice}</p>}
         {governance_notice && <p className="chat-result-notice">{governance_notice}</p>}
@@ -183,20 +184,21 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
     setInput("")
     setLoading(true)
 
-    const history = updatedMessages.map(m => ({ role: m.role === "error" ? "assistant" : m.role, content: m.content }))
+    const history = updatedMessages.map(m => ({ role: (m.role === "error" || m.role === "credential_warning") ? "assistant" : m.role, content: m.content }))
 
     try {
       const data = await apiFetch("/agent/run", { body: { task, history } })
       if (!data) return
 
       const status = data?.status
+      const isCredentialWarning = status === "credential_input_blocked"
       const content = status === "local_only"
         ? (data?.message || "AILIZA läuft im lokalen Modus.")
         : (data?.ai_response || data?.message || "Keine Antwort erhalten.")
       const isError = status === "failed" || status === "blocked"
 
       const assistantMsg = {
-        role: isError ? "error" : "assistant",
+        role: isError ? "error" : isCredentialWarning ? "credential_warning" : "assistant",
         content,
         id: Date.now(),
         notice: data?.notice,
@@ -297,6 +299,7 @@ export default function AgentChat({ onRunComplete, initialMessages = [], onMessa
               key={msg.id}
               content={msg.content}
               isError={msg.role === "error"}
+              isCredentialWarning={msg.role === "credential_warning"}
               notice={msg.notice}
               governance_notice={msg.governance_notice}
               draft={msg.draft}

@@ -76,6 +76,84 @@ except ImportError:
     pass
 
 
+_SQLITE_FILE_PREFIX = "sqlite:///"
+
+
+def _sqlite_file_path(database_url: str) -> str | None:
+    """Absoluter Dateipfad, wenn `database_url` eine dateibasierte
+    SQLite-URL ist -- sonst None (":memory:" oder anderer Dialekt wie
+    PostgreSQL)."""
+    if not database_url.startswith(_SQLITE_FILE_PREFIX):
+        return None
+    tail = database_url[len(_SQLITE_FILE_PREFIX):]
+    if tail.startswith(":"):
+        return None  # sqlite:///:memory:
+    return tail
+
+
+def _open_readonly_sqlite_engine(db_path: str):
+    """Oeffnet eine EIGENE, rein lesende Verbindung zur SQLite-Datei --
+    getrennt von der schreibfaehigen, anwendungsweiten `engine` aus
+    database.py. Zwei unabhaengige technische Schranken statt nur einer:
+
+    1. URI-Modus `mode=ro`: SQLite oeffnet die Datei betriebssystemseitig
+       nur lesend. Anders als eine gewoehnliche `sqlite:///pfad`-Verbindung
+       legt das die Datei NICHT an, wenn sie fehlt (die schreibfaehige
+       Standardverbindung wuerde das tun -- siehe Docstring von main()).
+    2. `PRAGMA query_only = ON`: zusaetzliche SQLite-interne Sperre. Selbst
+       wenn `mode=ro` durch einen zukuenftigen Code-/Config-Fehler entfaellt,
+       weist SQLite jede schreibende Anweisung auf dieser Verbindung mit
+       "attempt to write a readonly database" zurueck (siehe
+       tests/test_memory_audit_cli.py::test_readonly_connection_rejects_a_deliberate_write).
+
+    Kein Effekt auf die globale `engine` aus database.py -- diese Funktion
+    erzeugt eine vollstaendig unabhaengige zweite Engine, nur fuer die
+    Dauer dieses Audit-Laufs."""
+    from sqlalchemy import create_engine, event
+
+    ro_engine = create_engine(f"sqlite:///file:{db_path}?mode=ro&uri=true")
+
+    @event.listens_for(ro_engine, "connect")
+    def _enforce_query_only(dbapi_connection, connection_record) -> None:  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA query_only = ON")
+        finally:
+            cursor.close()
+
+    return ro_engine
+
+
+def _open_readonly_postgres_engine(database_url: str):
+    """Oeffnet fuer PostgreSQL (Render/Neon-Dialekt: postgresql+psycopg://)
+    eine EIGENE Engine, deren Verbindungen ALLE Anweisungen in einer
+    READ ONLY-Transaktion ausfuehren -- serverseitig durchgesetzt (nicht
+    nur clientseitiger Code-Verzicht auf Schreib-SQL).
+
+    Technik: `execution_options(postgresql_readonly=True)` laesst
+    SQLAlchemys PostgreSQL-Dialekt bei Verbindungsaufbau
+    `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` (psycopg2/
+    psycopg) setzen. Ein INSERT/UPDATE/DELETE auf einer so geoeffneten
+    Verbindung wird vom PostgreSQL-Server selbst mit
+    `psycopg.errors.ReadOnlySqlTransaction` ("cannot execute ... in a
+    read-only transaction") abgewiesen -- lokal gegen eine isolierte
+    Testinstanz nachgewiesen, siehe
+    tests/test_memory_audit_cli.py::test_postgres_readonly_connection_rejects_a_deliberate_write.
+
+    Getrennt von der schreibfaehigen, anwendungsweiten `engine` aus
+    database.py -- eine vollstaendig unabhaengige zweite Engine, nur fuer
+    die Dauer dieses Audit-Laufs. SQLite-Verhalten (siehe
+    _open_readonly_sqlite_engine oben) bleibt davon unberuehrt."""
+    from sqlalchemy import create_engine
+
+    ro_engine = create_engine(database_url).execution_options(postgresql_readonly=True)
+    return ro_engine
+
+
+def _is_postgres_url(database_url: str) -> bool:
+    return database_url.startswith("postgresql")
+
+
 def _summarize(report: dict) -> dict:
     """Reduziert einen Bericht auf reine Zaehlwerte -- keine internen
     ID-Listen. Fuer Ausgaben in oeffentlich einsehbare Logs (siehe
@@ -127,17 +205,76 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    ro_engine = None
     try:
-        from apps.backend.database import audit_memory_scope_invariants, init_db
-        # Eigenstaendiger CLI-Einstiegspunkt (kein main.py/FastAPI-Lifespan
-        # davor) -- Schema-Bootstrap deshalb hier explizit, analog zum
-        # Anwendungsstart. init_db() ist idempotent (checkfirst) und
-        # veraendert keine vorhandenen Audit-/Fachdaten.
-        init_db()
-        report = audit_memory_scope_invariants()
+        from sqlalchemy import inspect
+        from apps.backend.database import audit_memory_scope_invariants, DATABASE_URL, engine
+
+        db_path = _sqlite_file_path(DATABASE_URL)
+        if db_path is not None:
+            # Existenzpruefung VOR jeder Verbindung: eine gewoehnliche
+            # SQLite-Verbindung (auch eine rein lesende `inspect()`-Anfrage
+            # ueber die schreibfaehige Standard-Engine) legt eine fehlende
+            # Datei beim Verbindungsaufbau selbst an. Ein Audit darf aber
+            # niemals eine Datenbankdatei erzeugen -- deshalb hier ein
+            # reiner Dateisystem-Check, bevor SQLAlchemy/SQLite ueberhaupt
+            # ins Spiel kommt.
+            if not Path(db_path).exists():
+                print(
+                    f"❌ Audit fehlgeschlagen: Datenbankdatei nicht gefunden: {db_path} "
+                    "-- wird von diesem Audit nicht angelegt.",
+                    file=sys.stderr,
+                )
+                return 2
+            # Ab hier ausschliesslich ueber eine dedizierte Read-only-
+            # Verbindung (mode=ro + PRAGMA query_only) -- siehe
+            # _open_readonly_sqlite_engine(). Die schreibfaehige,
+            # anwendungsweite `engine` wird fuer diesen Audit-Lauf gar
+            # nicht mehr angefasst.
+            ro_engine = _open_readonly_sqlite_engine(db_path)
+            target_engine = ro_engine
+        elif _is_postgres_url(DATABASE_URL):
+            # PostgreSQL (Render/Neon): serverseitig durchgesetzte
+            # READ ONLY-Transaktion statt des SQLite-spezifischen
+            # mode=ro-URI-Tricks -- siehe _open_readonly_postgres_engine().
+            # Auch hier ausschliesslich ueber eine dedizierte, von der
+            # schreibfaehigen App-Engine getrennte Verbindung.
+            ro_engine = _open_readonly_postgres_engine(DATABASE_URL)
+            target_engine = ro_engine
+        else:
+            # ":memory:"-SQLite-Datenbanken (nur in Tests relevant) oder
+            # ein anderer, nicht gesondert behandelter Dialekt: Fallback
+            # auf die bestehende, code-seitige Read-only-Garantie (nur
+            # SELECTs, siehe audit_memory_scope_invariants()) -- keine
+            # zusaetzliche Verbindungs-Ebene-Schranke fuer diese Faelle.
+            target_engine = engine
+
+        # Rein lesende Existenzpruefung -- kein init_db()/create_all() mehr:
+        # Dieses CLI bezeichnet sich als read-only und darf auch technisch
+        # niemals Schema anlegen oder aendern (auch nicht "nur" additiv per
+        # ensure_sqlite_schema()). Fehlt eine Tabelle, bricht der Audit hier
+        # verstaendlich ab, statt sie stillschweigend zu erzeugen.
+        insp = inspect(target_engine)
+        missing = [t for t in ("memory_items", "memory_visibility") if not insp.has_table(t)]
+        if missing:
+            print(
+                f"❌ Audit fehlgeschlagen: Tabelle(n) fehlen: {', '.join(missing)} "
+                "-- Schema muss bereits migriert sein, wird von diesem Audit nicht angelegt.",
+                file=sys.stderr,
+            )
+            return 2
+
+        if ro_engine is not None:
+            with ro_engine.connect() as conn:
+                report = audit_memory_scope_invariants(conn=conn)
+        else:
+            report = audit_memory_scope_invariants()
     except Exception as exc:
         print(f"❌ Audit fehlgeschlagen: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
+    finally:
+        if ro_engine is not None:
+            ro_engine.dispose()
 
     has_violations = report["has_violations"]
     output_report = _summarize(report) if args.summary_only else report

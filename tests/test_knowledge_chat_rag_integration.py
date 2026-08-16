@@ -159,6 +159,17 @@ def _auth(user_id: str):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _preview_id(client, task: str, headers: dict) -> str:
+    """/agent/run verlangt seit dem P0-Schutzgate verpflichtend einen
+    Pruefbeleg fuer den exakten Rohtext -- ohne ihn liefert der Endpunkt
+    status=preview_invalid statt die eigentliche Chat-Logik zu erreichen."""
+    resp = client.post("/api/policy-redact", json={"text": task}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    preview_id = resp.json().get("preview_id")
+    assert preview_id, f"Kein Pruefbeleg fuer Testtext ausgestellt: {resp.json()}"
+    return preview_id
+
+
 def test_agent_run_includes_knowledge_context_in_llm_task(client, monkeypatch):
     import apps.backend.main as main_module
 
@@ -166,15 +177,16 @@ def test_agent_run_includes_knowledge_context_in_llm_task(client, monkeypatch):
     h = _auth("alice")
     captured: dict[str, str] = {}
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         captured["task"] = task
         return f"Laut [Quelle 1] sind es 30 Tage.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
 
+    task = "Bitte schreibe: Wie ist die Urlaubsregelung?"
     response = client.post(
         "/agent/run",
-        json={"task": "Bitte schreibe: Wie ist die Urlaubsregelung?"},
+        json={"task": task, "preview_id": _preview_id(client, task, h)},
         headers=h,
     )
     assert response.status_code == 200
@@ -193,7 +205,7 @@ def test_agent_run_normal_chat_without_hits_has_no_hint(client, monkeypatch):
     create_user(user_id="alice", tenant_id="default", role="user", hashed_password="hash")
     h = _auth("alice")
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Das Wetter ist heute sonnig.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
@@ -220,13 +232,14 @@ def test_agent_run_search_failure_does_not_break_chat(client, monkeypatch):
 
     monkeypatch.setattr(main_module, "build_knowledge_context", _boom)
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Normale Antwort trotz kaputter Suche.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
 
+    task = "Bitte schreibe: Test"
     response = client.post(
-        "/agent/run", json={"task": "Bitte schreibe: Test"}, headers=h,
+        "/agent/run", json={"task": task, "preview_id": _preview_id(client, task, h)}, headers=h,
     )
     assert response.status_code == 200
     body = response.json()
@@ -236,7 +249,7 @@ def test_agent_run_search_failure_does_not_break_chat(client, monkeypatch):
 def test_agent_run_without_token_skips_knowledge_context(client, monkeypatch):
     import apps.backend.main as main_module
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Anonyme Antwort.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)

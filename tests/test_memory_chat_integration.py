@@ -156,6 +156,16 @@ def _auth(user_id: str):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _preview_id(client, task: str, headers: dict) -> str:
+    """/agent/run verlangt seit dem P0-Schutzgate verpflichtend einen
+    Pruefbeleg fuer den exakten Rohtext."""
+    resp = client.post("/api/policy-redact", json={"text": task}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    preview_id = resp.json().get("preview_id")
+    assert preview_id, f"Kein Pruefbeleg fuer Testtext ausgestellt: {resp.json()}"
+    return preview_id
+
+
 def test_agent_run_creates_suggestion_without_blocking_answer(client, monkeypatch):
     import apps.backend.main as main_module
     from apps.backend.database import list_memory_suggestions_for_user
@@ -163,12 +173,17 @@ def test_agent_run_creates_suggestion_without_blocking_answer(client, monkeypatc
     _make_user_with_settings("alice")
     h = _auth("alice")
 
-    def fake_ask_llm_directly(task, history=None):
+    def fake_ask_llm_directly(task, history=None, **kw):
         return "Verstanden, notiert.", None, {}
 
     monkeypatch.setattr(main_module, "_ask_llm_directly", fake_ask_llm_directly)
 
-    response = client.post("/agent/run", json={"task": "Bitte schreibe: Unser Projekt X hat als Ziel Y."}, headers=h)
+    task = "Bitte schreibe: Unser Projekt X hat als Ziel Y."
+    response = client.post(
+        "/agent/run",
+        json={"task": task, "preview_id": _preview_id(client, task, h)},
+        headers=h,
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["status"] in ("completed", "draft")
@@ -199,7 +214,7 @@ def test_list_confirm_reject_own_suggestion(client):
 
     r2 = client.post(f"/api/memory-suggestions/{s['id']}/confirm", headers=h)
     assert r2.status_code == 200
-    item = get_memory_item(r2.json()["memory_item_id"])
+    item = get_memory_item(r2.json()["memory_item_id"], tenant_id="default")
     assert item["status"] == "active"
 
 

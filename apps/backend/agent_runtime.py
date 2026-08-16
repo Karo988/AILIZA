@@ -23,6 +23,7 @@ try:
         write_audit_entry,
     )
     from .gateway import execute_approved_tool, guarded_tool_call
+    from .governance.payload_check import sichere_fassung_fuer_speicherung
 except ImportError:
     from apps.backend.classifier import classify, InputRiskLevel
     from apps.backend.redactor import redact
@@ -36,6 +37,7 @@ except ImportError:
         write_audit_entry,
     )
     from apps.backend.gateway import execute_approved_tool, guarded_tool_call
+    from apps.backend.governance.payload_check import sichere_fassung_fuer_speicherung
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], dict[str, Any]]
@@ -65,6 +67,37 @@ def _is_missing_provider_error(exc: HTTPException) -> bool:
     return isinstance(exc.detail, str) and any(
         marker in exc.detail for marker in _MISSING_PROVIDER_DETAILS
     )
+
+
+def _is_clarification_required_error(exc: HTTPException) -> bool:
+    """Erkennt EXAKT den `clarification_required`-Fall aus
+    governance/payload_check.py -- keine generische 422-Behandlung.
+
+    Betreiber-Freigabe: `payload_check.prepare_for_approval_storage()`
+    unterscheidet einen echten Sicherheitsfund (Secret) von einer nicht
+    eindeutig klassifizierbaren Nutzlast, fuer die schlicht Information
+    fehlt. Nur Letzteres darf den Lauf NICHT abbrechen. `runtime_gateway.py`
+    signalisiert das ueber ein strukturiertes `detail` (nicht ueber
+    Textabgleich, der bei einer Formulierungsaenderung stillschweigend
+    brechen wuerde) -- exakt so, wie `_is_missing_provider_error()` oben
+    einen anderen Sonderfall am `detail` erkennt, nur maschinenlesbar statt
+    string-basiert.
+    """
+    return isinstance(exc.detail, dict) and exc.detail.get("reason") == "clarification_required"
+
+
+def _is_credential_input_blocked_error(exc: HTTPException) -> bool:
+    """Erkennt EXAKT den `credential_input_blocked`-Fall (erkanntes Secret).
+
+    Betreiber-Freigabe "OK Secret-UX-Finalisierung": ein Secret in den
+    Tool-Parametern darf nur diesen einen Schritt zurueckhalten, nicht den
+    gesamten Lauf abbrechen. Anders als `clarification_required` ist dieser
+    Zustand NICHT technisch fortsetzbar (kein sicherer Credential-Kanal
+    vorhanden) -- der Lauf endet kontrolliert, bereits erzeugte Schritte
+    bleiben erhalten. Erkennung ausschliesslich ueber das strukturierte
+    `detail`, keine Textphrasen-Heuristik.
+    """
+    return isinstance(exc.detail, dict) and exc.detail.get("reason") == "credential_input_blocked"
 
 
 def _is_research_task(task: str) -> bool:
@@ -131,9 +164,17 @@ class AgentRuntime:
         self.tenant_id = tenant_id or DEFAULT_TENANT_ID
 
     def create_run_record(self, run_id: str, task: str, streaming: bool = False) -> None:
+        """Legt den Laufdatensatz an -- mit geschuetzter, nicht mit roher Aufgabe.
+
+        Speichern ist Verarbeitung. Bisher wurde der Datensatz VOR dem
+        Precheck mit dem Rohtext angelegt: die Ausgabe an die Nutzerin war
+        geschuetzt, in `agent_runs` stand der ungeschwaerzte Text trotzdem --
+        mitsamt Namen, Diagnosen oder Zugangsdaten, und dort blieb er.
+        """
         if self.persist_runs:
             create_agent_run(
-                run_id, task, run_metadata={"streaming": streaming},
+                run_id, sichere_fassung_fuer_speicherung(task),
+                run_metadata={"streaming": streaming},
                 tenant_id=self.tenant_id, owner_user_id=self.owner_user_id,
             )
 
@@ -154,7 +195,13 @@ class AgentRuntime:
         if pending_approval_id is not _UNSET:
             kwargs["pending_approval_id"] = pending_approval_id
         if result is not _UNSET:
-            kwargs["result"] = result
+            # Auch das Ergebnis wird geprueft, bevor es in die Datenbank geht.
+            # Es enthaelt rohe Tool-Ergebnisse und abgerufene Webinhalte; die
+            # Ausgangspruefung in main.py schuetzt nur die Anzeige, nicht den
+            # bereits geschriebenen Datensatz.
+            kwargs["result"] = (
+                sichere_fassung_fuer_speicherung(result) if result is not None else None
+            )
         if kwargs:
             update_agent_run(run_id, **kwargs)
 
@@ -210,7 +257,13 @@ class AgentRuntime:
             if self.persist_runs:
                 approval = create_approval_request(
                     tool="agent_input",
-                    input_params={"task": task[:500], "risk_categories": classification.detected_categories},
+                    # Nicht der Rohtext: die Freigabeanfrage speichert bis zu
+                    # 500 Zeichen dauerhaft, und genau High-Risk-Eingaben sind
+                    # die, bei denen das am wenigsten passieren darf.
+                    input_params={
+                        "task": sichere_fassung_fuer_speicherung(task[:500]),
+                        "risk_categories": classification.detected_categories,
+                    },
                     risk_level=classification.risk_level.value,
                     risk_reason=classification.reason,
                     tenant_id=self.tenant_id,
@@ -258,7 +311,7 @@ class AgentRuntime:
                 self.tool_executor("_health_probe", {})
             except HTTPException as _probe_exc:
                 if _is_missing_provider_error(_probe_exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer(
                         "agent.degraded_missing_provider",
@@ -286,7 +339,7 @@ class AgentRuntime:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
                 if _is_missing_provider_error(exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer(
                         "agent.degraded_missing_provider",
@@ -304,6 +357,60 @@ class AgentRuntime:
                         flush=True,
                     )
                     return local_result
+                if _is_clarification_required_error(exc):
+                    # Eng begrenzter Sonderfall (Betreiber-Freigabe): fehlt
+                    # nur Information fuer eine sichere Entscheidung, ist das
+                    # kein Abbruchgrund. Bereits erzeugte Schritte bleiben
+                    # erhalten, der Lauf endet NICHT als "failed"/"blocked".
+                    rueckfrage = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    clarification_result = {
+                        "run_id": run_id,
+                        "status": "clarification_required",
+                        "message": rueckfrage,
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="clarification_required", result=clarification_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.clarification_required",
+                        {"run_id": run_id, "step": index, "tool": call.tool},
+                    )
+                    return clarification_result
+                if _is_credential_input_blocked_error(exc):
+                    # Betreiber-Freigabe "OK Secret-UX-Finalisierung": ein
+                    # erkanntes Secret blockiert nur diesen Schritt, nicht
+                    # den gesamten Lauf. Anders als clarification_required
+                    # ist dieser Zustand NICHT fortsetzbar -- kein sicherer
+                    # Credential-Kanal vorhanden. Der Lauf endet kontrolliert,
+                    # bereits erzeugte Schritte bleiben erhalten. Das Secret
+                    # selbst steht nirgends in message/steps/results/Audit.
+                    hinweis = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    credential_result = {
+                        "run_id": run_id,
+                        "status": "credential_input_blocked",
+                        "message": hinweis,
+                        "next_action": "remove_credentials_and_retry",
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="credential_input_blocked", result=credential_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.credential_input_blocked",
+                        {"run_id": run_id, "step": index, "tool": call.tool},
+                    )
+                    return credential_result
                 status = "blocked" if exc.status_code == 403 else "failed"
                 self.update_run_record(
                     run_id,
@@ -462,15 +569,27 @@ class AgentRuntime:
         approval_timeout: float = 300.0,
     ) -> Iterator[dict[str, Any]]:
         run_id = str(uuid4())
-        plan = plan_tool_calls(task)
+        self._redacted_task: str = task
         self.create_run_record(run_id, task, streaming=True)
+
+        # P0-Nachbesserung: stream() rief bisher plan_tool_calls(task) direkt
+        # mit dem ROHEN Text auf -- keine classify()/redact()-Pruefung, anders
+        # als run() (siehe _precheck oben). PII/Sperrinhalte gingen dadurch
+        # ungeprueft in die Tool-Planung. Gleiches Muster wie run() jetzt
+        # auch hier: erst pruefen, dann mit self._redacted_task planen.
+        early_result = self._precheck(task, run_id)
+        if early_result is not None:
+            yield stream_event("run_blocked", early_result)
+            return
+
+        plan = plan_tool_calls(self._redacted_task)
         self.audit_writer(
             "agent.run.started",
             {"run_id": run_id, "planned_steps": len(plan), "streaming": True},
         )
         yield stream_event(
             "run_started",
-            {"run_id": run_id, "status": "running", "task": task, "planned_steps": len(plan)},
+            {"run_id": run_id, "status": "running", "task": self._redacted_task, "planned_steps": len(plan)},
         )
 
         if not plan:
@@ -478,7 +597,7 @@ class AgentRuntime:
                 self.tool_executor("_health_probe", {})
             except HTTPException as _probe_exc:
                 if _is_missing_provider_error(_probe_exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer("agent.degraded_missing_provider",
                                       {"run_id": run_id, "tool": "_health_probe",
@@ -524,7 +643,7 @@ class AgentRuntime:
                 response = self.tool_executor(call.tool, call.parameters)
             except HTTPException as exc:
                 if _is_missing_provider_error(exc):
-                    local_result = _build_local_response(run_id, task)
+                    local_result = _build_local_response(run_id, self._redacted_task)
                     self.update_run_record(run_id, status="local_only", result=local_result)
                     self.audit_writer(
                         "agent.degraded_missing_provider",
@@ -537,6 +656,55 @@ class AgentRuntime:
                         },
                     )
                     yield stream_event("local_only", local_result)
+                    return
+                if _is_clarification_required_error(exc):
+                    rueckfrage = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    clarification_result = {
+                        "run_id": run_id,
+                        "status": "clarification_required",
+                        "message": rueckfrage,
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="clarification_required", result=clarification_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.clarification_required",
+                        {"run_id": run_id, "step": index, "tool": call.tool, "streaming": True},
+                    )
+                    yield stream_event("clarification_required", clarification_result)
+                    return
+                if _is_credential_input_blocked_error(exc):
+                    # Betreiber-Freigabe "OK Secret-UX-Finalisierung": siehe
+                    # Kommentar im analogen run()-Zweig oben. Kein sicherer
+                    # Credential-Kanal vorhanden -- Lauf endet kontrolliert,
+                    # bereits erzeugte Schritte bleiben im Ergebnis.
+                    hinweis = (
+                        exc.detail.get("message")
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+                    credential_result = {
+                        "run_id": run_id,
+                        "status": "credential_input_blocked",
+                        "message": hinweis,
+                        "next_action": "remove_credentials_and_retry",
+                        "steps": steps,
+                        "results": results,
+                    }
+                    self.update_run_record(
+                        run_id, status="credential_input_blocked", result=credential_result,
+                    )
+                    self.audit_writer(
+                        "agent.run.credential_input_blocked",
+                        {"run_id": run_id, "step": index, "tool": call.tool, "streaming": True},
+                    )
+                    yield stream_event("credential_input_blocked", credential_result)
                     return
                 status = "blocked" if exc.status_code == 403 else "failed"
                 event_name = "blocked" if exc.status_code == 403 else "error"

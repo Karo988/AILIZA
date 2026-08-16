@@ -967,6 +967,15 @@ nav {
   background: rgba(239,68,68,0.06);
 }
 
+.chat-msg.assistant.credential-warning .ailiza-bubble {
+  border-color: rgba(245,158,11,0.45);
+  background: rgba(245,158,11,0.08);
+}
+.chat-credential-warning-label {
+  color: #b45309;
+  font-weight: 600;
+}
+
 /* Loading dots */
 .ailiza-bubble.loading {
   display: flex;

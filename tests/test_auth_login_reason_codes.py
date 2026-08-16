@@ -20,7 +20,15 @@ import os
 os.environ.setdefault("AILIZA_SECRET_KEY", "test-secret-key-minimum-32-chars-ok")
 os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("AILIZA_EXTERNAL_LLM_ENABLED", "false")
-os.environ.setdefault("AILIZA_LOG_HMAC_KEY", "test-log-hmac-key-minimum-32-chars-ok")
+
+# Bewusst NICHT setdefault: ein bereits gesetzter, aber zu kurzer Wert (z.B.
+# ein leerer AILIZA_LOG_HMAC_KEY in der Shell oder CI-Umgebung) wuerde von
+# setdefault nicht ersetzt. _get_log_hmac_key() verlangt >= 32 Zeichen und
+# gibt sonst None zurueck -- dann fehlt der user_id_hash und vier Tests
+# dieser Datei schlagen mit einer irrefuehrenden Meldung fehl, die nach
+# einem Fehler in der Auth-Logik aussieht statt nach einer Umgebungsfrage.
+if len(os.environ.get("AILIZA_LOG_HMAC_KEY", "")) < 32:
+    os.environ["AILIZA_LOG_HMAC_KEY"] = "test-log-hmac-key-minimum-32-chars-ok"
 
 import pytest
 from datetime import datetime, timedelta, timezone

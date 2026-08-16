@@ -487,6 +487,25 @@ class RedactionEngineV2:
     }
     _DEFAULT_VIOLET_ARTICLE = "Art. 9 DSGVO"
 
+    @classmethod
+    def canonical_violet_markers(cls) -> frozenset[str]:
+        """Die vollstaendige Menge der kanonischen VIOLETT-Platzhalter, die
+        _redact_violet_sections() erzeugen kann -- exakte Zeichenketten,
+        z.B. "[GESCHWAERZT: Gesundheit - Art. 9 DSGVO]".
+
+        Oeffentlich, weil governance/payload_check.py denselben Marker bei
+        einer erneuten Klassifikation bereits redigierten Texts neutralisieren
+        muss (sonst erkennt der Classifier im Marker selbst -- der woertlich
+        "Gesundheit"/"Art. 9 DSGVO" enthaelt -- einen falschen Special-
+        Category-Treffer auf bereits sicher redigiertem Text). Bewusst KEINE
+        zweite, unabhaengige Kategorienliste an dieser Stelle -- eine
+        Erweiterung von VIOLET_KEYWORDS soll automatisch auch hier gelten.
+        """
+        return frozenset(
+            f"[GESCHWAERZT: {label} - {cls._VIOLET_CATEGORY_ARTICLE.get(category, cls._DEFAULT_VIOLET_ARTICLE)}]"
+            for category, label in cls._VIOLET_CATEGORY_LABELS.items()
+        )
+
     def _redact_violet_sections(self, text: str, violet_categories: dict[str, list]) -> str:
         """
         Schwärzt NUR die konkreten Art.-9-Begriffe/Wörter selbst — nicht die

@@ -304,7 +304,11 @@ memory_items = Table(
     "memory_items",
     metadata_obj,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("tenant_id", String(64), nullable=True),  # company_memory Pflicht, user_memory optional
+    # Knowledge Phase 1 (Memory Tenant Integrity): NOT NULL fuer ALLE Scopes,
+    # auch user_memory. Migration c8ff9bb332ba erzwingt das per fail-closed
+    # Guard (bricht bei bestehenden NULL-Zeilen kontrolliert ab, kein
+    # automatischer Default-Tenant, kein Backfill in dieser Migration).
+    Column("tenant_id", String(64), nullable=False),
     Column("scope", String(32), nullable=False),
     Column("owner_user_id", String(64), nullable=True),  # user_memory Pflicht, company_memory None
     # Text statt String: Inhalt kann laenger sein, keine willkuerliche Kuerzung.
@@ -595,4 +599,27 @@ routing_decisions = Table(
     Column("benchmark_version", String(64), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_routing_decisions_tenant_created", "tenant_id", "created_at"),
+)
+
+# ── Phase 1 (Ladengeschaeft-Produktlauf): Kundenstammdaten ──────────────────
+# Kleinster abgeschlossener Baustein von Kunde -> Artikel -> Rechnung.
+# Artikel und Rechnung sind bewusst NICHT Teil dieses Schritts.
+# owner_user_id NUR hier (Anlegerin/Zustaendige der Kundenakte) -- kein
+# pauschales Feld auf allen Tabellen, wie in den Arbeitsregeln gefordert.
+customers = Table(
+    "customers",
+    metadata_obj,
+    # Zusammengesetzter Primary Key wie bei user_projects/user_chats:
+    # (tenant_id, id) isoliert vollstaendig, kein Hijack ueber kollidierende id.
+    Column("id", String(64), primary_key=True),
+    Column("tenant_id", String(64), primary_key=True, nullable=False, default=DEFAULT_TENANT_ID),
+    Column("owner_user_id", String(64), nullable=True),
+    Column("name", Text, nullable=False),
+    Column("email", Text, nullable=True),
+    Column("phone", Text, nullable=True),
+    Column("address", Text, nullable=True),
+    Column("note", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_customers_tenant_owner", "tenant_id", "owner_user_id"),
 )

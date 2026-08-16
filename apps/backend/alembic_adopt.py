@@ -42,21 +42,114 @@ automatischer Aufruf beim Programmstart -- ausschliesslich manuell/CLI.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
-from sqlalchemy import inspect
+from sqlalchemy import create_engine, inspect
 
 try:
-    from apps.backend.database import DATABASE_URL, engine, metadata_obj
+    from apps.backend.database import DATABASE_URL, engine
 except ImportError:  # pragma: no cover - Fallback bei Ausfuehrung aus apps/backend/
-    from database import DATABASE_URL, engine, metadata_obj  # type: ignore
+    from database import DATABASE_URL, engine  # type: ignore
 
 BASELINE_REVISION = "6165ff33e9ee"
 
 
 class SchemaMismatchError(Exception):
     """Bestehende Datenbank weicht vom erwarteten Baseline-Schema ab."""
+
+
+@dataclass(frozen=True)
+class _BaselineIndex:
+    name: str
+    columns: tuple[str, ...]
+    unique: bool
+
+
+@dataclass(frozen=True)
+class _BaselineTable:
+    columns: dict[str, bool]  # Spaltenname -> nullable
+    indexes: tuple[_BaselineIndex, ...]
+    unique_columns: frozenset[str]  # Spalten mit Column(unique=True) (impliziter Index)
+
+
+@lru_cache(maxsize=1)
+def _baseline_reference_schema() -> dict[str, _BaselineTable]:
+    """Eingefrorene Referenz fuer Revision 0001 -- Tabellen, Spalten UND
+    Indizes, nicht nur Tabellennamen.
+
+    Bewusst NICHT von metadata_obj abgeleitet: metadata_obj waechst mit
+    jeder neuen Tabelle/Spalte/Index im laufenden Code (z.B. "customers"
+    aus Phase 1, oder die Indizes aus Migration 0004) -- Revision 0001 ist
+    aber ein historischer, unveraenderlicher Zeitpunkt. Eine echte, nie
+    migrierte Alt-Datenbank aus jener Zeit hat und wird immer GENAU das
+    Schema haben, das Migration 0001 tatsaechlich anlegt -- unabhaengig
+    davon, was der heutige Code inzwischen kennt. Ein Vergleich gegen das
+    lebende metadata_obj wuerde die Adoption jeder echten 0001-Alt-
+    Datenbank verweigern, sobald irgendeine neue Tabelle/Spalte/Index zum
+    Code hinzukommt -- das waere kein Sicherheitsgewinn, sondern ein
+    Funktionsverlust des Adoptionswegs (siehe Vorfall Phase 1: die
+    "customers"-Tabelle allein haette dies bereits ausgeloest; eine
+    genauere Pruefung zeigte zusaetzlich laenger bestehende Luecken bei
+    Migration-0004-Indizes).
+
+    Um Abtippfehler bei 27 Tabellen auszuschliessen, wird hier NICHT von
+    Hand dupliziert, sondern die echte Migration 0001 gegen eine
+    Wegwerf-SQLite-Datei ausgefuehrt und deren tatsaechliches Schema
+    eingelesen -- das bleibt automatisch korrekt, auch wenn sich 0001
+    (was es nicht mehr sollte, siehe deren Docstring) oder das
+    Lese-Verfahren selbst nie wieder angefasst wird. Ergebnis wird pro
+    Prozess einmalig berechnet (Migrationslauf ist nicht kostenlos).
+    """
+    import subprocess
+
+    backend_dir = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="ailiza-baseline-ref-") as tmpdir:
+        db_path = Path(tmpdir) / "baseline_reference.sqlite"
+        env = os.environ.copy()
+        env["AILIZA_DATABASE_URL"] = f"sqlite:///{db_path}"
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "-c", "alembic.ini",
+             "upgrade", BASELINE_REVISION],
+            cwd=backend_dir, env=env, capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Konnte Referenzschema fuer Revision 0001 nicht aufbauen "
+                f"(alembic upgrade {BASELINE_REVISION} fehlgeschlagen):\n{result.stderr}"
+            )
+
+        ref_engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            inspector = inspect(ref_engine)
+            schema: dict[str, _BaselineTable] = {}
+            for table_name in inspector.get_table_names():
+                if table_name == "alembic_version":
+                    continue
+                cols = {c["name"]: bool(c["nullable"]) for c in inspector.get_columns(table_name)}
+                idxs = tuple(
+                    _BaselineIndex(
+                        name=ix["name"],
+                        columns=tuple(ix["column_names"]),
+                        unique=bool(ix["unique"]),
+                    )
+                    for ix in inspector.get_indexes(table_name)
+                    if ix["name"] and not ix["name"].startswith("sqlite_autoindex_")
+                )
+                unique_cols = frozenset(
+                    uc["column_names"][0]
+                    for uc in inspector.get_unique_constraints(table_name)
+                    if len(uc["column_names"]) == 1
+                )
+                schema[table_name] = _BaselineTable(columns=cols, indexes=idxs, unique_columns=unique_cols)
+        finally:
+            ref_engine.dispose()
+
+    return schema
 
 
 @dataclass
@@ -73,7 +166,11 @@ def _compare_schema(bind) -> _ComparisonResult:
     inspector = inspect(bind)
 
     actual_tables = set(inspector.get_table_names())
-    expected_tables = set(metadata_obj.tables.keys())
+    baseline = _baseline_reference_schema()
+    # Eingefrorene 0001-Baseline (Tabellen UND Spalten UND Indizes je
+    # Tabelle), nicht das lebende metadata_obj -- siehe Docstring von
+    # _baseline_reference_schema().
+    expected_tables = set(baseline.keys())
 
     missing = expected_tables - actual_tables
     unexpected = actual_tables - expected_tables - {"alembic_version"}
@@ -83,8 +180,8 @@ def _compare_schema(bind) -> _ComparisonResult:
         result.errors.append(f"Unerwartete zusaetzliche Tabellen: {sorted(unexpected)}")
 
     for table_name in sorted(expected_tables & actual_tables):
-        expected_table = metadata_obj.tables[table_name]
-        expected_cols = {c.name: c.nullable for c in expected_table.columns}
+        expected_table = baseline[table_name]
+        expected_cols = expected_table.columns
         actual_cols_raw = inspector.get_columns(table_name)
         actual_cols = {c["name"]: c["nullable"] for c in actual_cols_raw}
 
@@ -104,10 +201,7 @@ def _compare_schema(bind) -> _ComparisonResult:
                 )
 
         expected_indexes = {
-            ix.name: {
-                "columns": tuple(c.name for c in ix.columns),
-                "unique": bool(ix.unique),
-            }
+            ix.name: {"columns": ix.columns, "unique": ix.unique}
             for ix in expected_table.indexes
         }
         actual_indexes_raw = inspector.get_indexes(table_name)
@@ -125,13 +219,10 @@ def _compare_schema(bind) -> _ComparisonResult:
         # Column(unique=True) erzeugt je nach Dialekt einen automatisch
         # benannten Unique-Index/-Constraint (z.B. Postgres:
         # "<table>_<column>_key"), der in expected_table.indexes NICHT als
-        # eigenes Index-Objekt auftaucht (SQLAlchemy fuehrt ihn intern als
-        # Column-Constraint, nicht als Table.indexes-Eintrag). Ein solcher
-        # tatsaechlicher Index gilt als abgedeckt, wenn seine Spalten exakt
-        # einer erwarteten einspaltigen unique=True-Spalte entsprechen.
-        implicit_unique_columns = {
-            (col.name,) for col in expected_table.columns if col.unique
-        }
+        # eigenes Index-Objekt auftaucht. Ein solcher tatsaechlicher Index
+        # gilt als abgedeckt, wenn seine Spalten exakt einer erwarteten
+        # einspaltigen unique=True-Spalte entsprechen.
+        implicit_unique_columns = {(col,) for col in expected_table.unique_columns}
         for idx_name, idx_info in list(actual_indexes.items()):
             if (
                 idx_name not in expected_indexes

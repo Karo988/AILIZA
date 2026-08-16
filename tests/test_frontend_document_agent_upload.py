@@ -47,8 +47,8 @@ def test_file_is_preserved_across_login_and_consent_gates():
     assert "gatedFile=file||null;" in FRONTEND
     assert "const task=gatedTask,aid=gatedConsentApprovalId,file=gatedFile;" in FRONTEND
     assert "const task=gatedTask,file=gatedFile;" in FRONTEND
-    assert "runAgent(task,null,aid,file)" in FRONTEND
-    assert "runAgent(task,null,undefined,file)" in FRONTEND
+    assert "runAgent(task,null,aid,file,previewId)" in FRONTEND
+    assert "runAgent(task,null,undefined,file,previewId)" in FRONTEND
 
 
 def test_consent_id_is_sent_with_document():
