@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -123,7 +124,7 @@ try:
         users, user_settings, memory_sources, memory_items, memory_visibility,
         memory_suggestions, messenger_bindings, totp_secrets, totp_backup_codes,
         skills, knowledge_sources, knowledge_chunks, knowledge_source_permissions,
-        user_projects, user_chats,
+        user_projects, user_chats, model_candidates, routing_decisions,
     )
 except ImportError:
     from db_schema import (  # type: ignore
@@ -134,7 +135,7 @@ except ImportError:
         users, user_settings, memory_sources, memory_items, memory_visibility,
         memory_suggestions, messenger_bindings, totp_secrets, totp_backup_codes,
         skills, knowledge_sources, knowledge_chunks, knowledge_source_permissions,
-        user_projects, user_chats,
+        user_projects, user_chats, model_candidates, routing_decisions,
     )
 
 engine_options: dict[str, Any] = {}
@@ -2531,6 +2532,331 @@ def save_user_project(project_id: str, tenant_id: str, user_id: str, *,
                 version=new_version, **values))
     return {"id": project_id, "created_at": created_at, "updated_at": now,
             "version": new_version}
+
+
+# ── Model Intelligence (Paket A): reine Empfehlungsschicht ──────────────────
+# GRUNDREGEL: kein Aufruf hier setzt jemals status="approved" fuer einen neu
+# angelegten Kandidaten. Freigabe ist ausdruecklich ein separater,
+# menschlicher Schritt (approve_model_candidate()), niemals Teil des
+# Anlegens oder des Routings selbst.
+
+def create_model_candidate(provider: str, model_id: str, *,
+                            modalities: list[str], capabilities: list[str],
+                            context_window: int, regions: list[str] | None = None,
+                            evidence_urls: list[str] | None = None,
+                            created_by: str) -> dict[str, Any]:
+    """Legt einen neuen Modell-Kandidaten an -- IMMER mit status="candidate".
+    Kein Upsert: (provider, model_id) ist unique, ein zweiter Aufruf mit
+    derselben Kombination wirft IntegrityError.
+
+    created_by ist PFLICHT: ohne bekannten Urheber laesst sich in
+    approve_model_candidate() keine Selbstfreigabe erkennen, das
+    Vier-Augen-Prinzip waere damit wirkungslos. Ein optionaler Wert wurde
+    von keinem Aufrufer gesetzt und machte die Pruefung praktisch nie
+    aktiv (unabhaengig belegt)."""
+    if not created_by or not str(created_by).strip():
+        raise ValueError(
+            "create_model_candidate: created_by ist Pflicht "
+            "(Grundlage der Selbstfreigabe-Pruefung)."
+        )
+    now = _now_utc()
+    with engine.begin() as conn:
+        conn.execute(insert(model_candidates).values(
+            provider=provider, model_id=model_id,
+            modalities=list(modalities), capabilities=list(capabilities),
+            context_window=context_window, regions=list(regions or []),
+            status="candidate", benchmark_version="unbenchmarked",
+            evidence_urls=list(evidence_urls or []),
+            created_by=created_by,
+            created_at=now, updated_at=now,
+        ))
+    return {
+        "provider": provider, "model_id": model_id, "status": "candidate",
+        "modalities": modalities, "capabilities": capabilities,
+        "context_window": context_window, "regions": regions or [],
+        "created_by": created_by,
+        "created_at": now, "updated_at": now,
+    }
+
+
+class ModelApprovalDenied(RuntimeError):
+    """Freigabe verweigert -- eigene Klasse, damit ein Aufrufer sie nicht
+    versehentlich mit einem Datenfehler (ValueError) verwechselt."""
+
+
+def approve_model_candidate(provider: str, model_id: str, *,
+                             actor: Any,
+                             quality_score: float, latency_score: float,
+                             cost_score: float, privacy_score: float,
+                             benchmark_version: str) -> dict[str, Any] | None:
+    """Setzt status="approved" -- der einzige Weg, wie ein Kandidat waehlbar
+    wird. Gibt None zurueck, wenn (provider, model_id) nicht existiert
+    (kein stilles Anlegen).
+
+    B4 (korrigiert): Frueher genuegte ein frei uebergebener Rollen-String
+    (`reviewer_role="admin"`), der von keiner Sitzung gedeckt war -- jeder
+    Aufrufer konnte ihn setzen. Jetzt ist ein authentifizierter Actor
+    (TokenData) Pflicht; die Entscheidung faellt im zentralen
+    evaluate_permission() unter der Aktion MODEL_CANDIDATE_APPROVE.
+    approved_by wird aus dem Actor abgeleitet und NICHT vom Aufrufer
+    uebernommen -- eine Freigabe im fremden Namen ist damit ausgeschlossen.
+
+    Selbstfreigabe: Stimmt created_by des Kandidaten mit dem Actor ueberein,
+    verweigert der Evaluator. Ist created_by nicht gesetzt (Altbestand oder
+    Anlage ohne Urheber), kann das Vier-Augen-Prinzip nicht geprueft werden;
+    dieser Fall wird auditiert und ist als HANDOFF dokumentiert.
+
+    HANDOFF: Eine fachlich bestaetigte Freigabepolicy fuer Modelle existiert
+    im Repository nicht. Die Schwelle folgt dem bestehenden Projektmuster
+    (admin/manager) und ist deny-by-default -- sie ist zu bestaetigen."""
+    try:
+        from .permissions import evaluate_permission, MODEL_CANDIDATE_APPROVE
+    except ImportError:  # pragma: no cover - Ausfuehrung aus apps/backend/
+        from permissions import evaluate_permission, MODEL_CANDIDATE_APPROVE  # type: ignore
+
+    if actor is None or not getattr(actor, "user_id", None):
+        raise ModelApprovalDenied(
+            "Modellfreigabe erfordert eine angemeldete Person."
+        )
+
+    with engine.begin() as conn:
+        vorhandener = conn.execute(
+            select(model_candidates)
+            .where(model_candidates.c.provider == provider)
+            .where(model_candidates.c.model_id == model_id)
+        ).mappings().first()
+    if vorhandener is None:
+        return None
+
+    urheber = vorhandener["created_by"]
+    if not urheber or not str(urheber).strip():
+        # Fail-closed statt fail-open: ohne bekannten Urheber laesst sich
+        # eine Selbstfreigabe nicht ausschliessen. Vorher wurde der Fall nur
+        # auditiert und die Freigabe trotzdem erteilt -- damit war das
+        # Vier-Augen-Prinzip fuer Altbestaende wirkungslos.
+        write_audit_entry(
+            action="model.approval.denied",
+            tenant_id=getattr(actor, "tenant_id", None) or DEFAULT_TENANT_ID,
+            metadata={"provider": provider, "model_id": model_id,
+                      "reason_code": "FOUR_EYES_NOT_VERIFIABLE"},
+        )
+        raise ModelApprovalDenied(
+            "Ohne bekannten Urheber (created_by) kann eine Selbstfreigabe nicht "
+            "ausgeschlossen werden -- die Freigabe wird verweigert."
+        )
+
+    entscheidung = evaluate_permission(
+        action=MODEL_CANDIDATE_APPROVE,
+        actor=actor,
+        tenant_id=getattr(actor, "tenant_id", None) or DEFAULT_TENANT_ID,
+        resource_type="model_candidate",
+        resource_id=f"{provider}:{model_id}",
+        resource_owner_user_id=urheber,
+    )
+    if not entscheidung.allowed:
+        raise ModelApprovalDenied(entscheidung.reason_de)
+
+    approved_by = actor.user_id
+    now = _now_utc()
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(model_candidates)
+            .where(model_candidates.c.provider == provider)
+            .where(model_candidates.c.model_id == model_id)
+            .values(
+                status="approved", approved_by=approved_by, approved_at=now,
+                quality_score=quality_score, latency_score=latency_score,
+                cost_score=cost_score, privacy_score=privacy_score,
+                benchmark_version=benchmark_version, updated_at=now,
+            )
+        )
+        if result.rowcount == 0:
+            return None
+        row = conn.execute(
+            select(model_candidates)
+            .where(model_candidates.c.provider == provider)
+            .where(model_candidates.c.model_id == model_id)
+        ).mappings().first()
+    return dict(row)
+
+
+def list_model_candidates(status: str | None = None) -> list[dict[str, Any]]:
+    """Plattformweite Liste -- kein tenant_id-Filter (siehe db_schema.py:
+    welche Modelle existieren duerfen, ist keine Mandantenentscheidung)."""
+    query = select(model_candidates).order_by(model_candidates.c.provider, model_candidates.c.model_id)
+    if status is not None:
+        query = query.where(model_candidates.c.status == status)
+    with engine.begin() as conn:
+        rows = conn.execute(query).mappings().all()
+    return [dict(row) for row in rows]
+
+
+_MODEL_ROUTING_BLOCKED_CLASSES = {"credentials", "special_category", "hr", "legal"}
+
+# Feste Aufgabenarten. task war vorher freier Text und wurde woertlich
+# persistiert -- damit konnte ein Aufrufer einen Rohprompt in die Datenbank
+# und ins Audit schreiben. Nur diese Werte sind zulaessig.
+_ROUTING_TASKS = {"chat", "summarize", "extract", "classify", "code", "translate", "table"}
+_ROUTING_MODALITIES = {"text", "image", "audio", "video"}
+_ROUTING_RISKS = {"low", "medium", "high", "critical"}
+# Datenklassen, die unabhaengig von der Angabe des Aufrufers ein hohes
+# Risiko bedeuten. data_risk war vorher frei waehlbar -- mit "low" liess
+# sich die Datenschutzschwelle (privacy_score >= 0.8) umgehen, obwohl der
+# Text personenbezogene Daten enthielt (unabhaengig reproduziert).
+_HIGH_RISK_DATA_CLASSES = {
+    "personal_data", "financial", "security_sensitive", "intellectual_property",
+}
+
+
+def recommend_model(tenant_id: str, *, modality: str, task: str,
+                     required_capabilities: list[str] | None = None,
+                     min_context_window: int = 0,
+                     allowed_providers: list[str] | None = None,
+                     required_region: str | None = None,
+                     local_only: bool = False,
+                     data_risk: str = "low",
+                     prompt_text: str | None = None) -> dict[str, Any]:
+    """Liefert NUR eine Empfehlung -- ruft selbst keinen Provider auf und
+    veraendert keine Freigabe. Schreibt einen Audit-Eintrag ueber das
+    bestehende Audit-Vault (write_audit_entry), keine separate Logdatei.
+
+    B3 (zweifach korrigiert):
+
+    1. Frueher war die Datenklassenliste ein optionaler Parameter --
+       Weglassen hob die Sperre auf.
+    2. Danach wurde ein ClassificationResult verlangt. Auch das war KEIN
+       Herkunftsnachweis: die Dataclass ist offen, ein Aufrufer konnte ein
+       harmloses Ergebnis selbst bauen und damit HR-/Gesundheitsdaten
+       durchrouten (unabhaengig reproduziert).
+
+    Jetzt klassifiziert diese Funktion SELBST ueber classify(). Nur ein
+    hier erzeugtes Ergebnis wird verwendet -- ein Aufrufer kann keine
+    Klassifikation mehr vorgeben. Ohne prompt_text ist keine Klassifikation
+    moeglich und es wird kein Modell ausgewaehlt (fail-closed).
+
+    prompt_text wird ausschliesslich im Arbeitsspeicher klassifiziert und
+    NIEMALS gespeichert oder auditiert -- persistiert wird nur ein
+    SHA-256-Praefix als Wiedererkennungsmerkmal.
+
+    HANDOFF (B-GOV-2): ClassificationResult traegt keine Versionsangabe;
+    eine Bindung an eine Klassifiziererversion ist daher nicht moeglich."""
+    try:
+        from .intelligence.model_router import ModelRouter
+        from .intelligence.models import ModelCandidate, RoutingRequest
+        from .governance.data_governance import classify
+    except ImportError:  # pragma: no cover - Fallback bei Ausfuehrung aus apps/backend/
+        from intelligence.model_router import ModelRouter  # type: ignore
+        from intelligence.models import ModelCandidate, RoutingRequest  # type: ignore
+        from governance.data_governance import classify  # type: ignore
+
+    # Aufgabenart gegen eine feste Liste pruefen. Vorher war task freier
+    # Text und wurde woertlich in routing_decisions UND ins Audit
+    # geschrieben -- ein Aufrufer konnte damit einen ganzen Rohprompt
+    # persistieren (unabhaengig reproduziert).
+    # Alle drei Felder werden in routing_decisions gespeichert UND auditiert.
+    # Ungeprueft waren sie Freitext -- damit liess sich ein Rohprompt
+    # persistieren (unabhaengig reproduziert). Nur feste Werte sind zulaessig.
+    for feld, wert, erlaubt in (("Aufgabenart", task, _ROUTING_TASKS),
+                                ("Modalitaet", modality, _ROUTING_MODALITIES),
+                                ("Risikostufe", data_risk, _ROUTING_RISKS)):
+        if wert not in erlaubt:
+            return {
+                "selected": None, "fallback": None, "score": None,
+                "reason": f"Unbekannte {feld} {wert!r}. Erlaubt: {sorted(erlaubt)}.",
+                "considered": (), "benchmark_version": None,
+            }
+
+    prompt_ref = (hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
+                  if prompt_text else None)
+
+    if not prompt_text or not prompt_text.strip():
+        write_audit_entry(
+            action="model.routing.blocked",
+            metadata={"modality": modality, "task": task,
+                      "reason_code": "CLASSIFICATION_NOT_POSSIBLE"},
+            tenant_id=tenant_id,
+        )
+        return {
+            "selected": None, "fallback": None, "score": None,
+            "reason": ("Ohne Text kann nicht klassifiziert werden -- es wird kein "
+                       "externes Modell ausgewaehlt."),
+            "considered": (), "benchmark_version": None,
+        }
+
+    klassifikation = classify(prompt_text)
+    data_classes = {getattr(c, "value", str(c)).lower()
+                    for c in (klassifikation.data_classes or [])}
+
+    # classify() stuft echte Schluessel (sk-..., gsk_..., AIza...) nicht
+    # zuverlaessig als credentials ein -- die vorhandene Secret-Heuristik
+    # erkennt sie und wird deshalb zusaetzlich ausgewertet (unabhaengig
+    # belegt: ein echter API-Key galt sonst als "public").
+    if _contains_secret_content(prompt_text):
+        data_classes.add("credentials")
+
+    # Risikostufe: die Angabe des Aufrufers ist nur eine Untergrenze. Eine
+    # Klassifikation mit personenbezogenen oder vergleichbar sensiblen Daten
+    # hebt sie an -- sonst koennte "low" die Datenschutzschwelle umgehen.
+    if data_classes & _HIGH_RISK_DATA_CLASSES and data_risk in ("low", "medium"):
+        data_risk = "high"
+
+    blocked = _MODEL_ROUTING_BLOCKED_CLASSES & data_classes
+    if blocked:
+        write_audit_entry(
+            action="model.routing.blocked",
+            metadata={
+                "modality": modality, "task": task,
+                "blocked_classes": sorted(blocked),
+                "prompt_ref": prompt_ref,
+            },
+            tenant_id=tenant_id,
+        )
+        return {
+            "selected": None, "fallback": None, "score": None,
+            "reason": "Datenklasse darf nicht extern geroutet werden (CREDENTIALS/SPECIAL_CATEGORY/HR/LEGAL).",
+            "considered": (), "benchmark_version": None,
+        }
+
+    approved_rows = list_model_candidates(status="approved")
+    candidates = [ModelCandidate.from_row(row) for row in approved_rows]
+
+    request = RoutingRequest(
+        modality=modality, task=task,
+        required_capabilities=frozenset(required_capabilities or []),
+        min_context_window=min_context_window,
+        allowed_providers=frozenset(allowed_providers) if allowed_providers is not None else None,
+        required_region=required_region, local_only=local_only,
+        data_risk=data_risk,  # type: ignore[arg-type]
+    )
+    decision = ModelRouter(candidates).route(request)
+
+    now = _now_utc()
+    with engine.begin() as conn:
+        conn.execute(insert(routing_decisions).values(
+            tenant_id=tenant_id, modality=modality, task=task, data_risk=data_risk,
+            selected=decision.selected, fallback=decision.fallback, score=decision.score,
+            reason=decision.reason, considered=list(decision.considered),
+            benchmark_version=decision.benchmark_version, created_at=now,
+        ))
+
+    write_audit_entry(
+        action="model.routing.recommended",
+        metadata={
+            # task ist gegen _ROUTING_TASKS geprueft und damit kein Freitext.
+            "modality": modality, "task": task, "data_risk": data_risk,
+            "selected": decision.selected, "fallback": decision.fallback,
+            "considered_count": len(decision.considered),
+            # Wiedererkennung ohne Inhalt: gekuerzter Hash, nie der Text.
+            "prompt_ref": prompt_ref,
+        },
+        tenant_id=tenant_id,
+    )
+
+    return {
+        "selected": decision.selected, "fallback": decision.fallback,
+        "score": decision.score, "reason": decision.reason,
+        "considered": decision.considered, "benchmark_version": decision.benchmark_version,
+    }
 
 
 def migrate_encrypt_existing_records() -> dict[str, int]:
