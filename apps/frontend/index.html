@@ -417,7 +417,7 @@ body{
       <div class="side-item" role="button" tabindex="0" onclick="showView('status',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🛡️</span><span>Datenschutz &amp; Kontrolle</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="toggleAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">👤</span><span>Hilfe &amp; Profil</span></div>
     </div>
-    <div class="side-footer">AILIZA · Sie interagieren mit einem KI-System<br><span style="color:var(--text-muted)">EU AI Act Art. 50 · Kennzeichnung aktiv</span></div>
+    <div class="side-footer">Sie interagieren mit einem KI-System.</div>
   </div>
   <div class="main">
     <div class="view active" id="view-chat">
@@ -1493,6 +1493,7 @@ function setActiveProject(project){
   if(activeProjectId)localStorage.setItem(scopedKey("ailiza_active_project_id"),activeProjectId);
   else localStorage.removeItem(scopedKey("ailiza_active_project_id"));
   updateChatProjectLabel();
+  renderContextBar();
 }
 function persistActiveChat(){
   localStorage.setItem(getActiveChatStorageKey(),JSON.stringify(chatHistory.slice(-100)));
@@ -1515,6 +1516,7 @@ function loadActiveProjectFromStorage(){
   currentChatId=project.chat_id;
   localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);
   chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(project.chat_id))||"[]");
+  renderContextBar();
 }
 async function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
@@ -1541,7 +1543,20 @@ async function refreshAuthButton(){
       // Wechselt der Scope (anon -> Nutzer, oder Nutzer A -> Nutzer B auf
       // demselben Browser), werden Chats/Projekte NEU aus dem eigenen,
       // scope-gebundenen localStorage geladen -- nie die des vorherigen Scopes.
-      applyScopeAndRerender({type:"user",userId:me.user_id||"unknown",tenantId:me.tenant_id||"default"});
+      const _tid=typeof me.tenant_id==="string"?me.tenant_id.trim():"";
+      const _uid=typeof me.user_id==="string"?me.user_id.trim():"";
+      if(!_tid||!_uid){
+        // Fail-closed: ohne eindeutigen Mandanten/Benutzer wird KEIN
+        // Benutzer-Scope aufgebaut. Kein Rueckfall auf "default", damit
+        // niemals fremde oder vorherige Daten sichtbar bleiben.
+        applyScopeAndRerender({type:"anon"});
+        btn.textContent="Anmelden"; btn.onclick=openLoginModal;
+        closeAccountMenu();
+        const _li0=document.getElementById("account-logout-item"); if(_li0)_li0.style.display="none";
+        addAiMessage("Anmeldung unvollstaendig: Es konnte kein eindeutiger Mandant ermittelt werden. Bitte melden Sie sich erneut an.",undefined);
+        return;
+      }
+      applyScopeAndRerender({type:"user",userId:_uid,tenantId:_tid});
       btn.textContent=`${me.user_id||"Konto"} ▾`;
       btn.onclick=toggleAccountMenu;
       const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="block";
@@ -1691,11 +1706,20 @@ function toggleAccountMenu(){
   const open=dd.style.display==="none";
   dd.style.display=open?"block":"none";
   if(btn)btn.setAttribute("aria-expanded",open?"true":"false");
+  if(open){
+    const first=dd.querySelector('[role="menuitem"]:not([style*="display:none"])');
+    if(first&&first.focus)first.focus();
+  }
 }
 function closeAccountMenu(){
   const dd=document.getElementById("account-dropdown"),btn=document.getElementById("topbar-auth-btn");
+  const wasOpen=dd&&dd.style.display!=="none";
   if(dd)dd.style.display="none";
-  if(btn)btn.setAttribute("aria-expanded","false");
+  if(btn){
+    btn.setAttribute("aria-expanded","false");
+    // Fokus nur zurueckgeben, wenn er im geschlossenen Menue lag.
+    if(wasOpen&&dd&&dd.contains(document.activeElement)&&btn.focus)btn.focus();
+  }
 }
 document.addEventListener("click",function(e){
   const w=document.getElementById("account-menu-wrap");
@@ -1706,10 +1730,10 @@ function navKey(e,el){ if(e.key==="Enter"||e.key===" "){e.preventDefault();el.cl
 function renderContextBar(){
   const bar=document.getElementById("context-bar"); if(!bar)return;
   let ic="\ud83d\udd12", txt="Privater Chat";
-  if(activeProjectId){
-    const p=(projects||[]).find(x=>x.id===activeProjectId);
-    if(p){ ic="\ud83d\udcc1"; txt="Privates Projekt \u00b7 "+p.name; }
-  }
+  // Zentrale Aufloesung inkl. String-Normalisierung; ein geloeschtes oder
+  // nicht mehr vorhandenes Projekt faellt korrekt auf "Privater Chat" zurueck.
+  const p=(typeof getActiveProject==="function")?getActiveProject():null;
+  if(p&&p.name){ ic="\ud83d\udcc1"; txt="Privates Projekt \u00b7 "+p.name; }
   bar.innerHTML="";
   const i=document.createElement("span"); i.textContent=ic; i.setAttribute("aria-hidden","true");
   const t=document.createElement("span"); t.textContent=txt;
@@ -2289,23 +2313,34 @@ function addAiMessage(text,warn,draftHint,testModeInfo){
   // ans Container-Ende) -- verhindert, dass die Antwort bei sehr langen
   // vorherigen Nachrichten optisch "verloren" wirkt.
   if(last)setTimeout(()=>scrollMessageIntoView(last),450);
-  if(last)attachCopyButton(last,text);
+  // Erst nach Ende der Stream-Animation anhaengen, damit streamAiBubble()
+  // den Button nicht wieder ueberschreibt.
+  if(last)setTimeout(()=>attachCopyButton(last),700);
 }
 // Kopier-Aktion unter jeder AI-Antwort. Nutzt textContent (kein innerHTML mit
 // Nutzerdaten) und meldet den Erfolg per aria-live fuer Screenreader.
-function attachCopyButton(bubble,text){
+function attachCopyButton(bubble){
   try{
-    if(bubble.querySelector(".copy-btn"))return;
+    if(!bubble||bubble.querySelector(".copy-btn"))return;
     const b=document.createElement("button");
     b.className="btn-mini copy-btn"; b.type="button";
     b.style.cssText="margin-top:6px;font-size:11px";
     b.textContent="Kopieren"; b.setAttribute("aria-label","Antwort in die Zwischenablage kopieren");
+    const live=document.createElement("span");
+    live.setAttribute("aria-live","polite"); live.className="sr-only";
+    live.style.cssText="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)";
     b.onclick=async()=>{
-      try{ await navigator.clipboard.writeText(text); b.textContent="Kopiert"; }
-      catch(e){ b.textContent="Kopieren nicht moeglich"; }
-      setTimeout(()=>{b.textContent="Kopieren";},2000);
+      // Nur den sichtbaren Antworttext, ohne Buttons/Statusknoten.
+      const clone=bubble.cloneNode(true);
+      clone.querySelectorAll(".copy-btn,[aria-live]").forEach(n=>n.remove());
+      const txt=(clone.textContent||"").trim();
+      let msg;
+      try{ await navigator.clipboard.writeText(txt); b.textContent="Kopiert"; msg="Antwort kopiert."; }
+      catch(e){ b.textContent="Kopieren nicht moeglich"; msg="Kopieren nicht moeglich. Bitte manuell markieren."; }
+      live.textContent=msg;
+      setTimeout(()=>{b.textContent="Kopieren";live.textContent="";},2000);
     };
-    bubble.appendChild(b);
+    bubble.appendChild(b); bubble.appendChild(live);
   }catch(e){/* Kopieren ist optional -- darf die Antwort nie blockieren */}
 }
 // ── B2: Aktions-Buttons unter einer AI-Nachricht (nicht persistiert — nach

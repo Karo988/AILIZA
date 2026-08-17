@@ -92,11 +92,59 @@ def test_login_success_awaits_scope_switch_before_continuing(served_index):
 
 
 def test_refresh_auth_button_applies_scope_for_logged_in_and_anon(served_index):
+    """Der Nutzer-Scope entsteht NUR aus einem echten, nicht leeren Tenant.
+
+    Frueher fiel refreshAuthButton() auf tenant_id="default" zurueck, wenn
+    /auth/me keinen Mandanten lieferte -- damit landeten die Daten eines
+    Kontos ohne belegten Mandanten im gemeinsamen "default"-Namensraum und
+    waren fuer jedes andere Konto ohne Mandanten sichtbar. Der Scope wird
+    jetzt fail-closed aufgebaut: ohne eindeutigen Tenant UND Benutzer bleibt
+    der anonyme Scope aktiv.
+    """
     start = served_index.index("async function refreshAuthButton()")
     end = served_index.index("async function doLogout()")
     fn = served_index[start:end]
-    assert 'applyScopeAndRerender({type:"user",userId:me.user_id||"unknown",tenantId:me.tenant_id||"default"})' in fn
+
+    # 1. Kein hart codierter Default-Tenant-Rueckfall mehr (Kernregression).
+    #    Kommentarzeilen werden entfernt, damit der Test echten Code prueft.
+    code = "\n".join(
+        line for line in fn.splitlines() if not line.strip().startswith("//")
+    )
+    assert 'me.tenant_id||"default"' not in code
+    assert '"default"' not in code, "Kein Rueckfall auf einen Default-Mandanten im Auth-Pfad"
+
+    # 2. Tenant und Benutzer werden aus /auth/me geprueft, nicht erfunden.
+    assert "me.tenant_id" in fn and "me.user_id" in fn
+    assert ".trim()" in fn, "Leerraum-only-Werte muessen verworfen werden"
+
+    # 3. Fail-closed: fehlt einer der beiden Werte, bleibt der anonyme Scope.
+    guard = fn[fn.index("_tid"):]
+    assert 'if(!_tid||!_uid){' in guard
+    anon_in_guard = guard[: guard.index("applyScopeAndRerender({type:\"user\"")]
+    assert 'applyScopeAndRerender({type:"anon"})' in anon_in_guard, (
+        "Ohne eindeutigen Mandanten muss der anonyme Scope aktiv bleiben"
+    )
+
+    # 4. Der Nutzer-Scope verwendet ausschliesslich die geprueften Werte.
+    assert 'applyScopeAndRerender({type:"user",userId:_uid,tenantId:_tid})' in fn
+
+    # 5. Der anonyme Pfad (abgemeldet/Fehler) bleibt erhalten.
     assert 'applyScopeAndRerender({type:"anon"})' in fn
+
+
+def test_scoped_key_never_mixes_tenants(served_index):
+    """scopedKey() bindet jeden Speicherschluessel an Benutzer UND Mandant.
+
+    Damit koennen zwei Konten mit gleicher user_id in verschiedenen Tenants
+    keine gemeinsamen localStorage-Eintraege sehen.
+    """
+    start = served_index.index("function scopedKey(base)")
+    fn = served_index[start : start + 400]
+    assert "_scope.userId" in fn and "_scope.tenantId" in fn, (
+        "Der Schluessel muss Benutzer und Mandant enthalten"
+    )
+    assert "anon_" in fn, "Anonymer Scope braucht ein eigenes Praefix"
+    assert '"default"' not in fn, "scopedKey() darf keinen Mandanten erfinden"
 
 
 def test_apply_scope_resets_state_before_loading_new_scope(served_index):
