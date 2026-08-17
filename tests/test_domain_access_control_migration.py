@@ -56,12 +56,17 @@ def _sqlite_path(db_url: str) -> str:
     return db_url.replace("sqlite:///", "")
 
 
-def test_exactly_one_head() -> None:
+def test_exactly_one_head_and_revision_in_chain() -> None:
+    """Genau ein Head -- welche Revision der Head IST, wandert mit jeder
+    neuen Migration weiter. Geprueft wird daher die Kette, nicht die
+    Head-Position dieser Revision."""
     result = _alembic("heads", database_url="sqlite:///:memory:")
     assert result.returncode == 0, result.stderr
     heads = [line for line in result.stdout.splitlines() if line.strip()]
     assert len(heads) == 1, f"Erwartet genau einen Head, gefunden: {heads}"
-    assert REVISION in heads[0]
+
+    history = _alembic("history", database_url="sqlite:///:memory:")
+    assert REVISION in history.stdout
 
 
 def test_upgrade_creates_tables_and_seeds_domains(db_url: str) -> None:
