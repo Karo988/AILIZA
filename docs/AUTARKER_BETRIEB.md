@@ -107,3 +107,38 @@ Für mehrere gleichzeitige Nutzer/höhere Last kann später ein lokaler
 Postgres-Container ergänzt werden (eigener `db`-Service in
 `docker-compose.yml`, `AILIZA_DATABASE_URL=postgresql+psycopg://...`).
 Nicht Teil dieses Auftrags — SQLite genügt für den Einstieg.
+
+## Start unter Windows (Docker Desktop)
+
+Docker Desktop muss laufen. In PowerShell im Projektordner:
+
+```powershell
+# 1. Secret-Datei aus der Vorlage anlegen (einmalig)
+Copy-Item .env.example .env
+
+# 2. Ein starkes Secret erzeugen und in .env eintragen
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Ausgabe kopieren und in .env bei AILIZA_SECRET_KEY einsetzen.
+
+# 3. Starten
+docker compose up -d --build
+
+# 4. Oberflaeche oeffnen
+Start-Process "http://localhost:8000"
+```
+
+Die Datei `.env` wird nie committet (steht in `.gitignore`).
+
+**Ohne gueltiges Secret startet der Container bewusst nicht.** Ist
+`AILIZA_SECRET_KEY` nicht gesetzt oder kuerzer als 32 Zeichen, bricht der
+Start mit einer verstaendlichen Meldung ab, statt mit stillschweigend
+deaktivierter Authentifizierung weiterzulaufen. Der Secret-Wert selbst wird
+dabei nie ausgegeben.
+
+Logs ansehen bzw. stoppen:
+
+```powershell
+docker compose logs -f
+docker compose down          # Daten im Volume ailiza_data bleiben erhalten
+```
+

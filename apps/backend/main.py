@@ -3967,6 +3967,18 @@ def self_register(request: Request, payload: RegisterRequest) -> dict[str, Any]:
         plain_password=payload.password,
     )
     user_in_db = UserInDB.from_create(user_create)
+    # Transaktionale Registrierung: Die Token-Faehigkeit wird GEPRUEFT, BEVOR
+    # der Nutzer gespeichert wird. Andernfalls entstuende bei fehlendem oder
+    # zu kurzem AILIZA_SECRET_KEY ein halbfertiges Konto -- der zweite
+    # Registrierungsversuch meldete dann irrefuehrend "Nutzername bereits
+    # vergeben", obwohl die eigentliche Ursache ein Konfigurationsfehler ist.
+    if len(os.getenv("AILIZA_SECRET_KEY", "")) < 32:
+        logger.error("Registrierung abgelehnt: AILIZA_SECRET_KEY fehlt oder ist zu kurz.")
+        raise HTTPException(
+            status_code=503,
+            detail="Registrierung derzeit nicht moeglich (Serverkonfiguration unvollstaendig). "
+                   "Bitte wenden Sie sich an die Betreiberin.",
+        )
     try:
         entry = db_create_user(
             user_id=user_in_db.user_id,
