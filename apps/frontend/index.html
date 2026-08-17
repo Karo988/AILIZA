@@ -382,7 +382,7 @@ body{
 <body>
 <div class="topbar">
   <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen" aria-label="Menü öffnen">☰</button>
-  <div class="brand">AI<span class="brand-mark">LIZA</span><span class="brand-sub">v0.5 · KMU · EU-konform</span></div>
+  <div class="brand">AI<span class="brand-mark">LIZA</span><span class="brand-sub">v0.5 · KMU</span></div>
   <div class="topbar-status">
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
@@ -1524,7 +1524,7 @@ async function init(){
   document.getElementById("m-days").textContent=days;
   migrateLegacyKeysToQuarantine();   // einmalig: Alt-Daten in Quarantaene, NIE loeschen
   await refreshAuthButton();         // ERST Auth-Status feststellen ...
-  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderPrivacyMemory();checkStatus();
+  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderContextBar();renderPrivacyMemory();checkStatus();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
