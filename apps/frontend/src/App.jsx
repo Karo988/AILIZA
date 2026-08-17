@@ -52,7 +52,7 @@ function App() {
   }, [session])
 
   function handleLogin(data) {
-    setSession({ user_id: data.user_id, role: data.role, tenant_id: "default" })
+    setSession({ user_id: data.user_id, role: data.role, tenant_id: data.tenant_id })
   }
 
   // Noch nicht geprüft — kurz warten
@@ -68,17 +68,17 @@ function App() {
   const pages = ["Dashboard", "Governance", "Audit", "Agenten", "Einstellungen"]
 
   const dashboardData = [
-    { title: "Frontend", value: "Online", detail: "Vite UI aktiv", color: "blue" },
+    { title: "Frontend", value: "Demo", detail: "Vite UI (nicht ausgeliefert)", color: "blue" },
     { title: "Governance", value: "Aktiv", detail: "EU-AI-Act Checks", color: "green" },
     { title: "Audit", value: "Logging", detail: "Protokollierung aktiv", color: "purple" },
-    { title: "Compliance", value: "98%", detail: "DSGVO / EU-KI-konform", color: "red" },
+    { title: "Governance", value: "aktiv", detail: "Schutzpruefung eingeschaltet", color: "red" },
   ]
 
   const agents = [
-    ["Governance-Agent", "Online", "EU-AI-Act Compliance, Human Oversight, Risikoklassen"],
-    ["Audit-Agent", "Online", "Audit Logging, Nachvollziehbarkeit, Entscheidungsprotokolle"],
-    ["Runtime-Agent", "Online", "Workflow-Ausführung, Runtime-Monitoring, Task-Status"],
-    ["Monitoring-Agent", "Online", "Health Checks, Warnungen, Systemüberwachung"],
+    ["Governance-Agent", "Demo", "EU-AI-Act Compliance, Human Oversight, Risikoklassen"],
+    ["Audit-Agent", "Demo", "Audit Logging, Nachvollziehbarkeit, Entscheidungsprotokolle"],
+    ["Runtime-Agent", "Demo", "Workflow-Ausführung, Runtime-Monitoring, Task-Status"],
+    ["Monitoring-Agent", "Demo", "Health Checks, Warnungen, Systemüberwachung"],
   ]
 
   function PageHeader({ label, title, text }) {
@@ -98,11 +98,11 @@ function App() {
           <PageHeader
             label="AILIZA Control Center"
             title="Governance Dashboard"
-            text="EU-KI-Gesetz- und DSGVO-konformes autonomes Agentensystem."
+            text="Agentisches KI-System mit technischen Datenschutz- und Governance-Kontrollen."
           />
           <div className="kpi-grid">
             <div className="kpi-card"><p className="kpi-label">Agenten</p><p className="kpi-value">4</p></div>
-            <div className="kpi-card"><p className="kpi-label">Compliance</p><p className="kpi-value">98%</p></div>
+            <div className="kpi-card"><p className="kpi-label">Governance</p><p className="kpi-value">aktiv</p></div>
             <div className="kpi-card"><p className="kpi-label">Audit Logs</p><p className="kpi-value">{auditLogs.length}</p></div>
             <div className="kpi-card"><p className="kpi-label">Nutzer</p><p className="kpi-value">{session.user_id}</p></div>
           </div>
@@ -131,12 +131,12 @@ function App() {
           <PageHeader
             label="Governance Layer"
             title="Governance"
-            text="Kontrollschicht für sichere, prüfbare und EU-konforme Agenten."
+            text="Kontrollschicht für sichere und prüfbare Agenten."
           />
           <div className="demo-grid">
             <div className="demo-card"><h3>Human Oversight</h3><p>Aktiviert für kritische Aktionen.</p><strong>Aktiv</strong></div>
             <div className="demo-card"><h3>Risk Classification</h3><p>Risikoklasse wird vor Ausführung geprüft.</p><strong>Vorhanden</strong></div>
-            <div className="demo-card"><h3>DSGVO</h3><p>Datenschutzstatus und Protokollierung aktiv.</p><strong>Konform</strong></div>
+            <div className="demo-card"><h3>DSGVO</h3><p>Datenschutzkontrollen und Protokollierung aktiv.</p><strong>In Vorbereitung</strong></div>
             <div className="demo-card"><h3>Audit Gate</h3><p>Aktionen werden nachvollziehbar gespeichert.</p><strong>Aktiv</strong></div>
           </div>
         </section>
@@ -197,7 +197,7 @@ function App() {
             <button onClick={logout} style={{ marginTop: "0.75rem" }}>Abmelden</button>
           </div>
           <div className="demo-card"><h3>Audit Logging</h3><p>Protokollierung aller Aktionen.</p><strong>Aktiv</strong></div>
-          <div className="demo-card"><h3>EU AI Act Art. 50</h3><p>KI-Kennzeichnung aktiv.</p><strong>Konform</strong></div>
+          <div className="demo-card"><h3>EU AI Act Art. 50</h3><p>KI-Kennzeichnung aktiv.</p><strong>In Vorbereitung</strong></div>
           <div className="demo-card"><h3>Kill-Switch</h3><p>Externe KI steuerbar über Env-Variable.</p><strong>Fail-Closed</strong></div>
         </div>
       </section>

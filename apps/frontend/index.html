@@ -387,44 +387,43 @@ body{
     <span class="status-dot status-off" id="conn-status">○ Verbinde…</span>
     <span class="deadline-pill" id="deadline-pill"></span>
     <span id="sync-status" title="" style="font-size:12px;display:none;cursor:default"></span>
-    <button class="btn-ghost" id="topbar-auth-btn" onclick="openLoginModal()" style="font-size:12px;padding:5px 10px">Anmelden</button>
+    <div id="account-menu-wrap" style="position:relative"><button class="btn-ghost" id="topbar-auth-btn" onclick="toggleAccountMenu()" aria-haspopup="true" aria-expanded="false" style="font-size:12px;padding:5px 10px">Anmelden</button><div id="account-dropdown" role="menu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--bg-elevated,#fff);border:1px solid var(--border,#ddd);border-radius:8px;min-width:230px;box-shadow:0 6px 16px rgba(0,0,0,.15);z-index:60;overflow:hidden"><div class="side-item" role="menuitem" tabindex="0" onclick="showView('agb',null);closeAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div><div class="side-item" role="menuitem" tabindex="0" onclick="showView('impressum',null);closeAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">📄</span><span>Impressum &amp; Datenschutz</span></div><div class="side-item" role="menuitem" tabindex="0" id="account-logout-item" style="display:none" onclick="doLogout();closeAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">🚪</span><span>Abmelden</span></div></div></div>
   </div>
 </div>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 <div class="app">
   <div class="sidebar" id="sidebar">
     <div class="side-section">
-      <div class="side-item active" onclick="newChat();this.classList.add('active');closeSidebar()"><span class="side-ic">💬</span><span>Neuer Chat</span></div>
-      <div class="side-item" onclick="showView('projects',this);closeSidebar()"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
-      <div class="side-item" onclick="showView('skills',this);closeSidebar()"><span class="side-ic">⚡</span><span>Skills</span></div>
-      <div class="side-item" onclick="showView('status',this);closeSidebar()"><span class="side-ic">🛡️</span><span>Compliance</span></div>
-      <div class="side-item" onclick="showView('impressum',this);closeSidebar()"><span class="side-ic">📄</span><span>Impressum & Datenschutz</span></div>
-      <div class="side-item" onclick="showView('wissen',this);closeSidebar()"><span class="side-ic">📚</span><span>Wissensbibliothek</span></div>
-      <div class="side-item" onclick="showView('agb',this);closeSidebar()"><span class="side-ic">📋</span><span>Nutzungsbedingungen</span></div>
+      <button class="side-item side-item-primary" onclick="newChat();closeSidebar()" style="width:100%;text-align:left;border:0;font:inherit;cursor:pointer"><span class="side-ic">💬</span><span>Neuer Chat</span></button>
     </div>
     <div class="side-section">
-      <div class="side-label">Letzte Chats</div>
-      <div class="side-scroll" id="recent-chats" style="max-height:200px"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div></div>
-      <div class="side-add" onclick="newChat()">＋ Neuer Chat</div>
+      <div class="side-label" id="nav-work-label">Arbeiten</div>
+      <div role="navigation" aria-labelledby="nav-work-label">
+        <div class="side-item" role="button" tabindex="0" onclick="showView('chat',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">💬</span><span>Chat</span></div>
+        <div class="side-item" role="button" tabindex="0" onclick="showView('wissen',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📄</span><span>Vorlagen</span></div>
+        <div class="side-item" role="button" tabindex="0" onclick="showView('projects',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
+      </div>
+      <div id="proj-panel" style="padding:0 10px 8px 34px">
+        <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Projekte</div></div>
+        <div class="side-add" role="button" tabindex="0" onclick="openProjModal()" onkeydown="navKey(event,this)">＋ Neues Projekt</div>
+      </div>
     </div>
     <div class="side-section">
-      <div class="side-label">Projekte</div>
-      <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div></div>
-      <div class="side-add" onclick="openProjModal()">＋ Neues Projekt</div>
-    </div>
-    <div class="side-section">
-      <div class="side-label">Ordner</div>
-      <div id="folder-list"></div>
-      <div class="side-add" onclick="addFolder()">＋ Ordner</div>
+      <div class="side-label" id="nav-hist-label">Verlauf</div>
+      <div class="side-scroll" id="recent-chats" aria-labelledby="nav-hist-label" style="max-height:220px"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Chats</div></div>
     </div>
     <div style="flex:1"></div>
-    <div class="side-footer">AILIZA · EU AI Act Art. 50<br><span style="color:var(--accent)">Limited Risk · DSGVO</span></div>
+    <div class="side-section" style="border-top:1px solid var(--border,#e3e6dd);padding-top:8px">
+      <div class="side-item" role="button" tabindex="0" onclick="showView('status',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🛡️</span><span>Datenschutz &amp; Kontrolle</span></div>
+      <div class="side-item" role="button" tabindex="0" onclick="toggleAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">👤</span><span>Hilfe &amp; Profil</span></div>
+    </div>
+    <div class="side-footer">AILIZA · Sie interagieren mit einem KI-System<br><span style="color:var(--text-muted)">EU AI Act Art. 50 · Kennzeichnung aktiv</span></div>
   </div>
   <div class="main">
     <div class="view active" id="view-chat">
       <div class="chat-header">
         <button class="mob-menu-btn" onclick="openSidebar()" title="Menü öffnen">☰</button>
-        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">Autonomer KI-Assistent · DSGVO-konform · EU AI Act Art. 50</div><div class="chat-project" id="active-project-name"></div></div>
+        <div><div class="chat-title">Chat mit AILIZA</div><div class="chat-subtitle">KI-Assistent · Sie interagieren mit einem KI-System</div><div class="chat-project" id="active-project-name"></div><div id="context-bar" role="status" style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-muted);margin-top:4px"></div></div>
         <div class="chat-actions">
           <button class="btn-mini" onclick="clearChat()">🗑 Löschen</button>
           <button class="btn-mini" onclick="exportChat()">⬇ Export</button>
@@ -661,7 +660,7 @@ body{
 
     <div class="view" id="view-wissen">
       <div class="page-wrap">
-        <div class="page-head"><div><div class="page-title">Wissensbibliothek</div><div class="page-sub">Fertige Vorlagen und Prompts für KMU — einfach anklicken und loslegen</div></div></div>
+        <div class="page-head"><div><div class="page-title">Vorlagen</div><div class="page-sub">Fertige Arbeitsvorlagen für KMU — anklicken und loslegen. Vorlagen sind Arbeitsentwürfe, kein freigegebenes Unternehmenswissen.</div></div></div>
         <div class="wissen-cats" id="wissen-cats"></div>
         <div class="wissen-grid" id="wissen-grid"></div>
       </div>
@@ -960,7 +959,7 @@ function offerLegacyQuarantineRestoreIfNeeded(){
   }
   localStorage.setItem("legacy_quarantine_status","claimed");
   reloadScopedState();
-  renderChat();renderPrivacyMemory();renderRecent();renderProjects();renderProjectList();renderFolders();renderTools();updateChatProjectLabel();
+  renderChat();renderPrivacyMemory();renderRecent();renderProjects();renderProjectList();renderFolders();renderTools();updateChatProjectLabel();renderContextBar();
 }
 let chatHistory=[];
 let currentChatId=null;
@@ -994,7 +993,7 @@ function applyScopeAndRerender(newScope){
   resetAppState();
   _scope=newScope;
   reloadScopedState();
-  renderChat();renderPrivacyMemory();renderRecent();renderProjects();renderProjectList();renderFolders();renderTools();updateChatProjectLabel();
+  renderChat();renderPrivacyMemory();renderRecent();renderProjects();renderProjectList();renderFolders();renderTools();updateChatProjectLabel();renderContextBar();
   offerLegacyQuarantineRestoreIfNeeded();
 }
 // Backend /api/policy-redact ist die einzige Quelle der Wahrheit fuer Redaction.
@@ -1543,8 +1542,9 @@ async function refreshAuthButton(){
       // demselben Browser), werden Chats/Projekte NEU aus dem eigenen,
       // scope-gebundenen localStorage geladen -- nie die des vorherigen Scopes.
       applyScopeAndRerender({type:"user",userId:me.user_id||"unknown",tenantId:me.tenant_id||"default"});
-      btn.textContent=`${me.user_id||"Konto"} · Abmelden`;
-      btn.onclick=doLogout;
+      btn.textContent=`${me.user_id||"Konto"} ▾`;
+      btn.onclick=toggleAccountMenu;
+      const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="block";
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
     }
@@ -1552,6 +1552,8 @@ async function refreshAuthButton(){
   applyScopeAndRerender({type:"anon"});
   btn.textContent="Anmelden";
   btn.onclick=openLoginModal;
+  closeAccountMenu();
+  const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="none";
 }
 async function doLogout(){
   // Sofort client-seitig auf anonymen Scope umschalten, BEVOR die
@@ -1676,9 +1678,44 @@ async function previewRedaction(){
 }
 function quickPrompt(t){const i=document.getElementById("chat-input");i.value=t;i.focus();autoResize(i);if(!t.endsWith(": ")&&!t.endsWith("? "))sendMessage()}
 function renderSkills(){document.getElementById("skill-tiles").innerHTML=SKILLS.map(s=>`<div class="skill-tile" onclick="showView('chat',document.querySelector('.side-item'));quickPrompt('${s.p.replace(/'/g,"\\'")}')"><div class="skill-ic">${s.ic}</div><div class="skill-n">${s.n}</div><div class="skill-d">${s.d}</div></div>`).join("")}
-function renderFolders(){document.getElementById("folder-list").innerHTML=folders.map((f,i)=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${f}</span><span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span></div>`).join("")}
+function renderFolders(){const _fl=document.getElementById("folder-list"); if(!_fl)return; _fl.innerHTML=folders.map((f,i)=>`<div class="side-list-item"><span class="dot"></span><span class="side-list-text">${f}</span><span class="side-list-meta" style="cursor:pointer" onclick="deleteFolder(${i})">✕</span></div>`).join("")}
 function addFolder(){const n=prompt("Ordnername:");if(!n)return;folders.push(n);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
 function deleteFolder(i){folders.splice(i,1);localStorage.setItem(scopedKey("ailiza_folders"),JSON.stringify(folders));renderFolders()}
+
+
+function toggleAccountMenu(){
+  const dd=document.getElementById("account-dropdown"),btn=document.getElementById("topbar-auth-btn");
+  const li=document.getElementById("account-logout-item");
+  if(!dd)return;
+  if(li&&li.style.display==="none"){openLoginModal();return;}
+  const open=dd.style.display==="none";
+  dd.style.display=open?"block":"none";
+  if(btn)btn.setAttribute("aria-expanded",open?"true":"false");
+}
+function closeAccountMenu(){
+  const dd=document.getElementById("account-dropdown"),btn=document.getElementById("topbar-auth-btn");
+  if(dd)dd.style.display="none";
+  if(btn)btn.setAttribute("aria-expanded","false");
+}
+document.addEventListener("click",function(e){
+  const w=document.getElementById("account-menu-wrap");
+  if(w&&!w.contains(e.target))closeAccountMenu();
+});
+document.addEventListener("keydown",function(e){ if(e.key==="Escape")closeAccountMenu(); });
+function navKey(e,el){ if(e.key==="Enter"||e.key===" "){e.preventDefault();el.click();} }
+function renderContextBar(){
+  const bar=document.getElementById("context-bar"); if(!bar)return;
+  let ic="\ud83d\udd12", txt="Privater Chat";
+  if(activeProjectId){
+    const p=(projects||[]).find(x=>x.id===activeProjectId);
+    if(p){ ic="\ud83d\udcc1"; txt="Privates Projekt \u00b7 "+p.name; }
+  }
+  bar.innerHTML="";
+  const i=document.createElement("span"); i.textContent=ic; i.setAttribute("aria-hidden","true");
+  const t=document.createElement("span"); t.textContent=txt;
+  bar.appendChild(i); bar.appendChild(t);
+  bar.setAttribute("aria-label","Aktueller Datenraum: "+txt);
+}
 function renderRecent(){
   const chats=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat_list"))||"[]");
   const el=document.getElementById("recent-chats");
@@ -2252,6 +2289,24 @@ function addAiMessage(text,warn,draftHint,testModeInfo){
   // ans Container-Ende) -- verhindert, dass die Antwort bei sehr langen
   // vorherigen Nachrichten optisch "verloren" wirkt.
   if(last)setTimeout(()=>scrollMessageIntoView(last),450);
+  if(last)attachCopyButton(last,text);
+}
+// Kopier-Aktion unter jeder AI-Antwort. Nutzt textContent (kein innerHTML mit
+// Nutzerdaten) und meldet den Erfolg per aria-live fuer Screenreader.
+function attachCopyButton(bubble,text){
+  try{
+    if(bubble.querySelector(".copy-btn"))return;
+    const b=document.createElement("button");
+    b.className="btn-mini copy-btn"; b.type="button";
+    b.style.cssText="margin-top:6px;font-size:11px";
+    b.textContent="Kopieren"; b.setAttribute("aria-label","Antwort in die Zwischenablage kopieren");
+    b.onclick=async()=>{
+      try{ await navigator.clipboard.writeText(text); b.textContent="Kopiert"; }
+      catch(e){ b.textContent="Kopieren nicht moeglich"; }
+      setTimeout(()=>{b.textContent="Kopieren";},2000);
+    };
+    bubble.appendChild(b);
+  }catch(e){/* Kopieren ist optional -- darf die Antwort nie blockieren */}
 }
 // ── B2: Aktions-Buttons unter einer AI-Nachricht (nicht persistiert — nach
 // einem Neu-Rendern der History verschwinden sie bewusst) ────────────────────
@@ -2513,7 +2568,8 @@ function renderWissen(){
   const cats=["Alle",...new Set(WISSEN.map(w=>w.cat))];
   document.getElementById("wissen-cats").innerHTML=cats.map(c=>`<button class="wissen-cat-btn${c===wissenCat?" active":""}" onclick="setWissenCat('${c}')">${c}</button>`).join("");
   const filtered=wissenCat==="Alle"?WISSEN:WISSEN.filter(w=>w.cat===wissenCat);
-  document.getElementById("wissen-grid").innerHTML=filtered.map(w=>`<div class="wissen-card" onclick="useWissen(${JSON.stringify(w.p).replace(/"/g,'&quot;')},${JSON.stringify(w.title).replace(/"/g,'&quot;')})"><div class="wissen-card-ic">${w.ic}</div><div class="wissen-card-title">${w.title}</div><div class="wissen-card-desc">${w.desc}</div><span class="wissen-card-cat">${w.cat}</span></div>`).join("");
+  const _sens=c=>/recht|personal/i.test(c);
+  document.getElementById("wissen-grid").innerHTML=filtered.map(w=>`<div class="wissen-card" role="button" tabindex="0" onkeydown="navKey(event,this)" onclick="useWissen(${JSON.stringify(w.p).replace(/"/g,'&quot;')},${JSON.stringify(w.title).replace(/"/g,'&quot;')})"><div class="wissen-card-ic">${w.ic}</div><div class="wissen-card-title">${w.title}</div><div class="wissen-card-desc">${w.desc}</div><span class="wissen-card-cat">${w.cat}</span>${_sens(w.cat)?'<div style="margin-top:6px;font-size:11px;color:var(--warn,#b3541e)">Arbeitsentwurf \u2014 ersetzt keine rechtliche oder fachliche Pr\u00fcfung.</div>':''}</div>`).join("");
 }
 function setWissenCat(cat){wissenCat=cat;renderWissen()}
 function registerChatListEntry(id,title){
