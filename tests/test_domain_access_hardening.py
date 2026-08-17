@@ -56,10 +56,14 @@ def _member_sql(extra_cols: str = "", extra_vals: str = "") -> str:
     )
 
 
-def test_exactly_one_head() -> None:
+def test_exactly_one_head_and_revision_in_chain() -> None:
+    """Genau ein Head; welche Revision der Head IST, wandert mit jeder neuen
+    Migration weiter."""
     result = _alembic("heads", database_url="sqlite:///:memory:")
     heads = [line for line in result.stdout.splitlines() if line.strip()]
-    assert len(heads) == 1 and REVISION in heads[0]
+    assert len(heads) == 1, f"Erwartet genau einen Head, gefunden: {heads}"
+    history = _alembic("history", database_url="sqlite:///:memory:")
+    assert REVISION in history.stdout
 
 
 def test_invalid_role_is_rejected(db: sqlite3.Connection) -> None:
@@ -76,8 +80,9 @@ def test_invalid_action_is_rejected(db: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO domain_role_permissions "
-            "(tenant_id, domain_id, role_in_domain, action, allowed, version) "
-            "VALUES ('t1', ?, 'viewer', 'content.destroy', 1, 1)", (_domain_id(db),)
+            "(tenant_id, domain_id, role_in_domain, action, allowed, reason, version) "
+            "VALUES ('t1', ?, 'viewer', 'content.destroy', 1, 'Testgrund', 1)",
+            (_domain_id(db),)
         )
 
 
@@ -88,8 +93,8 @@ def test_invalid_action_is_rejected(db: sqlite3.Connection) -> None:
 def test_valid_actions_are_accepted(db: sqlite3.Connection, action: str) -> None:
     db.execute(
         "INSERT INTO domain_role_permissions "
-        "(tenant_id, domain_id, role_in_domain, action, allowed, version) "
-        "VALUES ('t1', ?, 'viewer', ?, 1, 1)", (_domain_id(db), action)
+        "(tenant_id, domain_id, role_in_domain, action, allowed, reason, version) "
+        "VALUES ('t1', ?, 'viewer', ?, 1, 'Testgrund', 1)", (_domain_id(db), action)
     )
 
 
@@ -136,9 +141,9 @@ def test_revoked_history_does_not_block_new_membership(db: sqlite3.Connection) -
     db.execute(
         "INSERT INTO user_domain_memberships "
         "(tenant_id, domain_id, user_id, role_in_domain, valid_from, assigned_by, "
-        " assignment_reason, is_active, revoked_at, version) "
+        " assignment_reason, is_active, revoked_at, revocation_reason, version) "
         "VALUES ('t1', ?, 'u6', 'viewer', '2026-01-01', 'admin', 'Grund', 0, "
-        "'2026-02-01', 1)", (did,)
+        "'2026-02-01', 'Austritt', 1)", (did,)
     )
     db.execute(_member_sql(), ("t1", did, "u6", "reviewer"))
 
@@ -176,4 +181,6 @@ def test_migration_stops_when_domain_tables_hold_data(tmp_path: Path) -> None:
 
     result = _alembic("upgrade", "head", database_url=url)
     assert result.returncode != 0
-    assert "DomainTablesNotEmpty" in result.stderr or "bereits Daten" in result.stderr
+    assert ("DomainTablesNotEmpty" in result.stderr
+            or "bereits Daten" in result.stderr
+            or "verletzen" in result.stderr)

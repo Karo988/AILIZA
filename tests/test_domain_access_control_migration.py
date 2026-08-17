@@ -114,13 +114,15 @@ def test_tenant_domain_pair_is_unique(db_url: str) -> None:
             "SELECT id FROM business_domains WHERE code='accounting'"
         ).fetchone()[0]
         con.execute(
-            "INSERT INTO tenant_business_domains (tenant_id, domain_id, is_enabled, version) "
-            "VALUES ('t1', ?, 1, 1)", (did,)
+            "INSERT INTO tenant_business_domains "
+            "(tenant_id, domain_id, is_enabled, reason, version) "
+            "VALUES ('t1', ?, 1, 'Testfreigabe', 1)", (did,)
         )
         with pytest.raises(sqlite3.IntegrityError):
             con.execute(
                 "INSERT INTO tenant_business_domains "
-                "(tenant_id, domain_id, is_enabled, version) VALUES ('t1', ?, 1, 1)", (did,)
+                "(tenant_id, domain_id, is_enabled, reason, version) "
+                "VALUES ('t1', ?, 1, 'Testfreigabe', 1)", (did,)
             )
     finally:
         con.close()
