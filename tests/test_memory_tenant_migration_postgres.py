@@ -70,7 +70,7 @@ def _pg_conn(db_url: str):
 @pg_only
 def test_postgres_fresh_database_upgrade_head_succeeds():
     with _fresh_postgres_database("ailiza_kp1_fresh") as db_url:
-        result = _run_alembic("upgrade", "head", database_url=db_url)
+        result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
         assert result.returncode == 0, result.stderr
         con = _pg_conn(db_url)
         cur = con.cursor()
@@ -100,7 +100,7 @@ def test_postgres_existing_valid_data_migrates_without_loss():
         con.commit()
         con.close()
 
-        result = _run_alembic("upgrade", "head", database_url=db_url)
+        result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
         assert result.returncode == 0, result.stderr
         con = _pg_conn(db_url)
         cur = con.cursor()
@@ -125,7 +125,7 @@ def test_postgres_null_tenant_legacy_row_blocks_upgrade():
         con.commit()
         con.close()
 
-        result = _run_alembic("upgrade", "head", database_url=db_url)
+        result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
         assert result.returncode != 0
         assert "MemoryTenantIdMigrationBlocked" in result.stderr or "abgebrochen" in result.stderr
 
@@ -143,7 +143,7 @@ def test_postgres_direct_null_insert_rejected_after_migration():
     """Direkter DB-Beweis (Auftrag Abschnitt 12/20): PostgreSQL selbst weist
     einen NULL-Insert zurueck, nicht nur die Python-Schicht."""
     with _fresh_postgres_database("ailiza_kp1_directnull") as db_url:
-        result = _run_alembic("upgrade", "head", database_url=db_url)
+        result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
         assert result.returncode == 0, result.stderr
         con = _pg_conn(db_url)
         now = datetime.now(timezone.utc)
@@ -173,7 +173,7 @@ def test_postgres_downgrade_then_reupgrade_preserves_data():
         )
         con.commit()
         con.close()
-        result = _run_alembic("upgrade", "head", database_url=db_url)
+        result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
         assert result.returncode == 0, result.stderr
 
         result = _run_alembic("downgrade", "-1", database_url=db_url)
@@ -189,7 +189,7 @@ def test_postgres_downgrade_then_reupgrade_preserves_data():
         assert cur.fetchall() == [("tenant-a", "t")]
         con.close()
 
-        result = _run_alembic("upgrade", "head", database_url=db_url)
+        result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
         assert result.returncode == 0, result.stderr
         con = _pg_conn(db_url)
         cur = con.cursor()
