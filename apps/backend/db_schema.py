@@ -29,7 +29,7 @@ import os
 
 from sqlalchemy import (
     Column, DateTime, Float, ForeignKey, Index, Integer, JSON, MetaData, String, Table, Text,
-    text,
+    CheckConstraint, UniqueConstraint, text,
 )
 
 DEFAULT_TENANT_ID = os.getenv("AILIZA_DEFAULT_TENANT_ID", "default")
@@ -622,4 +622,129 @@ customers = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Index("ix_customers_tenant_owner", "tenant_id", "owner_user_id"),
+)
+
+# ── Bereichsfreischaltung und Rechteverwaltung V1 ───────────────────────────
+# Fachliche Unternehmensbereiche (Buchhaltung, Vertrieb, ...) sind STRIKT
+# getrennt von den Governance-Zustaendigkeiten in user_specialist_roles:
+# "darf freigeben" (Fachrolle) und "darf sehen" (Bereichsmitgliedschaft) sind
+# unterschiedliche Dimensionen und duerfen nicht vermischt werden.
+
+# Globales, festes Vokabular -- KEINE Mandantendaten. Codes sind nach
+# Inbetriebnahme unveraenderlich; Bereiche werden deaktiviert, nie geloescht.
+business_domains = Table(
+    "business_domains",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("code", String(64), nullable=False, unique=True),
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=True),
+    Column("category", String(64), nullable=True),
+    # normal | high | confidential -- schraenkt zusaetzlich ein, erweitert nie.
+    Column("sensitivity_level", String(32), nullable=False, default="normal"),
+    Column("is_system_domain", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("sensitivity_level IN ('normal','high','confidential')",
+                    name="ck_bd_sensitivity"),
+    CheckConstraint("is_system_domain IN (0,1)", name="ck_bd_system_flag"),
+)
+
+# Aktivierung je Mandant. Kein Eintrag ODER is_enabled=0 bedeutet: Bereich im
+# Mandanten nicht nutzbar (fail-closed, kein impliziter Zugriff).
+tenant_business_domains = Table(
+    "tenant_business_domains",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False),
+    Column("domain_id", Integer, ForeignKey("business_domains.id"), nullable=False),
+    Column("is_enabled", Integer, nullable=False, default=0),
+    Column("enabled_by", String(64), nullable=True),
+    Column("enabled_at", DateTime(timezone=True), nullable=True),
+    Column("disabled_by", String(64), nullable=True),
+    Column("disabled_at", DateTime(timezone=True), nullable=True),
+    # Begruendungspflicht: NOT NULL allein genuegt nicht -- eine leere oder
+    # nur aus Leerraum bestehende Angabe waere keine Begruendung.
+    Column("reason", Text, nullable=False),
+    Column("version", Integer, nullable=False, default=1),
+    UniqueConstraint("tenant_id", "domain_id", name="uq_tenant_domain"),
+    CheckConstraint("is_enabled IN (0,1)", name="ck_tbd_enabled"),
+    CheckConstraint("LENGTH(TRIM(reason)) >= 3", name="ck_tbd_reason_not_blank"),
+    Index("ix_tenant_business_domains_tenant", "tenant_id", "is_enabled"),
+)
+
+# Mitgliedschaft eines Nutzers in einem Fachbereich. Befristbar, pruefbar und
+# sofort widerrufbar; abgelaufene Zuweisungen gelten sofort als inaktiv.
+user_domain_memberships = Table(
+    "user_domain_memberships",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False),
+    Column("domain_id", Integer, ForeignKey("business_domains.id"), nullable=False),
+    Column("user_id", String(64), nullable=False),
+    # viewer | contributor | reviewer | domain_manager
+    Column("role_in_domain", String(32), nullable=False),
+    Column("valid_from", DateTime(timezone=True), nullable=False),
+    Column("valid_until", DateTime(timezone=True), nullable=True),
+    Column("review_required_at", DateTime(timezone=True), nullable=True),
+    Column("assigned_by", String(64), nullable=False),
+    Column("assignment_reason", Text, nullable=False),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+    Column("revoked_by", String(64), nullable=True),
+    Column("revocation_reason", Text, nullable=True),
+    Column("is_active", Integer, nullable=False, default=1),
+    Column("version", Integer, nullable=False, default=1),
+    CheckConstraint(
+        "role_in_domain IN ('viewer','contributor','reviewer','domain_manager')",
+        name="ck_udm_role"),
+    CheckConstraint("is_active IN (0,1)", name="ck_udm_active_flag"),
+    # Aktiv und widerrufen schliessen einander aus -- sonst gaelte ein
+    # widerrufener Zugriff weiter und der Widerruf waere wirkungslos.
+    CheckConstraint(
+        "(is_active = 1 AND revoked_at IS NULL) OR "
+        "(is_active = 0 AND revoked_at IS NOT NULL) OR "
+        "(is_active = 0 AND revoked_at IS NULL)",
+        name="ck_udm_revoked"),
+    CheckConstraint("valid_until IS NULL OR valid_until > valid_from",
+                    name="ck_udm_validity"),
+    CheckConstraint("LENGTH(TRIM(assignment_reason)) >= 3", name="ck_udm_reason_not_blank"),
+    CheckConstraint(
+        "revoked_at IS NULL OR LENGTH(TRIM(COALESCE(revocation_reason,''))) >= 3",
+        name="ck_udm_revocation_reason"),
+    Index("ix_user_domain_memberships_lookup", "tenant_id", "user_id", "is_active"),
+    Index("ix_user_domain_memberships_domain", "tenant_id", "domain_id", "is_active"),
+    Index("uq_udm_active_member", "tenant_id", "domain_id", "user_id",
+          unique=True, sqlite_where=text("is_active = 1"),
+          postgresql_where=text("is_active = 1")),
+)
+
+# Welche Aktion darf eine Bereichsrolle in einem Bereich ausfuehren.
+# Default ist KEIN Zugriff: fehlt eine Zeile, gilt sie als verweigert.
+domain_role_permissions = Table(
+    "domain_role_permissions",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False),
+    Column("domain_id", Integer, ForeignKey("business_domains.id"), nullable=False),
+    Column("role_in_domain", String(32), nullable=False),
+    # domain.view | content.read | content.create | content.update |
+    # content.approve | content.export | action.execute | membership.manage
+    Column("action", String(64), nullable=False),
+    Column("allowed", Integer, nullable=False, default=0),
+    Column("granted_by", String(64), nullable=True),
+    Column("granted_at", DateTime(timezone=True), nullable=True),
+    Column("reason", Text, nullable=False),
+    Column("version", Integer, nullable=False, default=1),
+    UniqueConstraint("tenant_id", "domain_id", "role_in_domain", "action",
+                     name="uq_domain_role_action"),
+    CheckConstraint(
+        "role_in_domain IN ('viewer','contributor','reviewer','domain_manager')",
+        name="ck_drp_role"),
+    CheckConstraint(
+        "action IN ('domain.view','content.read','content.create','content.update',"
+        "'content.approve','content.export','action.execute','membership.manage')",
+        name="ck_drp_action"),
+    CheckConstraint("allowed IN (0,1)", name="ck_drp_allowed"),
+    CheckConstraint("LENGTH(TRIM(reason)) >= 3", name="ck_drp_reason_not_blank"),
+    Index("ix_domain_role_permissions_lookup", "tenant_id", "domain_id", "role_in_domain"),
 )

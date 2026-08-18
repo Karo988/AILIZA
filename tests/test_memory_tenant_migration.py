@@ -51,12 +51,16 @@ def test_exactly_one_alembic_head():
     assert result.returncode == 0, result.stderr
     heads = [line for line in result.stdout.splitlines() if line.strip()]
     assert len(heads) == 1, f"Erwartet genau einen Alembic-Head, gefunden: {heads}"
-    assert TARGET_REVISION in heads[0]
+    # Der Head wandert mit jeder neuen Migration weiter. Entscheidend ist,
+    # dass es genau EINEN Head gibt und die hier gepruefte Revision Teil der
+    # Kette ist -- nicht, dass sie selbst der Head ist.
+    history = _run_alembic("history", database_url="sqlite:///:memory:")
+    assert TARGET_REVISION in history.stdout
 
 
 def test_fresh_database_upgrade_head_succeeds(tmp_path):
     db_path = tmp_path / "fresh.db"
-    result = _run_alembic("upgrade", "head", database_url=f"sqlite:///{db_path}")
+    result = _run_alembic("upgrade", TARGET_REVISION, database_url=f"sqlite:///{db_path}")
     assert result.returncode == 0, result.stderr
 
     con = sqlite3.connect(db_path)
@@ -78,7 +82,7 @@ def test_existing_database_with_valid_data_migrates_without_loss(tmp_path):
     assert result.returncode == 0, result.stderr
     _insert_memory_item(db_path, tenant_id="tenant-a")
 
-    result = _run_alembic("upgrade", "head", database_url=db_url)
+    result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
     assert result.returncode == 0, result.stderr
 
     con = sqlite3.connect(db_path)
@@ -97,7 +101,7 @@ def test_existing_database_with_null_tenant_legacy_row_blocks_upgrade(tmp_path):
     assert result.returncode == 0, result.stderr
     _insert_memory_item(db_path, tenant_id=None)
 
-    result = _run_alembic("upgrade", "head", database_url=db_url)
+    result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
     assert result.returncode != 0, "Migration haette bei NULL-Tenant-Altdaten abbrechen muessen"
     assert "MemoryTenantIdMigrationBlocked" in result.stderr or "abgebrochen" in result.stderr
 
@@ -116,7 +120,7 @@ def test_downgrade_then_reupgrade_preserves_data(tmp_path):
     result = _run_alembic("upgrade", PARENT_REVISION, database_url=db_url)
     assert result.returncode == 0, result.stderr
     _insert_memory_item(db_path, tenant_id="tenant-a")
-    result = _run_alembic("upgrade", "head", database_url=db_url)
+    result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
     assert result.returncode == 0, result.stderr
 
     result = _run_alembic("downgrade", "-1", database_url=db_url)
@@ -127,7 +131,7 @@ def test_downgrade_then_reupgrade_preserves_data(tmp_path):
     assert con.execute("SELECT tenant_id, title FROM memory_items").fetchall() == [("tenant-a", "t")]
     con.close()
 
-    result = _run_alembic("upgrade", "head", database_url=db_url)
+    result = _run_alembic("upgrade", TARGET_REVISION, database_url=db_url)
     assert result.returncode == 0, result.stderr
     con = sqlite3.connect(db_path)
     cols = {row[1]: row[3] for row in con.execute("PRAGMA table_info(memory_items)").fetchall()}
