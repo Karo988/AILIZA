@@ -36,6 +36,10 @@ try:
         get_accessible_agent_run, get_approval_request,
     )
     from .permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
+    from .domains import (
+        bootstrap_domain, revoke_membership, list_my_domain_memberships,
+        DomainBootstrapError, LastDomainManagerError,
+    )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
     from .errors import AILIZAError, MESSAGES
@@ -3013,6 +3017,62 @@ def get_agent_run_status(
     if entry is None:
         raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
     return serialize_agent_run(entry)
+
+
+@app.get("/domains/my-memberships")
+def get_my_domain_memberships(
+    token: TokenData = Depends(require_role(Role.USER)),
+) -> list[dict[str, Any]]:
+    """Eigene aktive Bereichsmitgliedschaften -- reine Selbstauskunft,
+    kein Einblick in fremde Mitgliedschaften."""
+    return list_my_domain_memberships(tenant_id=token.tenant_id, user_id=token.user_id)
+
+
+class DomainBootstrapRequest(BaseModel):
+    domain_code: str
+    reason: str
+    first_manager_user_id: str
+
+
+@app.post("/domains/bootstrap")
+def post_domain_bootstrap(
+    body: DomainBootstrapRequest,
+    token: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """Aktiviert einen Bereich fuer den eigenen Mandanten. Nur Admin --
+    das Vier-Augen-Prinzip fuer die laufende Bereichsverwaltung greift ab
+    hier ueber domain_manager-Mitgliedschaften, die Erstaktivierung selbst
+    bleibt eine Admin-Handlung mit Begruendungspflicht."""
+    try:
+        return bootstrap_domain(
+            tenant_id=token.tenant_id, domain_code=body.domain_code,
+            enabled_by=token.user_id, reason=body.reason,
+            first_manager_user_id=body.first_manager_user_id,
+        )
+    except DomainBootstrapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class DomainMembershipRevokeRequest(BaseModel):
+    revocation_reason: str
+
+
+@app.post("/domains/memberships/{membership_id}/revoke")
+def post_domain_membership_revoke(
+    membership_id: int,
+    body: DomainMembershipRevokeRequest,
+    token: TokenData = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """Widerruft eine Bereichsmitgliedschaft. Lehnt fail-closed ab, wenn
+    dadurch der letzte aktive domain_manager eines Bereichs entfernt
+    wuerde."""
+    try:
+        return revoke_membership(
+            tenant_id=token.tenant_id, membership_id=membership_id,
+            revoked_by=token.user_id, revocation_reason=body.revocation_reason,
+        )
+    except LastDomainManagerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 # Die frueher hier stehende GET-Variante von /agent/run/stream ist entfallen.
