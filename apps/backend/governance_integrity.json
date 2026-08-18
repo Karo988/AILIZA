@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0",
-  "generated_at": "2026-08-03T06:08:46.202291+00:00",
+  "generated_at": "2026-08-18T16:37:20.771778+00:00",
   "governance_files": {
     "approval.py": "bfd26b95c04b5a4214559c10cb099703656f8da4f269d1e7a4b0f0db5aa1826b",
     "kill_switch.py": "20663bc70d6b207a903a0e6449ee1eb77c669d69c247905214aedb95f321ec16",
