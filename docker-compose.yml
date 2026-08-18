@@ -27,7 +27,7 @@ services:
       # Pflicht: mindestens 32 Zeichen. Ohne gueltigen Wert bricht der
       # Container beim Start kontrolliert ab (siehe Dockerfile-Entrypoint).
       # Der Wert wird NIE im Repository hinterlegt -- er kommt aus .env.
-      AILIZA_SECRET_KEY: ${AILIZA_SECRET_KEY:?AILIZA_SECRET_KEY fehlt. Bitte .env anlegen (Vorlage: .env.example) und einen Wert mit mindestens 32 Zeichen setzen.}
+      AILIZA_SECRET_KEY: '${AILIZA_SECRET_KEY:?AILIZA_SECRET_KEY fehlt. Bitte .env anlegen (Vorlage: .env.example) und einen Wert mit mindestens 32 Zeichen setzen.}'
     volumes:
       - ailiza_data:/data
     restart: unless-stopped
