@@ -16,13 +16,18 @@ services:
         MODE: core
     ports:
       - "8000:8000"
+    # Secrets kommen ausschliesslich aus der lokalen .env-Datei (nicht im
+    # Repository). Vorlage: .env.example nach .env kopieren und ausfuellen.
+    env_file:
+      - .env
     environment:
       AILIZA_ENV: production
       AILIZA_DATABASE_URL: sqlite:////data/ailiza.sqlite
       AILIZA_EXTERNAL_LLM_ENABLED: "false"
-      # Weitere Secrets (AILIZA_SECRET_KEY, GROQ_API_KEY, ...) in einer
-      # .env-Datei setzen und hier per env_file einbinden, z. B.:
-      # env_file: .env
+      # Pflicht: mindestens 32 Zeichen. Ohne gueltigen Wert bricht der
+      # Container beim Start kontrolliert ab (siehe Dockerfile-Entrypoint).
+      # Der Wert wird NIE im Repository hinterlegt -- er kommt aus .env.
+      AILIZA_SECRET_KEY: ${AILIZA_SECRET_KEY:?AILIZA_SECRET_KEY fehlt. Bitte .env anlegen (Vorlage: .env.example) und einen Wert mit mindestens 32 Zeichen setzen.}
     volumes:
       - ailiza_data:/data
     restart: unless-stopped
