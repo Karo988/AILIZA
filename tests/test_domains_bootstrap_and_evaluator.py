@@ -17,8 +17,27 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1] / "apps" / "backend"
 
 
+_SWAPPED_MODULE_NAMES = (
+    "database", "db_schema", "domains",
+    "apps.backend.database", "apps.backend.db_schema", "apps.backend.domains",
+)
+
+
 @pytest.fixture()
 def domains_module(tmp_path, monkeypatch):
+    """ACHTUNG Testisolation: dieses Modul importiert apps.backend.database/
+    db_schema/domains NEU gegen eine temporaere SQLite-Datei, damit
+    bootstrap_domain() gegen eine ECHT migrierte Datenbank laeuft (nicht
+    gegen das gemeinsame :memory:-Testschema aus conftest.py, das die
+    Migrationsdaten -- die 13 festen Bereichscodes -- nicht enthaelt).
+
+    Ohne Teardown wuerden diese ausgetauschten Module fuer den Rest des
+    Pytest-Prozesses aktiv bleiben und JEDEN anderen Test, der
+    apps.backend.database (direkt oder ueber main.py-Importe) neu
+    anfordert, gegen die laengst geloeschte tmp-Datei laufen lassen --
+    das hat genau das beim vollen Suite-Lauf beobachtete flaechendeckende
+    Auth-/DB-Fehlerbild verursacht. Deshalb: Original-Modulobjekte vor dem
+    Tausch sichern und nach dem Test exakt wiederherstellen."""
     db_path = tmp_path / "domains.sqlite"
     monkeypatch.setenv("AILIZA_DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("AILIZA_SECRET_KEY", "test-secret-key-minimum-32-chars-ok")
@@ -31,9 +50,15 @@ def domains_module(tmp_path, monkeypatch):
     assert result.returncode == 0, result.stderr
 
     import apps.backend as _backend_pkg
-    for mod in ("database", "db_schema", "domains", "apps.backend.database",
-                "apps.backend.db_schema", "apps.backend.domains"):
-        sys.modules.pop(mod, None)
+
+    _saved_sys_modules = {name: sys.modules.get(name) for name in _SWAPPED_MODULE_NAMES}
+    _saved_pkg_attrs = {
+        attr: getattr(_backend_pkg, attr) for attr in ("database", "db_schema", "domains")
+        if hasattr(_backend_pkg, attr)
+    }
+
+    for name in _SWAPPED_MODULE_NAMES:
+        sys.modules.pop(name, None)
     # sys.modules.pop() allein genuegt nicht: das Elternpaket haelt die
     # importierten Submodule zusaetzlich als eigene Attribute. "from
     # apps.backend import domains" wuerde sonst ueber genau dieses
@@ -46,7 +71,20 @@ def domains_module(tmp_path, monkeypatch):
 
     import importlib
     domains_module = importlib.import_module("apps.backend.domains")
-    return domains_module
+
+    try:
+        yield domains_module
+    finally:
+        for name in _SWAPPED_MODULE_NAMES:
+            sys.modules.pop(name, None)
+        for name, mod in _saved_sys_modules.items():
+            if mod is not None:
+                sys.modules[name] = mod
+        for attr in ("database", "db_schema", "domains"):
+            if hasattr(_backend_pkg, attr):
+                delattr(_backend_pkg, attr)
+        for attr, mod in _saved_pkg_attrs.items():
+            setattr(_backend_pkg, attr, mod)
 
 
 def test_bootstrap_activates_domain_and_seeds_permissions(domains_module):
