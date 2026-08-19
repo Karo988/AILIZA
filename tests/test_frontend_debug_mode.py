@@ -8,8 +8,8 @@ Normale Nutzer (Produktion) sehen ausschliesslich nutzerfreundliche Kurzmeldunge
 
 from pathlib import Path
 
-AGENT_CHAT = Path("apps/frontend/src/components/AgentChat.jsx").read_text()
-ENV_EXAMPLE = Path("apps/frontend/.env.example").read_text()
+AGENT_CHAT = Path("apps/frontend/src/components/AgentChat.jsx").read_text(encoding="utf-8")
+ENV_EXAMPLE = Path("apps/frontend/.env.example").read_text(encoding="utf-8")
 
 
 class TestDebugFlagGuard:
