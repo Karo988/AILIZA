@@ -1,0 +1,19 @@
+# Gate 10 (config_integrity.py) prueft SHA-256-Hashes ueber diese 8 Dateien
+# gegen apps/backend/governance_integrity.json. Der Hash haengt von den
+# exakten Bytes ab, auch von Zeilenenden. Ohne diese Regel checkt Git die
+# Dateien je nach Betriebssystem/core.autocrlf mit CRLF statt LF aus (z. B.
+# auf Windows), wodurch der Hash vom Manifest abweicht und Gate 10
+# faelschlich hash_mismatch meldet, obwohl der Inhalt unveraendert ist.
+# "text eol=lf" erzwingt LF unabhaengig von core.autocrlf.
+apps/backend/approval.py text eol=lf
+apps/backend/kill_switch.py text eol=lf
+apps/backend/sandbox.py text eol=lf
+apps/backend/capability_manifest.py text eol=lf
+apps/backend/policy.py text eol=lf
+apps/backend/governance/data_governance.py text eol=lf
+apps/backend/governance/redaction.py text eol=lf
+apps/backend/documents/document_handler.py text eol=lf
+
+# Shellscript mit #!/bin/sh-Shebang, das im Linux-Container ausgefuehrt
+# wird. CRLF wuerde die Shebang-Zeile und jede folgende Zeile brechen.
+docker-entrypoint.sh text eol=lf
