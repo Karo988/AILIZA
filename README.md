@@ -1,4 +1,4 @@
-# AILIZA v1.0 Beta Ready
+# AILIZA v1.0 — lokal abgenommener Kandidat
 
 EU-konformer autonomer KI-Agent für KMU.
 Backend: FastAPI + SQLAlchemy (SQLite). Governance-Pipeline: Kill-Switch → Data Governance → Policy-Gateway → Redaction → Provider-Orchestrator.
@@ -7,8 +7,10 @@ Backend: FastAPI + SQLAlchemy (SQLite). Governance-Pipeline: Kill-Switch → Dat
 
 ## Aktueller Stand
 
-AILIZA befindet sich in der v1.0 Beta-Ready-Phase.
-Alle abgeschlossenen Artefakte sind in diesem Repository versioniert.
+AILIZA ist lokal im fail-closed Modus start- und testfaehig. Die lokale
+technische Abnahme und der genaue Nachweis stehen in
+`docs/AILIZA_ABLAUFPLAN_2026-08-20.md`. Eine Produktionsfreigabe ist damit
+nicht verbunden.
 
 ---
 
@@ -45,6 +47,9 @@ Alle abgeschlossenen Artefakte sind in diesem Repository versioniert.
 - [x] Startup Secret-Key-Check
 - [x] Governance-Dokumentation (TOM-Katalog, Provider-DPA, AI-Act-Klassifikation, Incident-Response, Review-Plan)
 - [x] Frontend: Datei-Upload, Deep Research, DiagBlock (nur `VITE_DEBUG_ERRORS=true`)
+- [x] Alembic als verbindliche Schema-Autoritaet beim persistenten App-Start
+- [x] Verschluesseltes SQLite-Backup mit Verify und geprueftem Restore
+- [x] Reproduzierbarer Python-3.12-Stand (`requirements-lock-py312.txt`)
 
 ---
 
@@ -55,7 +60,7 @@ Alle abgeschlossenen Artefakte sind in diesem Repository versioniert.
 - [ ] Freigabe-UI (`GET /admin/approvals` Frontend-Seite)
 - [ ] Fehlende Audit-Events (`provider.blocked`, `capability.blocked`, `memory.stored`, `memory.deleted`, `approval.granted`, `approval.rejected`)
 - [ ] CORS Wildcard → explizite Origins (vor Produktion)
-- [ ] Backup-Strategie (SQLite Cron-Backup)
+- [ ] Externes Backupziel, Zeitplan, Alarmierung und verantwortliche Person festlegen
 - [ ] TLS-Terminierung (vor Produktion)
 
 ---
@@ -138,7 +143,10 @@ Alles, was umgesetzt werden soll, bekommt eine eigene Datei.
 
 ## Startbefehle
 
-```bash
-cd apps/backend && uvicorn main:app --port 8001
-python3 -m pytest tests/ apps/backend/tests/ -q
+```powershell
+.\install.bat verified
+.\start_ailiza.bat
+.\.venv\Scripts\python.exe -m pytest tests apps/backend/tests -q
 ```
+
+Vollstaendige lokale Betriebsanleitung: [`LOCAL_DEV.md`](LOCAL_DEV.md).

@@ -3,10 +3,10 @@
 Scope: apps/backend/alembic.ini, apps/backend/alembic/env.py,
 apps/backend/alembic/versions/0001_baseline_existing_schema.py.
 
-Wichtig: kein automatischer Migrationslauf beim Programmstart/Import --
-alembic/env.py wird ausschliesslich ueber die Alembic-CLI (hier: als
-Subprozess) geladen, niemals durch einen normalen Python-Import.
-ensure_sqlite_schema() (database.py) bleibt unveraendert bestehen.
+Wichtig: Ein normaler Modulimport bleibt nebenwirkungsfrei. Beim
+FastAPI-Lifespan wird fuer persistente Datenbanken jedoch verbindlich
+`alembic upgrade head` ausgefuehrt. `init_db()` und
+`ensure_sqlite_schema()` bleiben nur als Legacy-/In-Memory-Testhelfer.
 
 Diese Tests rufen bewusst die echte `alembic`-CLI als Subprozess auf
 (kein Mocking) -- das ist der tatsaechliche, dokumentierte Aufrufweg
@@ -106,17 +106,19 @@ def test_importing_database_module_creates_no_tables(tmp_path):
     assert "OK" in result.stdout
 
 
-def test_application_start_initializes_database(tmp_path):
-    """Der Anwendungsstart (init_db(), so wie main.py es im FastAPI-Lifespan
-    ausdruecklich aufruft) muss die Datenbank tatsaechlich anlegen."""
+def test_application_start_migrates_persistent_database_to_head(tmp_path):
+    """Der reale Startpfad muss eine persistente DB per Alembic anlegen."""
     db_path = tmp_path / "app_start.db"
     result = subprocess.run(
         [sys.executable, "-c", (
             "import apps.backend.database as dbmod; "
-            "dbmod.init_db(); "
+            "dbmod.prepare_database_for_startup(); "
             "conn = dbmod.engine.connect(); "
             "tables = set(dbmod.engine.dialect.get_table_names(conn)); "
-            "assert 'users' in tables and 'audit_logs' in tables, tables; "
+            "assert 'users' in tables and 'audit_logs' in tables and 'alembic_version' in tables, tables; "
+            "versions = conn.exec_driver_sql('SELECT version_num FROM alembic_version').fetchall(); "
+            "assert len(versions) == 1 and versions[0][0], versions; "
+            "conn.close(); "
             "print('OK')"
         )],
         cwd=str(REPO_ROOT),
@@ -126,6 +128,30 @@ def test_application_start_initializes_database(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "OK" in result.stdout
+
+
+def test_application_start_rejects_unversioned_conflicting_schema(tmp_path):
+    """Ein unbekannter Altbestand darf nicht still mit create_all/ALTER
+    weitergefuehrt werden. Die bewusste Uebernahme erfolgt ausschliesslich
+    ueber `python -m apps.backend.alembic_adopt`."""
+    db_path = tmp_path / "unversioned.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE users (id TEXT PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+
+    result = subprocess.run(
+        [sys.executable, "-c", (
+            "import apps.backend.database as dbmod; "
+            "dbmod.prepare_database_for_startup()"
+        )],
+        cwd=str(REPO_ROOT),
+        env={**os.environ, "AILIZA_SECRET_KEY": "test-secret-key-minimum-32-chars-ok",
+             "AILIZA_DATABASE_URL": f"sqlite:///{db_path}"},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode != 0
+    assert "already exists" in (result.stdout + result.stderr).lower()
 
 
 def test_alembic_env_import_does_not_trigger_init_db(tmp_path):

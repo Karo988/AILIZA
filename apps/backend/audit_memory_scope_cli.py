@@ -174,12 +174,12 @@ def _print_human_report(report: dict, *, summary_only: bool) -> None:
     print(f"Gesamtzahl memory_items: {report['total_memory_items']}")
     print()
     if report["has_violations"]:
-        print("❌ INVARIANTEN VERLETZT:")
+        print("[FEHLER] INVARIANTEN VERLETZT:")
     else:
-        print("✅ Keine Invarianten-Verletzungen gefunden.")
+        print("[OK] Keine Invarianten-Verletzungen gefunden.")
     for key, val in report["violations"].items():
         count = val if summary_only else len(val)
-        marker = "❌" if count else "  "
+        marker = "[FEHLER]" if count else "       "
         detail = "" if summary_only or not val else f" -- {val}"
         print(f"  {marker} {key}: {count} Treffer{detail}")
     print()

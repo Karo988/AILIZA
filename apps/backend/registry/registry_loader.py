@@ -303,10 +303,13 @@ def _audit_registry_change(
 ) -> None:
     """Schreibt Registry-Änderungen ins Security-Log. Niemals Inhalte loggen."""
     try:
-        from audit.security_log import log_security
+        # Paketimport zuerst: Ein von Alt-Tests in sys.path eingetragener
+        # apps/backend-Pfad darf nicht versehentlich ein zweites Top-Level-
+        # `database` samt eigener In-Memory-Engine erzeugen.
+        from apps.backend.audit.security_log import log_security
     except ImportError:
         try:
-            from apps.backend.audit.security_log import log_security  # type: ignore[no-redef]
+            from audit.security_log import log_security  # type: ignore[no-redef]
         except ImportError:
             logger.info(
                 "AILIZA REGISTRY AUDIT | action=%s target=%s type=%s actor=%s details=%s",

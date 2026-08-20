@@ -14,6 +14,14 @@ import pytest
 from apps.backend.governance.data_governance import DataClass, DataTarget
 from apps.backend.governance.data_matrix import PolicyDecision, check_data_target
 from apps.backend.providers.provider_profiles import check_provider_policy
+from apps.backend.providers.gate_types import ProviderResult
+
+
+class _FakeProviderMetadata:
+    """Duck-Type-Testprovider an das heutige Dual-Gate-Interface anbinden."""
+
+    def generate_with_meta(self, messages, context=None, response_format=None):
+        return ProviderResult(text=self.generate(messages, context))
 
 
 # ── 1. Datenziel-Matrix ────────────────────────────────────────────────────────
@@ -207,7 +215,7 @@ class TestProviderFailover:
 
         calls = []
 
-        class FakeGroq:
+        class FakeGroq(_FakeProviderMetadata):
             provider_id = "groq"
             model = "test-groq"
             def count_tokens(self, text): return 1
@@ -217,7 +225,7 @@ class TestProviderFailover:
                 raise AILIZAError.from_code("provider_forbidden",
                                              safe_alternatives=["Groq: HTTP 403"])
 
-        class FakeOpenAI:
+        class FakeOpenAI(_FakeProviderMetadata):
             provider_id = "openai"
             model = "test-openai"
             def count_tokens(self, text): return 1
@@ -247,7 +255,7 @@ class TestProviderFailover:
         from apps.backend.errors import AILIZAError
         import pytest
 
-        class FailProvider:
+        class FailProvider(_FakeProviderMetadata):
             provider_id = "groq"
             model = "x"
             def count_tokens(self, text): return 1
@@ -266,7 +274,7 @@ class TestProviderFailover:
         """Bei Schreibaufgabe darf die Antwort kein Fehler sein."""
         from apps.backend.providers.orchestrator import ProviderOrchestrator
 
-        class FakeProvider:
+        class FakeProvider(_FakeProviderMetadata):
             provider_id = "openai"
             model = "gpt-4o-mini"
             def count_tokens(self, text): return 1
@@ -289,7 +297,7 @@ class TestProviderFailover:
         from apps.backend.providers.orchestrator import ProviderOrchestrator
         from apps.backend.errors import AILIZAError
 
-        class FailProvider:
+        class FailProvider(_FakeProviderMetadata):
             provider_id = "openai"
             model = "gpt-4o-mini"
             def count_tokens(self, text): return 1
@@ -552,22 +560,31 @@ class TestPIIReinsertion:
             def generate(self, messages, context=None, **kwargs):
                 last_user = [m["content"] for m in messages if m["role"] == "user"][-1]
                 return f"Sehr geehrter {last_user}, vielen Dank fuer Ihre Nachricht."
+            def generate_with_meta(self, messages, context=None, response_format=None):
+                return ProviderResult(text=self.generate(messages, context))
 
         # monkeypatch.setattr statt direkter Zuweisung -- setzt den
         # ORIGINALEN _get_provider_order nach dem Test automatisch zurueck
         # (Karo-Fund 2026-07-12: direkte Zuweisung ohne Rueckgabe verschmutzte
         # globalen Modul-Zustand und liess spaetere Tests im selben Lauf
         # fehlschlagen, z.B. test_provider_order_env_respected).
-        monkeypatch.setitem(_orchestrator.providers, "groq", EchoProvider())
+        # Personenbezogene Testdaten duerfen nicht ueber die AVV-lose
+        # Groq-Testausnahme laufen. Der lokale, AVV-freie Datenabfluss vermeidende
+        # Provider prueft denselben Redaction-/Reinsertion-Pfad regelkonform.
+        monkeypatch.setitem(_orchestrator.providers, "local", EchoProvider())
         import apps.backend.providers.orchestrator as orch_mod
-        monkeypatch.setattr(orch_mod, "_get_provider_order", lambda: ["groq"])
+        monkeypatch.setattr(orch_mod, "_get_provider_order", lambda: ["local"])
 
         client = TestClient(app, cookies={})
         client.post("/auth/self-register", json={"user_id": "e2ereinsert", "password": "SicherPass1!Xyz"})
         client.post("/auth/login", json={"user_id": "e2ereinsert", "password": "SicherPass1!Xyz"})
 
         task = "Schreibe eine Antwort-Mail an mueller@example.com bezueglich seiner Anfrage von Herrn Mueller."
-        resp = client.post("/agent/run", json={"task": task})
+        preview = client.post("/api/policy-redact", json={"text": task})
+        assert preview.status_code == 200
+        preview_id = preview.json().get("preview_id")
+        assert preview_id, preview.json()
+        resp = client.post("/agent/run", json={"task": task, "preview_id": preview_id})
         assert resp.status_code == 200
         answer = resp.json().get("ai_response") or resp.json().get("message") or ""
         assert "mueller@example.com" in answer

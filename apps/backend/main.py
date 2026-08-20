@@ -28,7 +28,7 @@ from slowapi.util import get_remote_address
 try:
     from .agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from .database import (
-        get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
+        get_agent_run, init_db, prepare_database_for_startup, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_approval_request, consume_compliance_consent,
@@ -99,7 +99,7 @@ try:
 except ImportError:
     from apps.backend.agent_runtime import AgentRuntime, _WRITING_INTENT_PATTERN, _SEARCH_INTENT_PATTERN
     from apps.backend.database import (
-        get_agent_run, init_db, list_agent_runs, list_audit_entries, write_audit_entry,
+        get_agent_run, init_db, prepare_database_for_startup, list_agent_runs, list_audit_entries, write_audit_entry,
         insert_feedback, count_negative_feedback, insert_routing_proposal,
         adjust_fact_quality_for_run, DEFAULT_TENANT_ID,
         create_user as db_create_user, authenticate_user as db_authenticate_user,
@@ -207,14 +207,11 @@ def _check_non_production_modules() -> list[str]:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ── Datenbankstart MUSS vor jedem write_audit_entry()-Aufruf laufen ──────
-    # (Regressions-Fund CI-Run 30787567646, PR #76): seit database.py keine
-    # Tabellen mehr automatisch beim Modulimport anlegt (siehe db_schema.py),
-    # scheiterte der allererste write_audit_entry()-Aufruf weiter unten
-    # (Secret-Key-/CORS-Warnung) mit "no such table: audit_logs", weil
-    # init_db() vorher erst spaeter im Lifespan stand. init_db() ist
-    # idempotent (checkfirst) -- unabhaengig vom Gate-10-Ergebnis sicher
-    # ganz vorne aufrufbar.
-    init_db()
+    # Persistente Datenbanken werden ausschliesslich ueber Alembic bis head
+    # migriert. In-Memory-SQLite bleibt der explizite Test-Sonderfall.
+    # Fehler (einschliesslich einer unversionierten Alt-Datenbank) brechen den
+    # Start fail-closed ab, bevor Audit- oder Anwendungswrites stattfinden.
+    prepare_database_for_startup()
     # ── Ende Datenbankstart ───────────────────────────────────────────────────
 
     # ── Gate 10: Config Integrity — muss als ERSTES laufen ───────────────────
@@ -5235,8 +5232,8 @@ def build_escalation_info(risk_level: str, violations: list[str] = None) -> dict
 @app.post("/api/policy-redact", response_model=PolicyRedactResponse)
 def policy_redact(
     request: PolicyRedactRequest,
-    http_request: Request,
-    response: Response,
+    http_request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     current_user: TokenData | None = Depends(get_current_user),
 ) -> PolicyRedactResponse:
     """
@@ -5392,7 +5389,7 @@ def policy_redact(
         # weiterhin selbst anhand einer eigenen Klassifikation desselben
         # Rohtexts -- siehe Kommentar bei _raw_input_for_preview oben.
         preview_id = None
-        if _raw_input_for_preview:
+        if _raw_input_for_preview and http_request is not None and response is not None:
             _anon_session_id = _get_or_set_anon_session_id(http_request, response)
             preview_id = send_preview_store.issue(
                 user_id=_preview_identity(current_user, _anon_session_id),

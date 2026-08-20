@@ -1,181 +1,126 @@
-# AILIZA — Lokale Entwicklungsumgebung
+# AILIZA lokal betreiben (verifizierter Windows-Pfad)
 
-## Voraussetzungen
+Stand: 20.08.2026. Der hier beschriebene Kandidat ist fuer Python 3.12 und
+Node.js 22 oder neuer abgenommen. Externe KI bleibt standardmaessig gesperrt.
 
-- Python 3.11+
-- pip
-- Mindestens ein LLM-Provider-Key (Groq kostenlos: https://console.groq.com)
+## 1. Einmalig installieren
 
----
-
-## 1. Einmalige Einrichtung
-
-### .env-Datei erstellen
+Im Repository-Root `C:\AILIZA\current`:
 
 ```powershell
-# Im Projektverzeichnis (z.B. C:\AILIZA\current)
+.\install.bat verified
 Copy-Item .env.example apps\backend\.env
+New-Item -ItemType Directory -Force C:\AILIZA\data, C:\AILIZA\backups
 ```
 
-Öffne `apps\backend\.env` und trage deine Keys ein (Platzhalter ersetzen):
+In `apps\backend\.env` mindestens diese lokalen Werte setzen:
 
+```dotenv
+AILIZA_EXTERNAL_LLM_ENABLED=false
+AILIZA_DATABASE_URL=sqlite:///C:/AILIZA/data/ailiza.db
+AILIZA_SECRET_KEY=<zufaelliges Secret mit mindestens 32 Zeichen>
+AILIZA_ADMIN_USER=admin
+AILIZA_ADMIN_PASSWORD=<einmaliges starkes Startpasswort>
 ```
-GROQ_API_KEY=gsk_...dein_echter_key...
-AILIZA_EXTERNAL_LLM_ENABLED=true
-```
 
-Alle anderen Felder können zunächst leer bleiben.
-
-> **Wichtig:** Die `.env`-Datei wird von `.gitignore` blockiert — sie wird NIEMALS committet.
-
-### Python-Abhängigkeiten installieren
+Ein Secret kann lokal so erzeugt werden:
 
 ```powershell
-cd apps\backend
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_hex(32))"
 ```
 
----
+`apps\backend\.env` darf nie eingecheckt oder in ein Backup des Repositories
+kopiert werden. Nach dem ersten erfolgreichen Login das Startpasswort wechseln
+und `AILIZA_ADMIN_PASSWORD` aus der Datei entfernen.
 
-## 2. Backend starten
+## 2. Start und Stop
 
 ```powershell
-# Im Verzeichnis apps\backend
-cd C:\AILIZA\current\apps\backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+.\start_ailiza.bat
 ```
 
-Backend läuft dann auf: http://localhost:8001
-
----
-
-## 3. Testen
-
-### Einfacher Health-Check
+Das Backend ist unter `http://127.0.0.1:8001` erreichbar. Der Start fuehrt fuer
+jede persistente Datenbank automatisch `alembic upgrade head` aus. Ein
+unversioniertes Altschema wird nicht still veraendert; dessen Uebernahme muss
+vorher bewusst geprueft werden:
 
 ```powershell
-Invoke-RestMethod -Uri "http://localhost:8001/health" -Method GET
+.\.venv\Scripts\python.exe -m apps.backend.alembic_adopt --help
 ```
 
-### Chat-Anfrage senden
+Stop: Im Serverfenster `Strg+C` druecken.
+
+## 3. Lokale Funktionspruefung
 
 ```powershell
-$body = @{
-    task = "Erklaere mir was DSGVO bedeutet"
-    session_id = "test-001"
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-    -Uri "http://localhost:8001/agent/run" `
-    -Method POST `
-    -ContentType "application/json" `
-    -Body $body
+Invoke-RestMethod http://127.0.0.1:8001/health
 ```
 
-### Provider-Status prüfen
+Die Browser-Oberflaeche wird separat gebaut:
 
 ```powershell
-Invoke-RestMethod -Uri "http://localhost:8001/api/debug/provider-test" -Method GET
+Set-Location apps\frontend
+npm ci
+npm run build
 ```
 
----
+Der Node-Paketstand ist durch `apps/frontend/package-lock.json` gebunden.
 
-## 4. Umgebungsvariablen
-
-### Welche Keys werden gebraucht?
-
-| Variable | Wofür | Pflicht? |
-|---|---|---|
-| `GROQ_API_KEY` | LLM-Antworten (Groq, kostenlos) | Ja (oder ein anderer Provider) |
-| `OPENAI_API_KEY` | LLM-Fallback | Nein |
-| `ANTHROPIC_API_KEY` | LLM-Fallback | Nein |
-| `OPENROUTER_API_KEY` | LLM-Fallback | Nein |
-| `TAVILY_API_KEY` | Web-Suche (nur für Suchanfragen) | Nein |
-| `AILIZA_EXTERNAL_LLM_ENABLED` | Kill-Switch, muss `true` sein | **Ja** |
-
-### TAVILY_API_KEY — wann nötig?
-
-AILIZA ruft Tavily nur auf, wenn die Anfrage als **Suchanfrage** erkannt wird
-(z.B. "Recherchiere aktuelle News zu..."). Für direkte Fragen wie "Erkläre mir..."
-wird Tavily **nicht** gerufen — nur der LLM-Provider.
-
-Ohne Tavily-Key funktionieren alle LLM-Fragen normal. Suchanfragen geben dann
-eine Fehlermeldung zurück.
-
-### Provider-Reihenfolge steuern
-
-```
-AILIZA_PROVIDER_ORDER=groq,openai,openrouter,anthropic,local
-```
-
-Der erste Provider mit gesetztem API-Key und gültigem Zugang wird genutzt.
-Bei Fehler (401/403/429) wechselt AILIZA automatisch zum nächsten.
-
----
-
-## 5. Häufige Probleme
-
-### "AILIZA_EXTERNAL_LLM_ENABLED ist nicht gesetzt"
-
-In `apps\backend\.env` setzen:
-```
-AILIZA_EXTERNAL_LLM_ENABLED=true
-```
-
-### Groq 403 / "Zugriff verweigert"
-
-- Key unter https://console.groq.com → API Keys → **in einem Projekt erstellen**
-- Nicht auf Top-Level, sondern innerhalb eines aktiven Projekts
-- Kostenloses Modell: `GROQ_MODEL=llama-3.1-8b-instant`
-
-### "TAVILY_API_KEY is not configured"
-
-Entweder Tavily-Key setzen (https://tavily.com) oder eine Frage stellen,
-die kein Web-Suche auslöst (z.B. "Erkläre..." statt "Recherchiere...").
-
-### PowerShell-Syntaxfehler bei JSON
-
-Immer `ConvertTo-Json` nutzen — keinen JSON-String manuell schreiben:
+## 4. Tests
 
 ```powershell
-# Richtig:
-$body = @{ task = "Hallo" } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8001/agent/run" -Method POST -ContentType "application/json" -Body $body
-
-# Falsch:
-Invoke-RestMethod ... -Body '{"task": "Hallo"}'   # Encoding-Probleme unter Windows
+Set-Location C:\AILIZA\current
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pytest tests apps/backend/tests -q
 ```
 
----
+Windows darf nur Tests ueberspringen, deren benoetigte Betriebssystemfaehigkeit
+auf dem konkreten Host fehlt (Symlink-Privileg, POSIX-Dateimodus oder optionaler
+PostgreSQL-Testserver). Inhaltliche Fehler sind keine zulaessigen Skips.
 
-## 6. Alle nötigen PowerShell-Befehle auf einmal
+## 5. Verschluesseltes Backup und Restore
+
+AILIZA vor einem geplanten Restore stoppen. Das Passwort wird interaktiv und
+maskiert abgefragt; es darf nicht als Argument oder Umgebungsvariable erscheinen.
 
 ```powershell
-# 1. Ins Projektverzeichnis wechseln
-cd C:\AILIZA\current
+# Backup
+.\.venv\Scripts\python.exe scripts\ailiza_backup.py backup `
+  --datenbank C:\AILIZA\data\ailiza.db `
+  --ausgabe C:\AILIZA\backups\ailiza_20260820.bak
 
-# 2. .env-Datei anlegen (einmalig)
-Copy-Item .env.example apps\backend\.env
+# Paket pruefen
+.\.venv\Scripts\python.exe scripts\ailiza_backup.py verify `
+  --paket C:\AILIZA\backups\ailiza_20260820.bak
 
-# 3. .env öffnen und Keys eintragen (Notepad oder VSCode)
-notepad apps\backend\.env
-
-# 4. Abhängigkeiten installieren (einmalig)
-pip install -r apps\backend\requirements.txt
-
-# 5. Backend starten
-cd apps\backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8001 --reload
-
-# --- In einem zweiten Terminal testen ---
-
-# Health-Check
-Invoke-RestMethod -Uri "http://localhost:8001/health" -Method GET
-
-# Chat-Anfrage
-$body = @{ task = "Erklaere mir was DSGVO bedeutet"; session_id = "test-001" } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8001/agent/run" -Method POST -ContentType "application/json" -Body $body
-
-# Provider-Status
-Invoke-RestMethod -Uri "http://localhost:8001/api/debug/provider-test" -Method GET
+# Bewusster Restore in eine neue Datei
+.\.venv\Scripts\python.exe scripts\ailiza_backup.py restore `
+  --paket C:\AILIZA\backups\ailiza_20260820.bak `
+  --ziel C:\AILIZA\data\ailiza_restore_test.db
 ```
+
+Nach jedem Backup `verify` ausfuehren. Mindestens quartalsweise einen Restore
+in eine neue Datei proben und `/health`, Login und einen lokalen Chat gegen die
+wiederhergestellte Datenbank testen. Backup-Passwort und Pakete getrennt
+verwahren.
+
+## 6. Update und Rueckfall
+
+Vor einem Update: Datenbank-Backup erzeugen und pruefen. Danach:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\AILIZA\update_ailiza.ps1
+.\install.bat verified
+.\.venv\Scripts\python.exe -m pytest tests apps/backend/tests -q
+```
+
+Das Update-Skript erstellt zusaetzlich ein Quellcode-ZIP und akzeptiert nur
+Fast-Forward-Git-Updates. Ein Quellcode-ZIP ersetzt kein Datenbank-Backup.
+
+## 7. Bekannte Produktionssperren
+
+Der lokale fail-closed Betrieb ist nicht automatisch eine Produktionsfreigabe.
+Vor externem Betrieb muessen mindestens TLS/HSTS, konkrete CORS-Origins,
+Provider-AVV/DPA, Geheimnisverwaltung, Produktions-Memory-Audit, externes
+Backupziel, Alarmierung und eine dokumentierte Restore-Verantwortung abgenommen
+sein. Bis dahin bleibt `AILIZA_EXTERNAL_LLM_ENABLED=false`.

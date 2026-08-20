@@ -111,11 +111,11 @@ def test_amun_brief_requires_human_review(client):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 2: Security Block (Geheimnis erkannt)
+# Test 2: Geheimnis gezielt entfernen
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_security_block_api_key(client):
-    """Geheimnis erkannt → security_block (nicht technical_block)"""
+def test_api_key_is_removed_without_blocking_remaining_text(client):
+    """Geheimnis erkannt: nur den Fund entfernen, Rest weiter nutzbar."""
 
     text_with_secret = "Mein OpenAI API Key ist sk-proj-abc123def456ghi789jkl012mno345pqr"
 
@@ -128,22 +128,13 @@ def test_security_block_api_key(client):
     assert response.status_code == 200
     data = response.json()
 
-    # ✅ Security Block (nicht technical_block, nicht block)
-    assert data["decision"] == "security_block"
-    assert data["risk_level"] == "critical"
-
-    # ✅ Geheimnis nicht sichtbar
+    # Betreiber-Entscheidung 2026-07-15: nicht die gesamte Nachricht
+    # blockieren, sondern das Secret irreversibel durch einen Marker ersetzen.
+    assert data["decision"] != "security_block"
     assert "sk-proj-" not in data["safe_text"]
-    assert "[BLOCKIERT:" in data["safe_text"]
-
-    # ✅ Nutzer sieht Sicherheitsfund Meldung
-    assert ("Sicherheitsfund" in data["user_message_de"] or
-            "API-Key" in data["user_message_de"])
-
-    # ✅ LLM-Versand blockiert
-    assert data["can_send_to_llm"] is False
-
-    print("✅ Test 2 PASSED: Geheimnis erkannt → security_block")
+    assert "[API-KEY ENTFERNT]" in data["safe_text"]
+    assert "Mein OpenAI API Key ist" in data["safe_text"]
+    assert "[BLOCKIERT:" not in data["safe_text"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

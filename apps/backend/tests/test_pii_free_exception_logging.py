@@ -15,6 +15,7 @@ Muster in P-E (test_test_mode_has_no_request_parameter_path).
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -23,10 +24,14 @@ _MAIN_PY = Path(__file__).resolve().parents[1] / "main.py"
 
 def _policy_redact_exception_block() -> str:
     src = _MAIN_PY.read_text(encoding="utf-8")
-    start = src.index("def policy_redact(")
-    # Block endet vor dem naechsten Top-Level 'app.mount' (naechster Abschnitt)
-    end = src.index('app.mount("/static"', start)
-    return src[start:end]
+    tree = ast.parse(src)
+    function = next(
+        node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "policy_redact"
+    )
+    lines = src.splitlines(keepends=True)
+    return "".join(lines[function.lineno - 1:function.end_lineno])
 
 
 def test_no_raw_exception_message_logged():

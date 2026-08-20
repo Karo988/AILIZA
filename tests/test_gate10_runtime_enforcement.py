@@ -91,6 +91,19 @@ class TestLifespanIntegrity:
             f"Bitte 'generate_integrity_manifest()' erneut ausführen und einchecken."
         )
 
+    def test_manifest_hash_is_invariant_for_lf_and_crlf(self, governance_dir, tmp_path):
+        governed_file = governance_dir / "approval.py"
+        lf_bytes = governed_file.read_bytes().replace(b"\r\n", b"\n")
+        governed_file.write_bytes(lf_bytes)
+        manifest = tmp_path / "line-ending-manifest.json"
+        generate_integrity_manifest(governance_dir, manifest)
+
+        governed_file.write_bytes(lf_bytes.replace(b"\n", b"\r\n"))
+        assert verify_integrity(governance_dir, manifest).all_ok is True
+
+        governed_file.write_bytes(lf_bytes + b"\n# echte Inhaltsaenderung\n")
+        assert verify_integrity(governance_dir, manifest).all_ok is False
+
 
 # ── TestStartupBlockedOnMissingFile ──────────────────────────────────────────
 

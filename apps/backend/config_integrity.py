@@ -122,13 +122,17 @@ class IntegrityCheckResult:
 
 
 def _sha256_file(path: Path) -> str | None:
-    """SHA-256 einer Datei. Gibt None zurück wenn Datei nicht lesbar."""
+    """Kanonischer SHA-256 einer Governance-Datei.
+
+    Git erzwingt fuer die geschuetzten Dateien per ``.gitattributes`` LF.
+    Bereits vorhandene Windows-Arbeitsbaeume koennen trotzdem noch CRLF-
+    Bytes enthalten. Inhaltlich identische Dateien muessen auf Windows und
+    Linux denselben Release-Hash ergeben; deshalb wird ausschliesslich CRLF
+    zu LF normalisiert. Andere Bytes bleiben unveraendert.
+    """
     try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        canonical_bytes = path.read_bytes().replace(b"\r\n", b"\n")
+        return hashlib.sha256(canonical_bytes).hexdigest()
     except Exception:
         return None
 
