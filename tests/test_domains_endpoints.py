@@ -124,3 +124,85 @@ def test_revoke_requires_admin(client):
         headers={"Authorization": f"Bearer {user_token}"},
     )
     assert resp.status_code == 403
+
+
+# ── Trennung Bereichsrolle vs. globale HTTP-Rolle ───────────────────────────
+# domain_manager ist eine BEREICHSROLLE (user_domain_memberships), keine
+# globale RBAC-Rolle. Die Admin-Endpunkte haengen an require_role(Role.ADMIN)
+# und duerfen von einer Bereichsrolle nicht erreichbar sein -- sonst waere
+# "darf seinen Bereich verwalten" faelschlich zu "darf den Mandanten
+# verwalten" ausgeweitet.
+
+def test_domain_manager_cannot_bootstrap_domains(client):
+    """Bereichsrolle domain_manager erreicht den Admin-Endpunkt nicht: das
+    Token traegt die globale Rolle 'user', die Bereichsmitgliedschaft aendert
+    daran nichts."""
+    tenant = TENANT + "-sep1"
+    admin_token = create_token("admin_sep1", tenant, "admin")
+    resp0 = client.post(
+        "/domains/bootstrap",
+        json={"domain_code": "accounting", "reason": "Testfreigabe",
+              "first_manager_user_id": "mgr_sep1"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp0.status_code == 200, resp0.text
+
+    # mgr_sep1 ist jetzt aktiver domain_manager -- aber global nur 'user'.
+    mgr_token = create_token("mgr_sep1", tenant, "user")
+    resp = client.post(
+        "/domains/bootstrap",
+        json={"domain_code": "hr", "reason": "Selbstfreischaltung",
+              "first_manager_user_id": "mgr_sep1"},
+        headers={"Authorization": f"Bearer {mgr_token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_domain_manager_cannot_revoke_memberships_via_admin_endpoint(client):
+    """Auch der Widerrufs-Endpunkt bleibt Admin-gebunden."""
+    tenant = TENANT + "-sep2"
+    admin_token = create_token("admin_sep2", tenant, "admin")
+    resp0 = client.post(
+        "/domains/bootstrap",
+        json={"domain_code": "accounting", "reason": "Testfreigabe",
+              "first_manager_user_id": "mgr_sep2"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp0.status_code == 200, resp0.text
+
+    from sqlalchemy import select
+    from apps.backend.db_schema import user_domain_memberships
+    with engine.begin() as con:
+        membership_id = con.execute(
+            select(user_domain_memberships.c.id)
+            .where(user_domain_memberships.c.tenant_id == tenant)
+            .where(user_domain_memberships.c.user_id == "mgr_sep2")
+        ).first()[0]
+
+    mgr_token = create_token("mgr_sep2", tenant, "user")
+    resp = client.post(
+        f"/domains/memberships/{membership_id}/revoke",
+        json={"revocation_reason": "Selbstwiderruf"},
+        headers={"Authorization": f"Bearer {mgr_token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_my_memberships_shows_only_own(client):
+    """Selbstauskunft bleibt Selbstauskunft: ein zweiter Nutzer im selben
+    Mandanten sieht die Mitgliedschaft des ersten nicht."""
+    tenant = TENANT + "-sep3"
+    admin_token = create_token("admin_sep3", tenant, "admin")
+    resp0 = client.post(
+        "/domains/bootstrap",
+        json={"domain_code": "accounting", "reason": "Testfreigabe",
+              "first_manager_user_id": "mgr_sep3"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp0.status_code == 200, resp0.text
+
+    other_token = create_token("other_sep3", tenant, "user")
+    resp = client.get("/domains/my-memberships",
+                      headers={"Authorization": f"Bearer {other_token}"})
+    assert resp.status_code == 200
+    assert resp.json() == []
