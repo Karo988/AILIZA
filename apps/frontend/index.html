@@ -401,6 +401,7 @@ body{
       <div role="navigation" aria-labelledby="nav-work-label">
         <div class="side-item" role="button" tabindex="0" onclick="showView('chat',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">💬</span><span>Chat</span></div>
         <div class="side-item" role="button" tabindex="0" onclick="showView('wissen',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📄</span><span>Vorlagen</span></div>
+        <div class="side-item" role="button" tabindex="0" onclick="showView('skills',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">⚡</span><span>Skills</span></div>
         <div class="side-item" role="button" tabindex="0" onclick="showView('projects',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
       </div>
       <div id="proj-panel" style="padding:0 10px 8px 34px">
@@ -414,6 +415,7 @@ body{
     </div>
     <div style="flex:1"></div>
     <div class="side-section" style="border-top:1px solid var(--border,#e3e6dd);padding-top:8px">
+      <div class="side-item" role="button" tabindex="0" id="nav-domains" style="display:none" onclick="showView('domains',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🏢</span><span>Bereiche &amp; Zugriffe</span></div>
       <div class="side-item" role="button" tabindex="0" id="nav-knowledge" style="display:none" onclick="showView('knowledge',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📚</span><span>Unternehmenswissen</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="showView('status',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🛡️</span><span>Datenschutz &amp; Kontrolle</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="toggleAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">👤</span><span>Hilfe &amp; Profil</span></div>
@@ -505,6 +507,13 @@ body{
       <div class="page-wrap">
         <div class="page-head"><div><div class="page-title">Skills</div><div class="page-sub">Klicke einen Skill — Chat startet mit passendem Prompt</div></div></div>
         <div class="skill-tiles" id="skill-tiles"></div>
+      </div>
+    </div>
+    <div class="view" id="view-domains">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Bereiche &amp; Zugriffe</div><div class="page-sub">Fachbereiche freischalten und Personen zuweisen</div></div></div>
+        <div id="dom-msg" role="status" aria-live="polite" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:6px;font-size:13px"></div>
+        <div id="dom-list" style="display:flex;flex-direction:column;gap:10px"><div style="font-size:13px;color:var(--text-muted)">Wird geladen…</div></div>
       </div>
     </div>
     <div class="view" id="view-knowledge">
@@ -1540,6 +1549,13 @@ async function init(){
 // ── Immer sichtbarer Anmelde-Status oben rechts (Karo-Wunsch 2026-07-12):
 // nicht nur reaktiv im Chat, sondern jederzeit erreichbar. Nutzt den
 // bestehenden Cookie-Flow (/auth/me liest ailiza_session).
+function setDomainsNavVisible(on){
+  // Der Menuepunkt wird nur angezeigt, nicht abgesichert -- die
+  // Zugriffspruefung liegt ausschliesslich im Backend (403). Ein
+  // ausgeblendeter Menuepunkt ist Bedienkomfort, keine Schutzmassnahme.
+  const el=document.getElementById("nav-domains");
+  if(el)el.style.display=on?"flex":"none";
+}
 async function refreshAuthButton(){
   const btn=document.getElementById("topbar-auth-btn");
   if(!btn)return;
@@ -1559,6 +1575,7 @@ async function refreshAuthButton(){
         // niemals fremde oder vorherige Daten sichtbar bleiben.
         applyScopeAndRerender({type:"anon"});
         btn.textContent="Anmelden"; btn.onclick=openLoginModal;
+        setDomainsNavVisible(false);
         setKnowledgeNavVisible(false);
         closeAccountMenu();
         const _li0=document.getElementById("account-logout-item"); if(_li0)_li0.style.display="none";
@@ -1568,6 +1585,7 @@ async function refreshAuthButton(){
       applyScopeAndRerender({type:"user",userId:_uid,tenantId:_tid});
       btn.textContent=`${me.user_id||"Konto"} ▾`;
       btn.onclick=toggleAccountMenu;
+      setDomainsNavVisible(true);
       setKnowledgeNavVisible(true);
       const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="block";
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
@@ -1577,6 +1595,7 @@ async function refreshAuthButton(){
   applyScopeAndRerender({type:"anon"});
   btn.textContent="Anmelden";
   btn.onclick=openLoginModal;
+  setDomainsNavVisible(false);
   setKnowledgeNavVisible(false);
   closeAccountMenu();
   const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="none";
@@ -1599,6 +1618,7 @@ function showView(name,el){
   if(name==="projects")renderProjects();
   if(name==="skills")renderSkills();
   if(name==="wissen")renderWissen();
+  if(name==="domains")loadDomains();
   if(name==="knowledge")loadKnowledge();
 }
 
@@ -1685,6 +1705,127 @@ async function knSetDomain(sourceId,current){
     knMsg(d.domain_code?`Dokument dem Bereich "${d.domain_code}" zugeordnet.`:"Bereichszuordnung aufgehoben.","ok");
     loadKnowledge();
   }catch(e){knMsg("Backend nicht erreichbar.");}
+}
+
+// ── Bereiche & Zugriffe ─────────────────────────────────────────────────────
+// Die Anmeldung laeuft ueber ein HttpOnly-Cookie (siehe doLogin) -- der
+// Browser sendet es bei gleicher Herkunft automatisch mit. Es wird bewusst
+// KEIN Token aus localStorage gelesen: ein dort ablegbares Token waere fuer
+// jedes Skript auf der Seite lesbar.
+const DOM_ROLES=[
+  ["viewer","Lesen"],["contributor","Mitarbeiten"],
+  ["reviewer","Pruefen & Freigeben"],["domain_manager","Bereich verwalten"]
+];
+const DOM_SENS={confidential:["Streng vertraulich","#8E3320"],high:["Erhoeht","#8F5B05"],normal:["Normal","#5A6763"]};
+
+function domMsg(text,kind){
+  const el=document.getElementById("dom-msg");
+  if(!text){el.style.display="none";return;}
+  const ok=kind==="ok";
+  el.style.display="block";
+  el.style.background=ok?"#E3F0EC":"#F7E7E2";
+  el.style.color=ok?"#0E6B5A":"#8E3320";
+  el.textContent=text;
+}
+
+function domEsc(s){
+  return String(s==null?"":s).replace(/[&<>"']/g,c=>(
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+async function loadDomains(){
+  const box=document.getElementById("dom-list");
+  domMsg("");
+  let rows;
+  try{
+    const r=await fetch(`${API}/domains`,{credentials:"same-origin"});
+    if(r.status===401){box.innerHTML="";domMsg("Bitte melden Sie sich an, um Bereiche zu verwalten.");return;}
+    if(!r.ok){box.innerHTML="";domMsg("Bereiche konnten nicht geladen werden.");return;}
+    rows=await r.json();
+  }catch(e){box.innerHTML="";domMsg("Backend nicht erreichbar.");return;}
+
+  if(!rows.length){box.innerHTML='<div style="font-size:13px;color:var(--text-muted)">Keine Bereiche vorhanden.</div>';return;}
+  box.innerHTML=rows.map(d=>{
+    const sens=DOM_SENS[d.sensitivity_level]||["Unbekannt","#5A6763"];
+    const on=d.is_enabled===true;
+    return `<div style="border:1px solid var(--border,#e3e6dd);border-radius:8px;padding:12px 14px;background:var(--bg-elevated,#fff)">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:baseline">
+        <div style="font-weight:600;flex:1 1 12rem">${domEsc(d.name)}</div>
+        <span style="font-size:11px;color:${sens[1]};font-weight:600">${sens[0]}</span>
+        <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${on?"#E3F0EC":"#EDF1EF"};color:${on?"#0E6B5A":"#77857F"}">${on?"freigeschaltet":"nicht freigeschaltet"}</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${domEsc(d.code)}</div>
+      <div style="margin-top:10px">${on
+        ? `<button class="btn-ghost" style="font-size:12px" onclick="domToggleMembers('${domEsc(d.code)}')">Mitglieder anzeigen</button>`
+        : `<button class="btn-ghost" style="font-size:12px" onclick="domBootstrap('${domEsc(d.code)}','${domEsc(d.name)}')">Bereich freischalten</button>`}</div>
+      <div id="dom-members-${domEsc(d.code)}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#e3e6dd);padding-top:10px"></div>
+    </div>`;
+  }).join("");
+}
+
+async function domBootstrap(code,name){
+  const mgr=prompt(`Bereich "${name}" freischalten.\n\nWer verwaltet ihn? (Nutzername)`);
+  if(!mgr||!mgr.trim())return;
+  const reason=prompt("Begruendung fuer die Freischaltung (mindestens 3 Zeichen):");
+  if(!reason||reason.trim().length<3){domMsg("Ohne Begruendung wird nicht freigeschaltet.");return;}
+  try{
+    const r=await fetch(`${API}/domains/bootstrap`,{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({domain_code:code,reason:reason.trim(),first_manager_user_id:mgr.trim()})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){domMsg(d.detail||"Freischaltung nicht moeglich.");return;}
+    domMsg(`Bereich "${name}" freigeschaltet. ${mgr.trim()} verwaltet ihn.`,"ok");
+    loadDomains();
+  }catch(e){domMsg("Backend nicht erreichbar.");}
+}
+
+async function domToggleMembers(code){
+  const box=document.getElementById("dom-members-"+code);
+  if(box.style.display!=="none"){box.style.display="none";return;}
+  box.style.display="block";
+  box.innerHTML='<div style="font-size:12px;color:var(--text-muted)">Wird geladen…</div>';
+  let rows;
+  try{
+    const r=await fetch(`${API}/domains/${encodeURIComponent(code)}/members`,{credentials:"same-origin"});
+    if(r.status===403){box.innerHTML='<div style="font-size:12px;color:#8E3320">Sie duerfen diesen Bereich nicht verwalten.</div>';return;}
+    if(!r.ok){box.innerHTML='<div style="font-size:12px;color:#8E3320">Mitglieder konnten nicht geladen werden.</div>';return;}
+    rows=await r.json();
+  }catch(e){box.innerHTML='<div style="font-size:12px;color:#8E3320">Backend nicht erreichbar.</div>';return;}
+
+  const roleLabel=r=>(DOM_ROLES.find(x=>x[0]===r)||[r,r])[1];
+  const list=rows.length
+    ? rows.map(m=>`<div style="display:flex;gap:10px;align-items:baseline;padding:4px 0;font-size:13px">
+        <span style="flex:1 1 auto">${domEsc(m.user_id)}</span>
+        <span style="font-size:11px;color:var(--text-muted)">${domEsc(roleLabel(m.role_in_domain))}</span>
+      </div>`).join("")
+    : '<div style="font-size:12px;color:var(--text-muted)">Noch niemand zugewiesen.</div>';
+  box.innerHTML=list+
+    `<div style="margin-top:8px"><button class="btn-ghost" style="font-size:12px" onclick="domAssign('${domEsc(code)}')">＋ Person zuweisen</button></div>`;
+}
+
+async function domAssign(code){
+  const user=prompt("Nutzername der Person:");
+  if(!user||!user.trim())return;
+  const roleList=DOM_ROLES.map((r,i)=>`${i+1}) ${r[1]}`).join("\n");
+  const pick=prompt(`Welche Rolle?\n\n${roleList}\n\nBitte Zahl eingeben:`);
+  const idx=parseInt(pick,10)-1;
+  if(!(idx>=0&&idx<DOM_ROLES.length)){domMsg("Keine gueltige Rolle gewaehlt.");return;}
+  const reason=prompt("Begruendung fuer die Zuweisung (mindestens 3 Zeichen):");
+  if(!reason||reason.trim().length<3){domMsg("Ohne Begruendung wird nicht zugewiesen.");return;}
+  try{
+    const r=await fetch(`${API}/domains/${encodeURIComponent(code)}/members`,{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({user_id:user.trim(),role_in_domain:DOM_ROLES[idx][0],assignment_reason:reason.trim()})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){domMsg(d.detail||"Zuweisung nicht moeglich.");return;}
+    domMsg(`${user.trim()} wurde als "${DOM_ROLES[idx][1]}" zugewiesen.`,"ok");
+    const box=document.getElementById("dom-members-"+code);
+    box.style.display="none";domToggleMembers(code);
+  }catch(e){domMsg("Backend nicht erreichbar.");}
 }
 function updateModels(){
   const p=document.getElementById("provider-sel").value;

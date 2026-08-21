@@ -24,7 +24,7 @@ globales Vokabular. Der sprechende Code bleibt in Exporten und Audit-
 Auszuegen lesbar, ohne dass eine Zahlen-ID aufgeloest werden muss.
 
 Revision ID: b6d2f4a09e13
-Revises: f9a3c61e07b2
+Revises: a4e8b2c15d97
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b6d2f4a09e13"
-down_revision: Union[str, None] = "f9a3c61e07b2"
+down_revision: Union[str, None] = "a4e8b2c15d97"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

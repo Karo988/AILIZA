@@ -329,3 +329,142 @@ def list_my_domain_memberships(*, tenant_id: str, user_id: str) -> list[dict[str
     with engine.begin() as connection:
         rows = connection.execute(query).mappings().all()
     return [dict(row) for row in rows]
+
+
+class DomainMembershipError(RuntimeError):
+    """Mitgliedschaft konnte nicht vergeben werden -- fail-closed."""
+
+
+def assign_membership(
+    *,
+    tenant_id: str,
+    domain_code: str,
+    user_id: str,
+    role_in_domain: str,
+    assigned_by: str,
+    assignment_reason: str,
+    valid_until: datetime | None = None,
+) -> dict[str, Any]:
+    """Weist einer Person eine Rolle in einem Bereich zu.
+
+    Ohne diese Funktion war das Rechtemodell nicht bedienbar:
+    bootstrap_domain() legt nur den ERSTEN domain_manager an, und
+    revoke_membership() verweigert den Widerruf des letzten -- eine zweite
+    Person konnte also nie hinzukommen.
+
+    Fail-closed in jedem Zweig: unbekannter Bereich, im Mandanten nicht
+    freigeschalteter Bereich, unbekannte Rolle oder fehlende Begruendung
+    fuehren zur Ablehnung. Es wird nichts stillschweigend angelegt."""
+    if role_in_domain not in ROLES:
+        raise DomainMembershipError(f"Unbekannte Bereichsrolle: {role_in_domain!r}")
+    if not assignment_reason or len(assignment_reason.strip()) < 3:
+        raise DomainMembershipError("Begruendung fuer die Zuweisung fehlt oder ist zu kurz.")
+    if not user_id or not user_id.strip():
+        raise DomainMembershipError("Ohne Nutzerkennung kann keine Mitgliedschaft angelegt werden.")
+
+    now = _now()
+    if valid_until is not None and _as_aware_utc(valid_until) <= now:
+        raise DomainMembershipError("Das Ablaufdatum liegt bereits in der Vergangenheit.")
+
+    with engine.begin() as connection:
+        domain_id = _get_domain_id(connection, domain_code)
+        if domain_id is None:
+            raise DomainMembershipError(f"Unbekannter Bereichscode: {domain_code!r}")
+
+        # Ein im Mandanten nicht freigeschalteter Bereich darf keine
+        # Mitgliedschaften bekommen -- sonst entstuenden Rechte auf Vorrat,
+        # die bei einer spaeteren Freischaltung sofort wirksam waeren.
+        enabled = connection.execute(
+            select(tenant_business_domains.c.is_enabled)
+            .where(tenant_business_domains.c.tenant_id == tenant_id)
+            .where(tenant_business_domains.c.domain_id == domain_id)
+        ).first()
+        if enabled is None or not enabled[0]:
+            raise DomainMembershipError(
+                f"Bereich {domain_code!r} ist für diesen Mandanten nicht freigeschaltet."
+            )
+
+        already = connection.execute(
+            select(user_domain_memberships.c.id, user_domain_memberships.c.role_in_domain)
+            .where(user_domain_memberships.c.tenant_id == tenant_id)
+            .where(user_domain_memberships.c.domain_id == domain_id)
+            .where(user_domain_memberships.c.user_id == user_id)
+            .where(user_domain_memberships.c.is_active == 1)
+        ).first()
+        if already is not None:
+            raise DomainMembershipError(
+                f"{user_id} ist in diesem Bereich bereits als {already[1]} aktiv. "
+                "Bitte zuerst widerrufen, dann neu zuweisen -- so bleibt der "
+                "Rollenwechsel im Nachweis sichtbar."
+            )
+
+        connection.execute(
+            user_domain_memberships.insert().values(
+                tenant_id=tenant_id, domain_id=domain_id, user_id=user_id,
+                role_in_domain=role_in_domain, valid_from=now, valid_until=valid_until,
+                assigned_by=assigned_by, assignment_reason=assignment_reason,
+                is_active=1, version=1,
+            )
+        )
+
+    write_audit_entry(
+        action="domain.membership.assigned",
+        tenant_id=tenant_id,
+        metadata={"domain_code": domain_code, "role_in_domain": role_in_domain},
+    )
+    return {"domain_code": domain_code, "user_id": user_id,
+            "role_in_domain": role_in_domain, "status": "assigned"}
+
+
+def list_domains_for_tenant(*, tenant_id: str) -> list[dict[str, Any]]:
+    """Alle bekannten Bereiche mit ihrem Freischaltstatus im Mandanten.
+
+    Ein Bereich ohne Zeile in tenant_business_domains gilt als NICHT
+    freigeschaltet -- deshalb Outer Join statt Inner Join: sonst waeren
+    genau die nicht freigeschalteten Bereiche unsichtbar, also jene, die
+    man in der Oberflaeche freischalten koennte."""
+    query = (
+        select(
+            business_domains.c.code, business_domains.c.name,
+            business_domains.c.category, business_domains.c.sensitivity_level,
+            tenant_business_domains.c.is_enabled,
+        )
+        .select_from(
+            business_domains.outerjoin(
+                tenant_business_domains,
+                (tenant_business_domains.c.domain_id == business_domains.c.id)
+                & (tenant_business_domains.c.tenant_id == tenant_id),
+            )
+        )
+        .order_by(business_domains.c.code)
+    )
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+    return [
+        {**dict(row), "is_enabled": bool(row["is_enabled"])}
+        for row in rows
+    ]
+
+
+def list_domain_members(*, tenant_id: str, domain_code: str) -> list[dict[str, Any]]:
+    """Aktive Mitgliedschaften eines Bereichs -- strikt tenant-gefiltert."""
+    query = (
+        select(
+            user_domain_memberships.c.id, user_domain_memberships.c.user_id,
+            user_domain_memberships.c.role_in_domain,
+            user_domain_memberships.c.valid_until,
+            user_domain_memberships.c.assigned_by,
+        )
+        .select_from(
+            user_domain_memberships.join(
+                business_domains, business_domains.c.id == user_domain_memberships.c.domain_id
+            )
+        )
+        .where(user_domain_memberships.c.tenant_id == tenant_id)
+        .where(business_domains.c.code == domain_code)
+        .where(user_domain_memberships.c.is_active == 1)
+        .order_by(user_domain_memberships.c.user_id)
+    )
+    with engine.begin() as connection:
+        rows = connection.execute(query).mappings().all()
+    return [dict(row) for row in rows]
