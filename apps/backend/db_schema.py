@@ -456,7 +456,13 @@ knowledge_sources = Table(
     Column("expires_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    # Fachbereichsbindung (Migration b6d2f4a09e13). NULL = nicht gebunden,
+    # es gelten unveraendert Eigentuemer + visibility_scope. Gesetzt =
+    # ZUSAETZLICH muss der Zugriff im Bereich erlaubt sein. Die Bindung
+    # schraenkt ein, sie erweitert nie.
+    Column("domain_code", String(64), nullable=True),
     Index("ix_knowledge_sources_tenant_status", "tenant_id", "status"),
+    Index("ix_knowledge_sources_domain", "tenant_id", "domain_code"),
 )
 
 knowledge_chunks = Table(
