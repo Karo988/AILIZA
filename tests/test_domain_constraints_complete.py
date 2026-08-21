@@ -52,9 +52,18 @@ def _did(con: sqlite3.Connection, code: str = "hr") -> int:
 
 
 def test_exactly_one_head() -> None:
+    """Genau ein Head -- welche Revision der Head IST, wandert mit jeder
+    neuen Migration weiter. Geprueft wird daher die Kette, nicht die
+    Head-Position dieser Revision.
+
+    Diese Pruefung hat schon dreimal faelschlich angeschlagen, weil sie die
+    jeweils aktuelle Head-Revision fest verdrahtet hatte."""
     result = _alembic("heads", database_url="sqlite:///:memory:")
     heads = [line for line in result.stdout.splitlines() if line.strip()]
-    assert len(heads) == 1 and REVISION in heads[0]
+    assert len(heads) == 1, f"Erwartet genau einen Head, gefunden: {heads}"
+
+    history = _alembic("history", database_url="sqlite:///:memory:")
+    assert REVISION in history.stdout
 
 
 @pytest.mark.parametrize("level", ["geheim", "", "NORMAL"])
