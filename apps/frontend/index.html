@@ -414,6 +414,7 @@ body{
     </div>
     <div style="flex:1"></div>
     <div class="side-section" style="border-top:1px solid var(--border,#e3e6dd);padding-top:8px">
+      <div class="side-item" role="button" tabindex="0" id="nav-knowledge" style="display:none" onclick="showView('knowledge',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📚</span><span>Unternehmenswissen</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="showView('status',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🛡️</span><span>Datenschutz &amp; Kontrolle</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="toggleAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">👤</span><span>Hilfe &amp; Profil</span></div>
     </div>
@@ -504,6 +505,13 @@ body{
       <div class="page-wrap">
         <div class="page-head"><div><div class="page-title">Skills</div><div class="page-sub">Klicke einen Skill — Chat startet mit passendem Prompt</div></div></div>
         <div class="skill-tiles" id="skill-tiles"></div>
+      </div>
+    </div>
+    <div class="view" id="view-knowledge">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Unternehmenswissen</div><div class="page-sub">Ihre Dokumente und die Ihres Fachbereichs</div></div></div>
+        <div id="kn-msg" role="status" aria-live="polite" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:6px;font-size:13px"></div>
+        <div id="kn-list" style="display:flex;flex-direction:column;gap:8px"><div style="font-size:13px;color:var(--text-muted)">Wird geladen…</div></div>
       </div>
     </div>
     <div class="view" id="view-status">
@@ -1551,6 +1559,7 @@ async function refreshAuthButton(){
         // niemals fremde oder vorherige Daten sichtbar bleiben.
         applyScopeAndRerender({type:"anon"});
         btn.textContent="Anmelden"; btn.onclick=openLoginModal;
+        setKnowledgeNavVisible(false);
         closeAccountMenu();
         const _li0=document.getElementById("account-logout-item"); if(_li0)_li0.style.display="none";
         addAiMessage("Anmeldung unvollstaendig: Es konnte kein eindeutiger Mandant ermittelt werden. Bitte melden Sie sich erneut an.",undefined);
@@ -1559,6 +1568,7 @@ async function refreshAuthButton(){
       applyScopeAndRerender({type:"user",userId:_uid,tenantId:_tid});
       btn.textContent=`${me.user_id||"Konto"} ▾`;
       btn.onclick=toggleAccountMenu;
+      setKnowledgeNavVisible(true);
       const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="block";
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
@@ -1567,6 +1577,7 @@ async function refreshAuthButton(){
   applyScopeAndRerender({type:"anon"});
   btn.textContent="Anmelden";
   btn.onclick=openLoginModal;
+  setKnowledgeNavVisible(false);
   closeAccountMenu();
   const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="none";
 }
@@ -1588,6 +1599,92 @@ function showView(name,el){
   if(name==="projects")renderProjects();
   if(name==="skills")renderSkills();
   if(name==="wissen")renderWissen();
+  if(name==="knowledge")loadKnowledge();
+}
+
+// ── Unternehmenswissen ──────────────────────────────────────────────────────
+// Die Liste zeigt AUSSCHLIESSLICH, was der Server geliefert hat. Es wird
+// hier nichts nachgefiltert und nichts nachgeladen: die Sichtbarkeits-
+// entscheidung faellt in knowledge_access.may_read_source(), nicht im
+// Browser. Eine Filterung im Frontend waere keine Zugriffskontrolle,
+// sondern nur eine Anzeigeentscheidung -- die Daten waeren trotzdem
+// uebertragen worden.
+function knEsc(s){
+  return String(s==null?"":s).replace(/[&<>"']/g,c=>(
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function knMsg(text,kind){
+  const el=document.getElementById("kn-msg");
+  if(!text){el.style.display="none";return;}
+  const ok=kind==="ok";
+  el.style.display="block";
+  el.style.background=ok?"#E3F0EC":"#F7E7E2";
+  el.style.color=ok?"#0E6B5A":"#8E3320";
+  el.textContent=text;
+}
+
+function setKnowledgeNavVisible(on){
+  const el=document.getElementById("nav-knowledge");
+  if(el)el.style.display=on?"flex":"none";
+}
+
+async function loadKnowledge(){
+  const box=document.getElementById("kn-list");
+  knMsg("");
+  let rows;
+  try{
+    const r=await fetch(`${API}/knowledge`,{credentials:"same-origin"});
+    if(r.status===401){box.innerHTML="";knMsg("Bitte melden Sie sich an.");return;}
+    if(!r.ok){box.innerHTML="";knMsg("Wissensquellen konnten nicht geladen werden.");return;}
+    rows=await r.json();
+  }catch(e){box.innerHTML="";knMsg("Backend nicht erreichbar.");return;}
+
+  if(!rows.length){
+    box.innerHTML='<div style="font-size:13px;color:var(--text-muted)">Noch keine Dokumente vorhanden, die Sie sehen dürfen.</div>';
+    return;
+  }
+  box.innerHTML=rows.map(s=>{
+    const dom=s.domain_code
+      ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#E3F0EC;color:#0E6B5A">${knEsc(s.domain_code)}</span>`
+      : `<span style="font-size:11px;color:var(--text-muted)">kein Bereich</span>`;
+    return `<div style="border:1px solid var(--border,#e3e6dd);border-radius:8px;padding:10px 12px;background:var(--bg-elevated,#fff)">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline">
+        <div style="font-weight:600;flex:1 1 12rem">${knEsc(s.title)}</div>
+        ${dom}
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:3px">
+        ${knEsc(s.source_type)} · ${knEsc(s.status)} · von ${knEsc(s.uploaded_by)}
+      </div>
+      <div style="margin-top:8px">
+        <button class="btn-ghost" style="font-size:12px" onclick="knSetDomain(${Number(s.id)},'${knEsc(s.domain_code||"")}')">Bereich zuordnen</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function knSetDomain(sourceId,current){
+  const code=prompt(
+    "Fachbereich zuordnen.\n\n"+
+    "Bereichskuerzel eingeben (z. B. accounting, hr, legal).\n"+
+    "Leer lassen, um die Zuordnung aufzuheben.\n\n"+
+    "Achtung: Eine Zuordnung schraenkt ein -- nur Personen mit Leserecht\n"+
+    "in diesem Bereich sehen das Dokument danach noch.",
+    current||"");
+  if(code===null)return;
+  const reason=prompt("Begruendung (mindestens 3 Zeichen):");
+  if(!reason||reason.trim().length<3){knMsg("Ohne Begruendung wird nichts geaendert.");return;}
+  try{
+    const r=await fetch(`${API}/knowledge/${Number(sourceId)}/domain`,{
+      method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({domain_code:code.trim()||null,reason:reason.trim()})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){knMsg(d.detail||"Zuordnung nicht moeglich.");return;}
+    knMsg(d.domain_code?`Dokument dem Bereich "${d.domain_code}" zugeordnet.`:"Bereichszuordnung aufgehoben.","ok");
+    loadKnowledge();
+  }catch(e){knMsg("Backend nicht erreichbar.");}
 }
 function updateModels(){
   const p=document.getElementById("provider-sel").value;
