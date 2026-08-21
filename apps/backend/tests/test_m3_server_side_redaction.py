@@ -43,8 +43,10 @@ def test_bracket_claim_does_not_bypass_server_redaction():
             "echte Telefonnummer wurde unredaktiert durchgelassen."
         )
     else:
-        # block / approval_required sind ebenfalls akzeptable, sichere Ergebnisse
-        assert result["decision"] in ("block", "approval_required")
+        # block / approval_required / responsibility_handoff sind sichere Ergebnisse.
+        assert result["decision"] in ("block", "approval_required", "responsibility_handoff")
+        if result["decision"] == "responsibility_handoff":
+            assert result["activation_allowed"] is False
 
 
 def test_plain_pii_without_bracket_claim_still_redacted():

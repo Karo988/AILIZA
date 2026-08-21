@@ -93,19 +93,20 @@ def test_fall1_harmless_guest_passes_gates(client):
     assert resp.json().get("status") not in GATE_STATUSES
 
 
-# ── Fall 2: PII → Login-Gate (Dokumentationspflicht) ─────────────────────────
-def test_fall2_pii_guest_gets_login_required(client):
+# ── Fall 2: Art.-9-Daten → echte Pause vor jedem Versand ─────────────────────
+def test_fall2_art9_guest_goes_to_handoff(client):
     resp = client.post("/agent/run", json={"task": BRIEF_PII})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "login_required"
-    assert body["login_reason"] == "documentation"
+    assert body["status"] == "responsibility_handoff"
+    assert body["login_required"] is True
+    assert body["activation_allowed"] is False
     # Keine PII in der Antwort
     assert "Paula Ronder" not in str(body)
     assert "DE89370400440532013000" not in str(body)
 
 
-def test_fall2_pii_logged_in_passes_gates(client):
+def test_fall2_art9_logged_in_stays_paused_without_confirmations(client):
     headers = _auth()
     resp = client.post(
         "/agent/run",
@@ -113,7 +114,11 @@ def test_fall2_pii_logged_in_passes_gates(client):
         headers=headers,
     )
     assert resp.status_code == 200
-    assert resp.json().get("status") not in GATE_STATUSES
+    body = resp.json()
+    assert body["status"] == "responsibility_handoff"
+    assert body["login_required"] is False
+    assert body["activation_allowed"] is False
+    assert isinstance(body.get("approval_id"), int)
 
 
 # ── Fall 3: auch nach Schwaerzung nicht konform → Einwilligung ────────────────
@@ -263,7 +268,7 @@ def test_beta_highrisk_block_still_hard(client, monkeypatch):
 
 # ── Sicherheitsnetz: sensible Fachbegriffe (HIV, Religion, ...) verlassen
 #    das System nie im Klartext, auch bei gezielter (nicht Voll-)Schwaerzung ─
-def test_unredactable_health_data_never_leaves_in_clear():
+def test_unredactable_health_data_is_paused_before_redaction_or_send():
     """
     Regressionsschutz fuer B2a: Der Fachbegriff selbst (hier "HIV-Infektion")
     muss immer geschwaerzt werden.
@@ -283,10 +288,10 @@ def test_unredactable_health_data_never_leaves_in_clear():
         "Fasse zusammen: Paula Ronder leidet an einer HIV-Infektion.",
         tenant_id="default",
     )
-    assert result["decision"] != "block"
-    task_out = result["task"]
-    assert "HIV" not in task_out
-    assert "GESCHWAERZT" in task_out
+    assert result["decision"] == "responsibility_handoff"
+    assert result["activation_allowed"] is False
+    assert "task" not in result
+    assert "HIV" not in str(result)
 
 
 # ── Art.-44-48-Regel: "USA" ohne Wortgrenzen traf "zusammen" ─────────────────

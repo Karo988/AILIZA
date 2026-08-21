@@ -134,22 +134,16 @@ def test_send_without_preview_id_is_rejected():
     assert result["status"] == "preview_invalid"
 
 
-def test_fall2_login_required_is_not_masked_by_the_preview_gate():
-    """Regressionsschutz: das Gate darf NICHT vor der bestehenden
-    Fall-2/3-Logik greifen. Derselbe Text wie in
-    test_compliance_consent_flow.py::BRIEF_PII muss weiterhin
-    login_required liefern, nicht preview_invalid -- sonst waere die
-    bereits freigegebene Stufenlogik (Betreiber-Freigabe 2026-07-11)
-    unbenutzbar. (Der erste Entwurf dieser Aenderung hatte genau das
-    kaputtgemacht -- aufgedeckt durch test_compliance_consent_flow.py,
-    hier als eigener Regressionstest festgehalten.)"""
+def test_art9_pause_is_not_masked_by_the_preview_gate():
+    """Art.-9-Erkennung muss vor dem Preview-Gate sicher pausieren."""
     brief_pii = (
         "Bitte fasse diesen Brief zusammen: Mein Name ist Paula Ronder, ich leide "
         "an einer HIV-Infektion, bin Mitglied der Gewerkschaft ver.di, Religion "
         "roemisch-katholisch, IBAN DE89370400440532013000."
     )
     result = _run(brief_pii)
-    assert result["status"] == "login_required"
+    assert result["status"] == "responsibility_handoff"
+    assert result["activation_allowed"] is False
 
 
 def test_rejection_message_is_understandable_german():

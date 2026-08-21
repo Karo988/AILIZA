@@ -85,6 +85,10 @@ try:
     )
     from .compliance_auditor import evaluate_compliance, Severity
     from .kill_switch import enforce_kill_switch
+    from .art9_transfer_registry import (
+        Art6LegalBasis, Art9Exception, Art9ProviderId, Art9PurposeId,
+        Art9RecipientId, PURPOSE_REGISTRY, RECIPIENT_REGISTRY,
+    )
     from .knowledge.rag_context import (
         build_knowledge_context, sanitize_answer_citations,
         build_sources_list, answer_mode_user_text,
@@ -142,6 +146,10 @@ except ImportError:
     )
     from apps.backend.compliance_auditor import evaluate_compliance, Severity
     from apps.backend.kill_switch import enforce_kill_switch
+    from apps.backend.art9_transfer_registry import (
+        Art6LegalBasis, Art9Exception, Art9ProviderId, Art9PurposeId,
+        Art9RecipientId, PURPOSE_REGISTRY, RECIPIENT_REGISTRY,
+    )
     from apps.backend.knowledge.rag_context import (
         build_knowledge_context, sanitize_answer_citations,
         build_sources_list, answer_mode_user_text,
@@ -736,6 +744,58 @@ class ToolFetchRequest(BaseModel):
     url: str = Field(..., min_length=1)
 
 
+class Art9TransferContext(BaseModel):
+    """Geschlossene Systemkennungen; Freitext ist in keinem Feld zulaessig."""
+
+    purpose: Art9PurposeId | None = None
+    recipient: Art9RecipientId | None = None
+    art6_legal_basis: Art6LegalBasis | None = None
+    art9_exception: Art9Exception | None = None
+    provider_id: Art9ProviderId | None = None
+
+    @field_validator("purpose", "recipient", "art6_legal_basis", "art9_exception", "provider_id", mode="before")
+    @classmethod
+    def normalize_codes(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, (Art9PurposeId, Art9RecipientId, Art6LegalBasis, Art9Exception, Art9ProviderId)):
+            return value.value
+        normalized = str(value).strip().lower()
+        return normalized or None
+
+    @field_validator("purpose")
+    @classmethod
+    def purpose_must_be_registered(cls, value: Art9PurposeId | None) -> Art9PurposeId | None:
+        if value is not None and value not in PURPOSE_REGISTRY:
+            raise ValueError("purpose ist nicht im System registriert")
+        return value
+
+    @field_validator("recipient")
+    @classmethod
+    def recipient_must_be_registered(cls, value: Art9RecipientId | None) -> Art9RecipientId | None:
+        if value is not None and value not in RECIPIENT_REGISTRY:
+            raise ValueError("recipient ist nicht fuer die AVV-Pruefung registriert")
+        return value
+
+
+def _art9_payload_binding(task: str, history: list[dict[str, str]] | None) -> str:
+    """Kanonische Bindung der gesamten nutzerkontrollierten Provider-Nutzlast.
+
+    Die Rueckgabe wird nur gehasht und weder persistiert noch auditiert.
+    """
+    relevant_history = [
+        {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
+        for item in (history or [])[-10:]
+        if item.get("role") in {"user", "assistant"}
+    ]
+    return json.dumps(
+        {"task": task, "history": relevant_history},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 class AgentRunRequest(BaseModel):
     task: str = Field(..., min_length=1)
     history: list[dict[str, str]] | None = None
@@ -749,6 +809,10 @@ class AgentRunRequest(BaseModel):
     # Ohne preview_id bleibt es beim bisherigen Ablauf, bei dem der Server
     # den Rohtext im selben Request klassifiziert und schwaerzt.
     preview_id: str | None = None
+    # Paket "Art.-9-Pause": Diese Angaben werden nur als kanonische Codes
+    # angenommen und an den unveraenderlichen Payload-Hash gebunden. Eine
+    # Freischaltung ist in dieser Etappe ausdruecklich noch nicht moeglich.
+    art9_transfer: Art9TransferContext | None = None
 
     @field_validator("task")
     @classmethod
@@ -1456,6 +1520,9 @@ def _governance_pre_check(
     task: str,
     tenant_id: str,
     run_id: str | None = None,
+    owner_user_id: str | None = None,
+    art9_transfer: Art9TransferContext | None = None,
+    payload_binding: str | None = None,
 ) -> dict[str, Any]:
     """
     Führt classify → data_matrix → redact vor jedem externen LLM/Tool-Call durch.
@@ -1478,6 +1545,15 @@ def _governance_pre_check(
         return {"decision": "block", "message": "Anfrage konnte nicht sicher klassifiziert werden."}
 
     data_classes = list(getattr(classification, "classes", getattr(classification, "data_classes", [])) or [])
+    if payload_binding is not None:
+        try:
+            bound_classification = classify(payload_binding)
+            bound_classes = list(
+                getattr(bound_classification, "classes", getattr(bound_classification, "data_classes", [])) or []
+            )
+            data_classes = list(dict.fromkeys([*data_classes, *bound_classes]))
+        except Exception:
+            return {"decision": "block", "message": "Gesamtnutzlast konnte nicht sicher klassifiziert werden."}
 
     # Provider-Profil aktiv? Aktuell: alle Provider haben admin_disabled=True → False
     try:
@@ -1493,6 +1569,102 @@ def _governance_pre_check(
     # dieser Stelle IMMER False — echte Redaction passiert unten serverseitig
     # via RedactionEngineV2, nie basierend auf einer Client-Behauptung.
 
+    # Art.-9-Pause: Die Datenmatrix und alle nachgelagerten Provider-Gates
+    # bleiben weiterhin hart gesperrt. Statt still zu schwaerzen und danach
+    # extern weiterzulaufen, wird hier VOR jeder Redaction/Providerwahl ein
+    # unveraenderlicher, inhaltsfreier Freigabevorgang erzeugt. Dieses Paket
+    # implementiert bewusst KEINEN Fortsetzungs-/Aktivierungspfad.
+    if DataClass.SPECIAL_CATEGORY in data_classes:
+        payload_sha256 = hashlib.sha256((payload_binding or task).encode("utf-8")).hexdigest()
+        supplied = art9_transfer.model_dump(mode="json") if art9_transfer is not None else {}
+        required_fields = (
+            "purpose", "recipient", "art6_legal_basis", "art9_exception", "provider_id",
+        )
+        missing_fields = [name for name in required_fields if not supplied.get(name)]
+        invalid_fields: list[str] = []
+
+        purpose = supplied.get("purpose")
+        recipient = supplied.get("recipient")
+        art6_basis = supplied.get("art6_legal_basis")
+        art9_exception = supplied.get("art9_exception")
+        provider_id = supplied.get("provider_id")
+
+        try:
+            if purpose and Art9PurposeId(purpose) not in PURPOSE_REGISTRY:
+                invalid_fields.append("purpose")
+        except ValueError:
+            invalid_fields.append("purpose")
+        try:
+            if recipient and Art9RecipientId(recipient) not in RECIPIENT_REGISTRY:
+                invalid_fields.append("recipient")
+        except ValueError:
+            invalid_fields.append("recipient")
+        for field_name, value, enum_type in (
+            ("art6_legal_basis", art6_basis, Art6LegalBasis),
+            ("art9_exception", art9_exception, Art9Exception),
+            ("provider_id", provider_id, Art9ProviderId),
+        ):
+            try:
+                if value:
+                    enum_type(value)
+            except ValueError:
+                invalid_fields.append(field_name)
+
+        handoff_required = bool(missing_fields or invalid_fields or owner_user_id is None)
+        tool = "art9_responsibility_handoff" if handoff_required else "art9_external_transfer_pause"
+        approval_id: int | None = None
+        if owner_user_id is not None:
+            approval = create_approval_request(
+                tool=tool,
+                input_params={
+                    "payload_sha256": payload_sha256,
+                    "purpose": purpose,
+                    "recipient": recipient,
+                    "art6_legal_basis": art6_basis,
+                    "art9_exception": art9_exception,
+                    "provider_id": provider_id,
+                    "missing_fields": missing_fields,
+                    "invalid_fields": invalid_fields,
+                    "activation_stage": "pause_only",
+                    "activation_allowed": False,
+                },
+                risk_level="safety_critical",
+                risk_reason="Art.-9-Daten erkannt: externer Versand pausiert; Aktivierung nicht implementiert.",
+                run_id=run_id,
+                tenant_id=tenant_id,
+                required_approver_roles=["admin", "privacy"],
+                owner_user_id=owner_user_id,
+            )
+            approval_id = approval.get("id")
+
+        write_audit_entry(
+            action="governance.art9_responsibility_handoff" if handoff_required else "governance.art9_paused",
+            tenant_id=tenant_id,
+            metadata={
+                "approval_id": approval_id,
+                "payload_sha256": payload_sha256,
+                "missing_fields": missing_fields,
+                "invalid_fields": invalid_fields,
+                "login_required": owner_user_id is None,
+                "activation_allowed": False,
+            },
+        )
+        return {
+            "decision": "responsibility_handoff" if handoff_required else "approval_required",
+            "status": "responsibility_handoff" if handoff_required else "art9_paused",
+            "approval_id": approval_id,
+            "payload_sha256": payload_sha256,
+            "missing_fields": missing_fields,
+            "invalid_fields": invalid_fields,
+            "login_required": owner_user_id is None,
+            "activation_allowed": False,
+            "required_confirmations": list(required_fields),
+            "message": (
+                "Art.-9-Daten erkannt. Der externe Versand ist pausiert und kann in dieser "
+                "Ausbaustufe nicht fortgesetzt werden."
+            ),
+        }
+
     decision = check_data_target(
         data_classes=data_classes,
         target=DataTarget.EXTERNAL_LLM,
@@ -1502,7 +1674,8 @@ def _governance_pre_check(
     )
 
     if decision == PolicyDecision.BLOCK:
-        # CREDENTIALS oder SPECIAL_CATEGORY (EU AI Act Art. 5 / DSGVO Art. 9).
+        # CREDENTIALS und sonstige harte Matrixsperren. SPECIAL_CATEGORY wurde
+        # bereits oben in die nicht-aktivierende Art.-9-Pause ueberfuehrt.
         # Betreiber-Freigabe 2026-07-11: KEIN Hartblock mehr — die Rohdaten
         # verlassen das System weiterhin NIE, aber statt abzubrechen wird
         # vollstaendig geschwaerzt und nur die geschwaerzte Fassung laeuft
@@ -2413,7 +2586,13 @@ def _run_agent_core(
     #   Fall 1: keine sensiblen Daten → direkt senden, kein Login noetig.
     #   Fall 2: Schwaerzung loest das Problem → Login noetig (Dokumentationspflicht).
     #   Fall 3: auch nach Schwaerzung nicht konform → Login + explizite Einwilligung.
-    pre_check = _governance_pre_check(payload.task, tenant_id=tenant)
+    pre_check = _governance_pre_check(
+        payload.task,
+        tenant_id=tenant,
+        owner_user_id=token.user_id if token is not None else None,
+        art9_transfer=payload.art9_transfer,
+        payload_binding=_art9_payload_binding(payload.task, payload.history),
+    )
 
     if pre_check["decision"] == "block":
         # Nur noch fail-closed (Klassifizierungsfehler) — kein Inhalts-Hartblock mehr.
@@ -2421,6 +2600,22 @@ def _run_agent_core(
             "status": "blocked",
             "message": pre_check["message"],
             "ai_response": pre_check["message"],
+            "steps": [],
+            "results": [],
+        }
+
+    if pre_check["decision"] in {"approval_required", "responsibility_handoff"}:
+        return {
+            "status": pre_check["status"],
+            "message": pre_check["message"],
+            "ai_response": pre_check["message"],
+            "approval_id": pre_check["approval_id"],
+            "payload_sha256": pre_check["payload_sha256"],
+            "missing_fields": pre_check["missing_fields"],
+            "invalid_fields": pre_check["invalid_fields"],
+            "required_confirmations": pre_check["required_confirmations"],
+            "login_required": pre_check["login_required"],
+            "activation_allowed": False,
             "steps": [],
             "results": [],
         }
