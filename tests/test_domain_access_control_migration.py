@@ -81,8 +81,12 @@ def test_upgrade_creates_tables_and_seeds_domains(db_url: str) -> None:
         }
         assert EXPECTED_TABLES <= tables
 
+        # Teilmengenpruefung, keine Gleichheit: spaetere Migrationen duerfen
+        # das Vokabular erweitern (siehe a4e8b2c15d97). Geprueft wird, dass
+        # DIESE Revision ihre 13 Codes vollstaendig einspielt -- nicht, dass
+        # sie die einzigen im System bleiben.
         codes = {row[0] for row in con.execute("SELECT code FROM business_domains")}
-        assert codes == EXPECTED_CODES
+        assert EXPECTED_CODES <= codes, f"Fehlend: {sorted(EXPECTED_CODES - codes)}"
 
         # Fail-closed: die Migration vergibt keinerlei Zugriff.
         assert con.execute("SELECT COUNT(*) FROM user_domain_memberships").fetchone()[0] == 0
@@ -145,7 +149,14 @@ def test_downgrade_then_reupgrade_is_idempotent(db_url: str) -> None:
     assert _alembic("upgrade", "head", database_url=db_url).returncode == 0
     con = sqlite3.connect(_sqlite_path(db_url))
     try:
-        codes = {row[0] for row in con.execute("SELECT code FROM business_domains")}
-        assert codes == EXPECTED_CODES, "Startwerte duerfen sich nicht verdoppeln"
+        rows = [row[0] for row in con.execute("SELECT code FROM business_domains")]
+        codes = set(rows)
+        # Kernaussage dieses Tests: keine Verdopplung durch Re-Upgrade.
+        # Als Menge vs. Liste geprueft, damit ein doppelt eingespielter Code
+        # auffaellt -- eine reine Mengenpruefung wuerde ihn verschlucken.
+        assert len(rows) == len(codes), (
+            f"Startwerte verdoppelt: {sorted(c for c in codes if rows.count(c) > 1)}"
+        )
+        assert EXPECTED_CODES <= codes, f"Fehlend: {sorted(EXPECTED_CODES - codes)}"
     finally:
         con.close()
