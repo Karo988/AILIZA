@@ -26,10 +26,12 @@ try:
     from .base import LLMProvider
     from .gate_types import ProviderResult
     from ..errors import AILIZAError
+    from ..kill_switch import enforce_kill_switch
 except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
     from providers.gate_types import ProviderResult
     from errors import AILIZAError
+    from kill_switch import enforce_kill_switch
 
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -87,6 +89,7 @@ def _call_groq_once(
     Einzelner HTTP-Call gegen die Groq-API.
     Wirft AILIZAError mit sanitisiertem admin_detail in safe_alternatives.
     """
+    enforce_kill_switch("groq")
     print(f"AILIZA GROQ CALL | model={model} json_mode={bool(response_format)}", flush=True)
     body: dict[str, Any] = {
         "model": model,

@@ -38,6 +38,7 @@ def _make_http_error(status: int) -> urllib.error.HTTPError:
 
 def _make_provider(monkeypatch, model: str = "llama-3.1-8b-instant"):
     monkeypatch.setenv("GROQ_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
     monkeypatch.delenv("GROQ_MODEL", raising=False)
     from apps.backend.providers.groq_provider import GroqProvider
     return GroqProvider(model=model)
@@ -244,6 +245,8 @@ class TestAllProvidersFailedReasons:
                     "provider_forbidden",
                     safe_alternatives=["Groq verweigert Zugriff auf Modell 'llama-3.1-8b-instant' (HTTP 403)"],
                 )
+            def generate_with_meta(self, messages, context=None, response_format=None):
+                return self.generate(messages, context)
 
         class FakeOpenAI429:
             provider_id = "openai"
@@ -252,11 +255,16 @@ class TestAllProvidersFailedReasons:
             def estimate_cost(self, i, o): return 0.0
             def generate(self, messages, context=None):
                 raise AILIZAError.from_code("rate_limited")
+            def generate_with_meta(self, messages, context=None, response_format=None):
+                return self.generate(messages, context)
 
         orch = ProviderOrchestrator(providers={
             "groq": FakeGroq403(),
             "openai": FakeOpenAI429(),
         })
+        # Dieser Test isoliert ausschliesslich die Fehleraggregation. Provider-
+        # Policy und Registry-Auswahl werden in eigenen Tests abgedeckt.
+        monkeypatch.setattr(orch, "_failover_order", lambda *args, **kwargs: list(orch.providers.items()))
 
         with pytest.raises(AILIZAError) as exc_info:
             orch.generate([{"role": "user", "content": "test"}])

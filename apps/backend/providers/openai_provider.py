@@ -18,10 +18,12 @@ try:
     from .base import LLMProvider
     from .gate_types import ProviderResult
     from ..errors import AILIZAError
+    from ..kill_switch import enforce_kill_switch
 except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
     from providers.gate_types import ProviderResult
     from errors import AILIZAError
+    from kill_switch import enforce_kill_switch
 
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 _DEFAULT_MODEL = "gpt-4o-mini"
@@ -86,6 +88,7 @@ class OpenAIProvider(LLMProvider):
 
     def _call(self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None) -> str:
         api_key = self._api_key()
+        enforce_kill_switch("openai")
         print(f"AILIZA OPENAI CALL | model={self.model} json_mode={bool(response_format)}", flush=True)
         body: dict[str, Any] = {
             "model": self.model,

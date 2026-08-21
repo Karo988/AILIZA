@@ -12,8 +12,10 @@ from typing import Optional
 
 try:
     from compliance_context import ComplianceContextManager
+    from kill_switch import enforce_kill_switch, is_external_llm_enabled
 except ImportError:
     from apps.backend.compliance_context import ComplianceContextManager
+    from apps.backend.kill_switch import enforce_kill_switch, is_external_llm_enabled
 
 
 @dataclass
@@ -98,6 +100,7 @@ class GroqClientWithCompliance:
         )
 
         try:
+            enforce_kill_switch("groq")
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = json.loads(r.read())
 
@@ -149,11 +152,7 @@ def run_groq_diagnosis() -> dict:
     groq_model_effective = os.getenv("GROQ_MODEL", "") or "llama-3.1-8b-instant"
 
     try:
-        try:
-            from kill_switch import is_external_llm_enabled as _ille
-        except ImportError:
-            from .kill_switch import is_external_llm_enabled as _ille  # type: ignore[no-redef]
-        ext_allowed = _ille()
+        ext_allowed = is_external_llm_enabled("groq")
     except Exception:
         ext_allowed = False
 
@@ -165,6 +164,11 @@ def run_groq_diagnosis() -> dict:
         "groq_model_effective": groq_model_effective,
         "external_llm_allowed": ext_allowed,
     }
+
+    if not ext_allowed:
+        out["diagnosis"] = "kill_switch_active"
+        out["next_action_de"] = "Externe Provider-Diagnose ist durch den Kill-Switch gesperrt."
+        return out
 
     if not groq_key_present:
         out["diagnosis"] = "groq_key_invalid"
@@ -184,6 +188,7 @@ def run_groq_diagnosis() -> dict:
     models_error_sanitized = ""
 
     try:
+        enforce_kill_switch("groq")
         req = urllib.request.Request(GROQ_MODELS_URL, headers=_HEADERS)
         with urllib.request.urlopen(req, timeout=10) as resp:
             models_status = resp.getcode()
@@ -237,6 +242,7 @@ def run_groq_diagnosis() -> dict:
     raw_error_category = "unknown"
 
     try:
+        enforce_kill_switch("groq")
         req = urllib.request.Request(GROQ_CHAT_URL, data=_TEST_PAYLOAD, headers=_HEADERS)
         with urllib.request.urlopen(req, timeout=15) as resp:
             chat_status = resp.getcode()
