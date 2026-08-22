@@ -169,8 +169,7 @@ def test_geheimnis_im_verlauf_erreicht_den_anbieter_nicht(monkeypatch):
 
 
 def test_verlauf_zaehlt_fuer_die_anbieterwahl(client, monkeypatch):
-    """Der Kontext muss den Verlauf einschliessen, sonst wählt das Gate
-    anhand einer harmlosen Frage einen ungeeigneten Anbieter."""
+    """Art.-9-Daten im Verlauf muessen vor der Anbieterwahl pausieren."""
     gesehen = {}
 
     def _fake_ask(task, history=None, governance_context=None, **kw):
@@ -188,11 +187,10 @@ def test_verlauf_zaehlt_fuer_die_anbieterwahl(client, monkeypatch):
         },
     )
     assert resp.status_code == 200
-    from apps.backend.governance.data_governance import DataClass
-
-    assert gesehen["context"].data_classes != [DataClass.PUBLIC], (
-        "Der sensible Verlauf blieb für die Anbieterwahl unsichtbar"
-    )
+    body = resp.json()
+    assert body["status"] == "responsibility_handoff"
+    assert body["activation_allowed"] is False
+    assert gesehen == {}, "Providerpfad wurde trotz Art.-9-Daten im Verlauf erreicht"
 
 
 def test_unbewertbare_verlaufsnachricht_wird_ausgelassen(monkeypatch):

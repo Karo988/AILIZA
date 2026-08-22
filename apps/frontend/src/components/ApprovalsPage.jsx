@@ -40,6 +40,7 @@ function ApprovalRow({ item, apiKey, onResolved }) {
   }
 
   const params = item.input_params ?? {}
+  const identifierDetails = item.identifier_details ?? null
   const task = params.task ?? JSON.stringify(params).slice(0, 120)
   const categories = params.risk_categories ?? []
 
@@ -58,6 +59,16 @@ function ApprovalRow({ item, apiKey, onResolved }) {
         <p className="approval-categories">
           <strong>Kategorien:</strong> {categories.join(", ")}
         </p>
+      )}
+
+      {identifierDetails && (
+        <div className="approval-identifier-details">
+          <p><strong>Zweck:</strong> {identifierDetails.purpose.id} — {identifierDetails.purpose.explanation_de}</p>
+          <p><strong>Empfänger:</strong> {identifierDetails.recipient.id} — {identifierDetails.recipient.explanation_de}</p>
+          <p><strong>AVV-Prüfung:</strong> {identifierDetails.recipient.avv_status}</p>
+          <p><strong>Art.-6-Grundlage:</strong> {identifierDetails.art6_legal_basis.explanation_de}</p>
+          <p><strong>Art.-9-Ausnahme:</strong> {identifierDetails.art9_exception.explanation_de}</p>
+        </div>
       )}
 
       <div className="approval-actions">

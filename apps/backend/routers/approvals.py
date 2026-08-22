@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..auth.rbac import Role, TokenData, require_role
+from ..art9_transfer_registry import approval_identifier_details
 from ..database import (
     get_accessible_approval,
     list_own_or_assigned_approvals,
@@ -23,7 +24,7 @@ class ResolveApprovalPayload(BaseModel):
 
 
 def serialize_approval(entry: dict[str, Any]) -> dict[str, Any]:
-    return {
+    serialized = {
         "id": entry["id"],
         "created_at": entry["created_at"],
         "run_id": entry["run_id"],
@@ -35,6 +36,9 @@ def serialize_approval(entry: dict[str, Any]) -> dict[str, Any]:
         "resolved_at": entry["resolved_at"],
         "note": entry["note"],
     }
+    if entry["tool"] in {"art9_external_transfer_pause", "art9_responsibility_handoff"}:
+        serialized["identifier_details"] = approval_identifier_details(entry["input_params"])
+    return serialized
 
 
 @router.get("")
