@@ -1,14 +1,19 @@
 # AILIZA Kill-Switch Initialzustand
-# Wird beim Start geladen — Änderungen zur Laufzeit gehen ins Audit-Vault
+# Wird vor jedem externen Provider-Aufruf neu und fail-closed ausgewertet.
+# Laufzeitaenderungen an dieser Datei sind ein separater administrativer Vorgang.
 
 global:
   enabled: true          # false = gesamtes System gestoppt
 
 providers:
-  claude:
+  groq:
+    enabled: true
+  anthropic:
     enabled: true
   openai:
     enabled: true
+  openrouter:
+    enabled: false
 
 modules:
   memory:

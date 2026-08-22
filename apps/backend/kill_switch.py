@@ -18,7 +18,13 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - fehlende Abhaengigkeit sperrt fail-closed
+    yaml = None  # type: ignore[assignment]
 
 try:
     from .errors import AILIZAError
@@ -32,6 +38,11 @@ class OperationMode(str, Enum):
     READ_ONLY = "read_only"
     OFFLINE = "offline"
     KILL_SWITCH_ACTIVE = "kill_switch_active"
+
+
+_KILL_SWITCH_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "kill_switch.yaml"
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 # Verbotene Aktionen je Modus (alles was nicht explizit erlaubt ist → blockiert)
@@ -54,17 +65,46 @@ def get_operation_mode() -> OperationMode:
 
 def _env_enabled() -> bool:
     raw = os.getenv("AILIZA_EXTERNAL_LLM_ENABLED", "").strip().lower()
-    # Explizit deaktiviert → False
-    if raw in {"0", "false", "no", "off"}:
+    if raw in _FALSE_VALUES:
         return False
-    # Explizit aktiviert → True
-    if raw in {"1", "true", "yes", "on"}:
+    if raw in _TRUE_VALUES:
         return True
-    # Nicht gesetzt: aktivieren wenn ein API-Key vorhanden ist (Render-Deployment)
-    has_key = bool(
-        os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-    )
-    return has_key
+    # Fehlend oder unbekannt ist niemals eine Freigabe. Ein vorhandener API-Key
+    # darf den administrativen Schalter nicht implizit einschalten.
+    return False
+
+
+def _load_kill_switch_config() -> dict[str, Any] | None:
+    """Liest die Schalterdatei bei jeder Entscheidung neu.
+
+    Fehlend, unlesbar, syntaktisch ungueltig oder strukturell unvollstaendig
+    ergibt None und damit eine Sperre. Kein Cache: Laufzeitaenderungen greifen
+    vor dem naechsten externen Aufruf.
+    """
+    if yaml is None:
+        return None
+    try:
+        raw = yaml.safe_load(_KILL_SWITCH_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _yaml_external_enabled(provider_id: str | None = None) -> bool:
+    config = _load_kill_switch_config()
+    if config is None:
+        return False
+    try:
+        if config["global"]["enabled"] is not True:
+            return False
+        if config["capabilities"]["external_calls"]["enabled"] is not True:
+            return False
+        if provider_id is not None:
+            if config["providers"][provider_id]["enabled"] is not True:
+                return False
+        return True
+    except (KeyError, TypeError):
+        return False
 
 
 def _db_flag_enabled() -> bool | None:
@@ -82,10 +122,10 @@ def _db_flag_enabled() -> bool | None:
         return None
 
 
-def is_external_llm_enabled() -> bool:
+def is_external_llm_enabled(provider_id: str | None = None) -> bool:
     """
-    True nur wenn env aktiviert UND DB-Flag nicht explizit deaktiviert
-    UND Betriebsmodus external_llm nicht blockiert.
+    True nur bei explizit positivem Env- und YAML-Schalter, nicht sperrendem
+    Betriebsmodus und nicht explizit deaktiviertem DB-Flag.
     Fail-closed bei jeglicher Unklarheit.
     """
     try:
@@ -93,6 +133,8 @@ def is_external_llm_enabled() -> bool:
         if "external_llm" in _MODE_BLOCKS.get(mode, set()):
             return False
         if not _env_enabled():
+            return False
+        if not _yaml_external_enabled(provider_id):
             return False
         if _db_flag_enabled() is False:
             return False
@@ -153,9 +195,9 @@ def kill_switch_metadata() -> dict[str, Any]:
     }
 
 
-def enforce_kill_switch() -> None:
+def enforce_kill_switch(provider_id: str | None = None) -> None:
     """Wirft AILIZAError wenn externe LLM-Calls deaktiviert sind."""
-    if not is_external_llm_enabled():
+    if not is_external_llm_enabled(provider_id):
         raise AILIZAError.from_code(
             "kill_switch_active",
             safe_alternatives=[
@@ -214,6 +256,10 @@ def check_kill_switch(scope: str, name: str) -> dict[str, Any]:
             if not profile.active:
                 return {"allowed": False, "scope": scope, "name": name,
                         "reason": f"Provider '{name}' ist inaktiv",
+                        "mode": mode.value}
+            if not is_external_llm_enabled(name):
+                return {"allowed": False, "scope": scope, "name": name,
+                        "reason": f"Provider '{name}' ist nicht vollstaendig freigeschaltet",
                         "mode": mode.value}
             # Globaler Modus blockiert externe Calls?
             if "external_llm" in mode_blocks:

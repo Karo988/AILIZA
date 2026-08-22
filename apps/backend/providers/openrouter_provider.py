@@ -24,9 +24,11 @@ from typing import Any
 try:
     from .base import LLMProvider
     from ..errors import AILIZAError
+    from ..kill_switch import enforce_kill_switch
 except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
     from errors import AILIZAError
+    from kill_switch import enforce_kill_switch
 
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -62,6 +64,7 @@ class OpenRouterProvider(LLMProvider):
 
     def generate(self, messages: list[dict[str, Any]], context: Any = None) -> str:
         api_key = self._api_key()
+        enforce_kill_switch("openrouter")
         payload = json.dumps({
             "model": self.model,
             "messages": messages,

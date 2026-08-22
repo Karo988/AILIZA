@@ -14,10 +14,12 @@ try:
     from .base import LLMProvider
     from .gate_types import ProviderResult
     from ..errors import AILIZAError
+    from ..kill_switch import enforce_kill_switch
 except ImportError:  # pragma: no cover
     from providers.base import LLMProvider
     from providers.gate_types import ProviderResult
     from errors import AILIZAError
+    from kill_switch import enforce_kill_switch
 
 
 class AnthropicProvider(LLMProvider):
@@ -59,6 +61,7 @@ class AnthropicProvider(LLMProvider):
         client = self._client()
         system, convo = self._split_system(messages)
         try:
+            enforce_kill_switch("anthropic")
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=1000,
@@ -75,6 +78,7 @@ class AnthropicProvider(LLMProvider):
         client = self._client()
         system, convo = self._split_system(messages)
         try:
+            enforce_kill_switch("anthropic")
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=1000,
@@ -92,6 +96,7 @@ class AnthropicProvider(LLMProvider):
         client = self._client()
         system, convo = self._split_system(messages)
         try:
+            enforce_kill_switch("anthropic")
             with client.messages.stream(
                 model=self.model,
                 max_tokens=1000,

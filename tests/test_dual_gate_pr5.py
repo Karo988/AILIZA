@@ -41,7 +41,7 @@ class _FakeProvider:
 # require_schema=True und Capability aktiv ist
 # ---------------------------------------------------------------------------
 
-def test_groq_generate_with_meta_sets_response_format_when_capability_active():
+def test_groq_generate_with_meta_sets_response_format_when_capability_active(monkeypatch):
     from apps.backend.providers.groq_provider import GroqProvider
 
     provider = GroqProvider()
@@ -71,7 +71,8 @@ def test_groq_generate_with_meta_sets_response_format_when_capability_active():
     orig = _urllib_request.urlopen
     _urllib_request.urlopen = _fake_urlopen
     try:
-        os.environ["GROQ_API_KEY"] = "test-key"
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
         provider.generate_with_meta(
             [{"role": "user", "content": "x"}], response_format={"type": "json_object"},
         )
@@ -81,7 +82,7 @@ def test_groq_generate_with_meta_sets_response_format_when_capability_active():
     assert captured["body"].get("response_format") == {"type": "json_object"}
 
 
-def test_openai_generate_with_meta_sets_response_format_when_capability_active():
+def test_openai_generate_with_meta_sets_response_format_when_capability_active(monkeypatch):
     from apps.backend.providers.openai_provider import OpenAIProvider
 
     provider = OpenAIProvider()
@@ -109,7 +110,8 @@ def test_openai_generate_with_meta_sets_response_format_when_capability_active()
     orig = _urllib_request.urlopen
     _urllib_request.urlopen = _fake_urlopen
     try:
-        os.environ["OPENAI_API_KEY"] = "test-key"
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
         provider.generate_with_meta(
             [{"role": "user", "content": "x"}], response_format={"type": "json_object"},
         )

@@ -1,9 +1,9 @@
 {
   "manifest_version": "1.0",
-  "generated_at": "2026-08-20T14:42:43.141031+00:00",
+  "generated_at": "2026-08-21T08:57:12.090840+00:00",
   "governance_files": {
     "approval.py": "bfd26b95c04b5a4214559c10cb099703656f8da4f269d1e7a4b0f0db5aa1826b",
-    "kill_switch.py": "20663bc70d6b207a903a0e6449ee1eb77c669d69c247905214aedb95f321ec16",
+    "kill_switch.py": "2539af1de6293483dad49bded3bba443d9326b10f6ac29609e07bf99eb5272fe",
     "sandbox.py": "59f6d99e2e51aabaa787bae0341038b236db1d9aa492d2513506d92c492fdea4",
     "capability_manifest.py": "52e4afd86d376f56cffd000cbcf9744c4cf27568b8c34aac86af207accefb967",
     "policy.py": "51472ef090cf99835c721e3c8f9151a92fc24303294127a7f1a77d5eb0abd2c5",

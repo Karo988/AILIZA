@@ -320,6 +320,7 @@ class TestOpenAIProviderErrorMapping:
 
     def _make_provider(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "fake-key-for-test")
+        monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
         from apps.backend.providers.openai_provider import OpenAIProvider
         return OpenAIProvider(model="gpt-4o-mini")
 
@@ -748,13 +749,13 @@ class TestPIIReinsertion:
 # ── 5. Kill-Switch / Provider-Auto-Enable ─────────────────────────────────────
 
 class TestKillSwitch:
-    def test_external_llm_enabled_when_groq_key_present(self, monkeypatch):
+    def test_external_llm_stays_disabled_when_only_groq_key_present(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "test-key-abc")
         monkeypatch.delenv("AILIZA_EXTERNAL_LLM_ENABLED", raising=False)
         from importlib import reload
         import apps.backend.kill_switch as ks
         reload(ks)
-        assert ks._env_enabled() is True
+        assert ks._env_enabled() is False
 
     def test_external_llm_disabled_when_no_keys(self, monkeypatch):
         monkeypatch.delenv("GROQ_API_KEY", raising=False)

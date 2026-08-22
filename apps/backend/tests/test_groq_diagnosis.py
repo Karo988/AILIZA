@@ -33,6 +33,12 @@ _FAKE_KEY = "gsk_test1234567890abcdef"
 _FAKE_MODEL = "llama-3.1-8b-instant"
 
 
+@pytest.fixture(autouse=True)
+def _explicitly_enable_diagnostic_provider(monkeypatch):
+    """Diagnosetests brauchen seit dem fail-closed Umbau eine echte Freigabe."""
+    monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+
+
 def _http_error(code: int, body: dict | None = None) -> urllib.error.HTTPError:
     """Erstellt einen urllib.error.HTTPError mit optionalem JSON-Body."""
     fp = MagicMock()

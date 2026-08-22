@@ -5,6 +5,7 @@ DSGVO Art. 28: Auftragsverarbeitung
 from __future__ import annotations
 import json, logging, os
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ def call_llm_api(agent, messages, system_message, stream_callback=None):
 def _call_anthropic(agent, messages, system_message, stream_callback=None):
     try:
         import anthropic
+        from ..kill_switch import enforce_kill_switch
         api_key = agent.api_key or os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY nicht gesetzt")
@@ -26,6 +28,7 @@ def _call_anthropic(agent, messages, system_message, stream_callback=None):
         kwargs = {"model": model, "max_tokens": 8096, "system": system_message, "messages": _convert_messages(messages)}
         if tools:
             kwargs["tools"] = tools
+        enforce_kill_switch("anthropic")
         response = client.messages.create(**kwargs)
         return _parse_anthropic_response(response)
     except ImportError:
@@ -47,14 +50,21 @@ def _parse_anthropic_response(response):
 def _call_openai_compatible(agent, messages, system_message, stream_callback=None):
     try:
         from openai import OpenAI
+        from ..kill_switch import enforce_kill_switch
         api_key = agent.api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("AILIZA_BASE_URL", "https://openrouter.ai/api/v1")
+        host = (urlparse(base_url).hostname or "").lower()
+        provider_by_host = {"openrouter.ai": "openrouter", "api.openai.com": "openai"}
+        provider_id = provider_by_host.get(host)
+        if provider_id is None:
+            raise ValueError("AILIZA_BASE_URL verweist nicht auf einen freigegebenen Provider.")
         client = OpenAI(api_key=api_key, base_url=base_url)
         all_messages = [{"role": "system", "content": system_message}] + messages
         tools = _build_openai_tools(agent)
         kwargs = {"model": agent.model or "anthropic/claude-sonnet-4-6", "messages": all_messages, "max_tokens": 8096}
         if tools:
             kwargs["tools"] = tools
+        enforce_kill_switch(provider_id)
         response = client.chat.completions.create(**kwargs)
         return _parse_openai_response(response)
     except ImportError:
