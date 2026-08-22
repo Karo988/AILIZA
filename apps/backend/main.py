@@ -40,7 +40,10 @@ try:
         bootstrap_domain, revoke_membership, list_my_domain_memberships,
         assign_membership, list_domains_for_tenant, list_domain_members,
         evaluate_domain_permission,
-        DomainBootstrapError, LastDomainManagerError, DomainMembershipError,
+        DomainBootstrapError, LastDomainManagerError, DomainMembershipError,    )
+    from .knowledge_access import (
+        list_readable_sources, serialize_source, may_read_source,
+        get_knowledge_source_for_tenant, set_knowledge_source_domain,
     )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
@@ -3472,6 +3475,85 @@ async def knowledge_upload(
         "duplicate": result["duplicate"],
         "source_id": result["source"]["id"],
     }
+
+
+@app.get("/knowledge")
+def get_knowledge_sources(
+    limit: int = Query(default=100, ge=1, le=500),
+    token: TokenData = Depends(require_role(Role.USER)),
+) -> list[dict[str, Any]]:
+    """Fuer diese Person lesbare Wissensquellen.
+
+    Die Filterung passiert in list_readable_sources() -- Tenant und
+    Eigentuemer/Scope bereits in SQL, die Bereichspruefung danach. Es wird
+    NICHT tenant-weit geladen und anschliessend verworfen.
+
+    Nur Metadaten: Speicherpfad und Inhaltshash verlassen den Server nie."""
+    sources = list_readable_sources(
+        tenant_id=token.tenant_id, user_id=token.user_id, limit=limit,
+    )
+    return [serialize_source(s) for s in sources]
+
+
+class KnowledgeDomainBindRequest(BaseModel):
+    domain_code: str | None = None
+    reason: str
+
+
+@app.post("/knowledge/{source_id}/domain")
+def post_knowledge_domain(
+    source_id: int,
+    body: KnowledgeDomainBindRequest,
+    token: TokenData = Depends(require_role(Role.USER)),
+) -> dict[str, Any]:
+    """Ordnet eine Wissensquelle einem Fachbereich zu oder loest die
+    Zuordnung.
+
+    Zwei getrennte Berechtigungen, bewusst NICHT zusammengefasst:
+    - Die Quelle muss fuer die handelnde Person aktuell lesbar sein, sonst
+      koennte man fremde Dokumente umkategorisieren, ohne sie zu kennen.
+    - Im ZIEL-Bereich braucht es content.update, sonst koennte man Inhalte
+      in einen Bereich schieben, in dem man selbst nichts zu sagen hat.
+
+    Das Aufloesen einer Bindung erweitert die Sichtbarkeit und verlangt
+    deshalb content.update im BISHERIGEN Bereich."""
+    if not body.reason or len(body.reason.strip()) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Bitte begründen Sie die Zuordnung (mindestens 3 Zeichen).",
+        )
+
+    source = get_knowledge_source_for_tenant(source_id, token.tenant_id)
+    if source is None or not may_read_source(
+        tenant_id=token.tenant_id, user_id=token.user_id, source=source
+    ):
+        raise HTTPException(status_code=404, detail=GENERIC_DENIED_MESSAGE)
+
+    old_code = source.get("domain_code")
+    new_code = (body.domain_code or "").strip() or None
+
+    for code, what in ((old_code, "bisherigen"), (new_code, "gewählten")):
+        if code is None:
+            continue
+        decision = evaluate_domain_permission(
+            tenant_id=token.tenant_id, user_id=token.user_id,
+            domain_code=code, action="content.update",
+        )
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Im {what} Bereich fehlt Ihnen das Recht, Inhalte zu ändern.",
+            )
+
+    set_knowledge_source_domain(
+        source_id=source_id, tenant_id=token.tenant_id, domain_code=new_code,
+    )
+    write_audit_entry(
+        action="knowledge.domain_changed",
+        tenant_id=token.tenant_id,
+        metadata={"source_id": source_id, "from": old_code, "to": new_code},
+    )
+    return {"source_id": source_id, "domain_code": new_code, "status": "updated"}
 
 
 # ── Auth-Endpunkte ────────────────────────────────────────────────────────────
