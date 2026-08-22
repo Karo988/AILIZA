@@ -69,6 +69,7 @@ def test_markdown_file_accepted():
 
 
 def test_pdf_extension_is_supported_and_invalid_content_fails_safely():
+    pytest.importorskip("pypdfium2")  # Core-CI ohne PDF-Parser bleibt bewusst fail-closed
     _make_user()
     result = ingest_txt_or_markdown_source(
         tenant_id="default", uploaded_by="alice", filename="dokument.pdf",
