@@ -173,7 +173,8 @@ Für jeden geprüften Push sind mindestens festzuhalten:
 - Repository
 - Ziel-Remote und Ziel-Branch
 - geprüfter Commit-Bereich
-- eingesetztes Werkzeug und Version
+- Prüfmethode (Sichtprüfung oder werkzeuggestützt) und — falls ein
+  Werkzeug eingesetzt wurde — dessen Name und Version
 - Ergebnis
 - erkannte Ausnahmen
 - verantwortliche Freigabe, falls erforderlich
@@ -193,9 +194,14 @@ Prüfung personenbezogen:   GÜLTIG / UNGÜLTIG / MANUELLE PRÜFUNG
 Prüfung Art.-9-Daten:      GÜLTIG / UNGÜLTIG / MANUELLE PRÜFUNG
 Prüfung interne Angaben:   GÜLTIG / UNGÜLTIG / MANUELLE PRÜFUNG
 Warnungen ohne Sperre:     <Liste oder "keine">
-Werkzeugstatus:            GÜLTIG / UNGÜLTIG
+Werkzeugstatus:            GÜLTIG / UNGÜLTIG / NICHT ANWENDBAR
 Pushfreigabe:              JA / NEIN
 ```
+
+`Werkzeugstatus: NICHT ANWENDBAR` gilt genau dann, wenn ausschliesslich
+per Sichtprüfung geprüft wurde und kein Werkzeug eingesetzt war. Wurde
+ein Werkzeug eingesetzt, ist `GÜLTIG` oder `UNGÜLTIG` zu setzen —
+`NICHT ANWENDBAR` darf ein fehlgeschlagenes Werkzeug nicht verdecken.
 
 ## 10. Harte Sperre
 
