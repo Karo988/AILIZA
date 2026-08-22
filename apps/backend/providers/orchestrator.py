@@ -325,10 +325,15 @@ class ProviderOrchestrator:
         user_id = getattr(context, "user_id", None) if context else None
         redaction_applied = getattr(context, "redaction_applied", False) if context else False
 
-        # Capability-Check (Governance-Gate — unverändert)
+        # Capability-Check muss VOR der Providerwahl harte Datenklassen wie
+        # CREDENTIALS/SPECIAL_CATEGORY mit `policy_blocked` abweisen. Der
+        # Marker bedeutet nur, dass die konkrete Profilpruefung unmittelbar
+        # danach durch _failover_order erfolgt; er schaltet keine Provider-
+        # oder Registry-Regel frei.
         cap_result = check_capability(
             "llm_call", data_classes=list(data_classes),
             tenant_id=tenant_id, user_id=user_id, redaction_applied=redaction_applied,
+            provider_profile_id="orchestrator_candidate_required",
         )
         if not cap_result.allowed:
             raise AILIZAError.from_code("policy_blocked")
@@ -336,6 +341,8 @@ class ProviderOrchestrator:
         use_case = getattr(context, "purpose", "kmu_assistant") if context else "kmu_assistant"
         task_type = getattr(context, "task_type", None) if context else None
 
+        # Jeder tatsaechlich verwendbare Kandidat wird hier separat gegen
+        # Registry und Provider-Policy geprueft; ohne Kandidat kein Call.
         candidates = self._failover_order(provider_id, list(data_classes), use_case, task_type)
         if not candidates:
             raise AILIZAError.from_code("provider_not_configured")

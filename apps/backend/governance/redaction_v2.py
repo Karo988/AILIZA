@@ -440,7 +440,9 @@ class RedactionEngineV2:
         """Geschwärzt: automatisierte Entscheidung"""
         # Ersetze ganze Sätze/Absätze mit automatisierten Entscheidungen
         text = re.sub(
-            r"(?:Automatische Empfehlung|Automatisierte Entscheidung|Bewertung):[^\n]*(?:\n|$)",
+            r"(?:Automatische Empfehlung|Automatisierte Entscheidung|Bewertung|"
+            r"Zuverlaessigkeit|Zuverlässigkeit|(?:Risiko- und )?Vertrauensscore|"
+            r"Risikoscore|Bonitaetsscore|Bonitätsscore):[^\n]*(?:\n|$)",
             "[GESCHWAERZT: verbotene oder sehr riskante automatisierte Entscheidung]\n",
             text,
             flags=re.IGNORECASE,

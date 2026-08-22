@@ -12,13 +12,23 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 os.environ.setdefault("AILIZA_SECRET_KEY", "test-secret-key-minimum-32-chars-ok")
 os.environ.setdefault("AILIZA_DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("AILIZA_EXTERNAL_LLM_ENABLED", "true")
 os.environ.setdefault("AILIZA_TEST_MODE", "true")
 
 from apps.backend.errors import AILIZAError
+from apps.backend.providers.gate_types import ProviderResult
 from apps.backend.providers.orchestrator import ProviderOrchestrator
+
+
+@pytest.fixture(autouse=True)
+def _enable_test_provider_path(monkeypatch):
+    """Nicht von setdefault-Werten zuvor importierter Module abhaengen."""
+    monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
 
 
 class _FailProvider:
@@ -29,6 +39,8 @@ class _FailProvider:
     def estimate_cost(self, i, o): return 0.0
     def generate(self, messages, context=None):
         raise AILIZAError.from_code("provider_forbidden", safe_alternatives=[f"{self.provider_id}: HTTP 403"])
+    def generate_with_meta(self, messages, context=None, response_format=None):
+        return ProviderResult(text=self.generate(messages, context))
 
 
 class _OKProvider:
@@ -40,6 +52,8 @@ class _OKProvider:
     def estimate_cost(self, i, o): return 0.0
     def generate(self, messages, context=None):
         return self._answer
+    def generate_with_meta(self, messages, context=None, response_format=None):
+        return ProviderResult(text=self.generate(messages, context))
 
 
 def test_no_failover_attrs_reflect_first_success(monkeypatch):

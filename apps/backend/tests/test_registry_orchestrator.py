@@ -19,6 +19,7 @@ import pytest
 
 from apps.backend.errors import AILIZAError
 from apps.backend.governance.data_governance import DataClass
+from apps.backend.providers.gate_types import ProviderResult
 
 
 # ── Hilfsfunktionen ───────────────────────────────────────────────────────────
@@ -45,6 +46,8 @@ def _fake_provider(provider_id: str, answer: str = "OK"):
         def count_tokens(self, text): return len(text.split())
         def estimate_cost(self, i, o): return 0.0
         def generate(self, messages, context=None): return answer
+        def generate_with_meta(self, messages, context=None, response_format=None):
+            return ProviderResult(text=self.generate(messages, context))
         def stream(self, messages, context=None): yield answer
     return _Fake()
 
@@ -58,6 +61,8 @@ def _failing_provider(provider_id: str, code: str = "provider_not_configured"):
         def estimate_cost(self, i, o): return 0.0
         def generate(self, messages, context=None):
             raise AILIZAError.from_code(code)
+        def generate_with_meta(self, messages, context=None, response_format=None):
+            return ProviderResult(text=self.generate(messages, context))
         def stream(self, messages, context=None):
             raise AILIZAError.from_code(code)
     return _Fail()

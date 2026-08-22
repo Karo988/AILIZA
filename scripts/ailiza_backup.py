@@ -156,11 +156,16 @@ def _encrypt_to_file(plaintext_path: Path, ziel: Path, password: bytes) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_name, ziel)
-        dir_fd = os.open(str(ziel.parent), os.O_DIRECTORY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        # POSIX: auch den Verzeichniseintrag dauerhaft synchronisieren.
+        # Windows stellt O_DIRECTORY nicht bereit; os.replace() ist dort
+        # bereits der atomare Austausch und die Datei selbst wurde oben
+        # per fsync geschrieben.
+        if hasattr(os, "O_DIRECTORY"):
+            dir_fd = os.open(str(ziel.parent), os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     except BaseException:
         try:
             os.unlink(tmp_name)

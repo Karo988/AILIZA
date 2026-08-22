@@ -29,6 +29,17 @@ apps/**/.env.*
 *.db
 *.sqlite
 *.sqlite3
+# SQLite-WAL-/SHM-/Journaldateien koennen noch nicht eingecheckte
+# Datenbankinhalte enthalten und duerfen nie versioniert werden.
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 # Nur Datenbankdateien im data/-Verzeichnis ignorieren, nicht das Verzeichnis selbst
 data/*.db
 data/*.sqlite

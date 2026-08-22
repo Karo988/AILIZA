@@ -3,10 +3,10 @@ REM AILIZA Schnell-Installation fuer Windows
 SETLOCAL
 
 SET MODE=%1
-IF "%MODE%"=="" SET MODE=core
+IF "%MODE%"=="" SET MODE=verified
 
 ECHO === AILIZA Installer ===
-ECHO Modus: %MODE%  (Optionen: core ^| full)
+ECHO Modus: %MODE%  (Optionen: verified ^| core ^| full)
 ECHO.
 
 REM Python pruefen
@@ -26,7 +26,15 @@ IF NOT EXIST .venv (
 CALL .venv\Scripts\activate.bat
 
 ECHO Installiere Abhaengigkeiten (%MODE%)...
-IF "%MODE%"=="full" (
+IF "%MODE%"=="verified" (
+  python -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)"
+  IF ERRORLEVEL 1 (
+    ECHO FEHLER: Der verifizierte Lockstand benoetigt Python 3.12.
+    EXIT /B 1
+  )
+  pip install --upgrade pip -q
+  pip install -r requirements-lock-py312.txt -q
+) ELSE IF "%MODE%"=="full" (
   pip install --upgrade pip -q
   pip install -r apps\backend\requirements-full.txt -q
   ECHO Lade Sprachmodell...
@@ -48,6 +56,6 @@ IF NOT EXIST apps\backend\.env (
 
 ECHO.
 ECHO AILIZA bereit!
-ECHO Starten mit:  .venv\Scripts\activate && uvicorn apps.backend.main:app --reload
+ECHO Starten mit: start_ailiza.bat
 IF "%MODE%"=="core" ECHO Tipp: Fuer volle KI-Features: install.bat full
 ENDLOCAL

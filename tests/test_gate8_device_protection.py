@@ -41,6 +41,28 @@ from sandbox import (
 from errors import AILIZAError
 
 
+def _create_symlink_or_skip(
+    link: Path,
+    target: Path,
+    *,
+    target_is_directory: bool = False,
+) -> None:
+    """Erzeugt einen Symlink oder markiert nur fehlende OS-Faehigkeit als Skip.
+
+    Unter Windows benoetigt das Erstellen von Symlinks je nach Systemrichtlinie
+    den Entwicklermodus oder das Privileg SeCreateSymbolicLinkPrivilege. Die
+    Sicherheitspruefung selbst darf deshalb nicht als fehlgeschlagen gelten,
+    wenn bereits die Testvorbereitung mit WinError 1314 abgewiesen wird.
+    Alle anderen Fehler bleiben echte Testfehler.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows-Symlink-Privileg ist auf diesem Host nicht verfuegbar")
+        raise
+
+
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -216,7 +238,9 @@ class TestWorkspaceBoundary:
     def test_read_outside_workspace_requires_approval(self, workspace_dir, external_path):
         result = assess_local_action(ActionClass.READ_FILE, external_path)
         assert result.allowed is False
-        assert result.requires_approval is True
+        # Auf Windows liegt pytest standardmaessig unter AppData. Das ist ein
+        # sensitiver Pfad und verlangt deshalb die strengere Owner-Freigabe.
+        assert result.requires_approval is True or result.requires_owner_approval is True
 
     def test_subdirectory_in_workspace_allowed(self, workspace_dir):
         subdir = workspace_dir / "reports" / "2024"
@@ -299,7 +323,7 @@ class TestSymlinkTraversal:
         external_dir = tmp_path / "external"
         external_dir.mkdir()
         link = workspace_dir / "escape_link"
-        link.symlink_to(external_dir)
+        _create_symlink_or_skip(link, external_dir, target_is_directory=True)
         target_via_link = str(link / "secret.txt")
         result = assess_local_action(ActionClass.WRITE_FILE, target_via_link)
         assert result.allowed is False
@@ -308,7 +332,7 @@ class TestSymlinkTraversal:
         external_file = tmp_path / "external_file.txt"
         external_file.write_text("data")
         link = workspace_dir / "link_to_external"
-        link.symlink_to(external_file)
+        _create_symlink_or_skip(link, external_file)
         result = assess_local_action(ActionClass.DELETE_FILE, str(link))
         assert result.allowed is False
 
@@ -316,7 +340,7 @@ class TestSymlinkTraversal:
         external = tmp_path / "other_dir"
         external.mkdir()
         link = workspace_dir / "read_escape"
-        link.symlink_to(external)
+        _create_symlink_or_skip(link, external, target_is_directory=True)
         result = assess_local_action(ActionClass.READ_FILE, str(link / "data.csv"))
         assert result.allowed is False
 
@@ -324,7 +348,7 @@ class TestSymlinkTraversal:
         real_file = workspace_dir / "real.txt"
         real_file.write_text("hello")
         link = workspace_dir / "link_to_real"
-        link.symlink_to(real_file)
+        _create_symlink_or_skip(link, real_file)
         result = assess_local_action(ActionClass.READ_FILE, str(link))
         assert result.allowed is True
         assert result.in_workspace is True

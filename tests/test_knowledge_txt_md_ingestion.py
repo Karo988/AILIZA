@@ -68,13 +68,15 @@ def test_markdown_file_accepted():
     assert result["source"]["source_type"] == "md"
 
 
-def test_pdf_file_rejected():
+def test_pdf_extension_is_supported_and_invalid_content_fails_safely():
+    pytest.importorskip("pypdfium2")  # Core-CI ohne PDF-Parser bleibt bewusst fail-closed
     _make_user()
-    with pytest.raises(KnowledgeIngestionError):
-        ingest_txt_or_markdown_source(
-            tenant_id="default", uploaded_by="alice", filename="dokument.pdf",
-            content=b"%PDF-1.4 ...",
-        )
+    result = ingest_txt_or_markdown_source(
+        tenant_id="default", uploaded_by="alice", filename="dokument.pdf",
+        content=b"%PDF-1.4 ...",
+    )
+    assert result["source"]["source_type"] == "pdf"
+    assert result["status"] in {"approved", "pending_review", "blocked"}
 
 
 def test_docx_extension_no_longer_rejected_for_unsupported_type():

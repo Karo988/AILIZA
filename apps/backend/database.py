@@ -87,6 +87,12 @@ def _resolve_database_url(raw: str) -> str:
     if not raw.startswith("sqlite"):
         return raw  # Normalisiert oder andere DB-Typen
 
+    # Eine vier-Slash-URL beschreibt einen absoluten POSIX-Pfad. Unter
+    # Windows darf sie nicht in einen lokalen Pfad wie C:\\tmp umgedeutet
+    # oder als Nebeneffekt angelegt werden (wichtig fuer portable Configs).
+    if os.name == "nt" and raw.startswith("sqlite:////"):
+        return raw
+
     # sqlite:///./pfad  oder  sqlite:///relativer/pfad
     prefix = "sqlite:///"
     path_str = raw[len(prefix):]
@@ -191,8 +197,39 @@ _UNSET = object()
 
 
 def init_db() -> None:
+    """Legacy-/Test-Helfer fuer explizit angeforderte Schemaerzeugung.
+
+    Der produktive App-Start ruft stattdessen
+    :func:`prepare_database_for_startup` auf. Persistente Datenbanken werden
+    dadurch ausschliesslich ueber Alembic migriert.
+    """
     metadata_obj.create_all(engine)
     ensure_sqlite_schema()
+
+
+def prepare_database_for_startup() -> None:
+    """Bringt die App-Datenbank ueber die verbindliche Schema-Autoritaet hoch.
+
+    Eine In-Memory-SQLite-Datenbank lebt nur innerhalb der bestehenden
+    SQLAlchemy-Verbindung und ist ausschliesslich fuer Tests gedacht; dort
+    bleibt ``init_db()`` notwendig. Jede persistente SQLite-/Postgres-
+    Datenbank wird dagegen per Alembic bis ``head`` migriert. Eine alte,
+    unversionierte Bestandsdatenbank wird von Alembic bewusst abgelehnt und
+    muss zuerst mit ``python -m apps.backend.alembic_adopt`` geprueft werden.
+    """
+    if DATABASE_URL in {"sqlite:///:memory:", "sqlite://"}:
+        init_db()
+        return
+
+    # Lazy Import: ein reiner Import von database.py bleibt weiterhin ohne
+    # Alembic-Import und ohne Schema-/Dateisystem-Nebenwirkung.
+    from alembic import command
+    from alembic.config import Config
+
+    backend_dir = Path(__file__).resolve().parent
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
 
 
 def _add_column_if_missing(connection, table: str, column: str, ddl_type: str) -> None:
@@ -2656,8 +2693,9 @@ def consume_backup_code(user_id: str, plain_code: str) -> bool:
 # reiner Import von apps.backend.database (z.B. durch alembic/env.py oder
 # apps/backend/alembic_adopt.py) darf keine Tabellen anlegen. Der
 # tatsaechliche Datenbankstart erfolgt ausdruecklich beim Start der
-# Anwendung -- siehe FastAPI-Lifespan in apps/backend/main.py (`init_db()`
-# wird dort explizit aufgerufen). Fuer Tests siehe tests/conftest.py.
+# Anwendung -- siehe FastAPI-Lifespan in apps/backend/main.py
+# (`prepare_database_for_startup()`). Nur fluechtige In-Memory-Testdatenbanken
+# nutzen weiterhin `init_db()`. Fuer Tests siehe tests/conftest.py.
 
 
 # ── Helper: Serverseitige Projekt-/Chat-Speicherung (Teilschritt 1) ──────────

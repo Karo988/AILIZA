@@ -7,6 +7,7 @@ Codes real geprüft werden statt nur die Python-Funktionen direkt.
 from __future__ import annotations
 
 import json
+import os
 import struct
 import subprocess
 import sqlite3
@@ -204,6 +205,7 @@ def test_backup_captures_wal_committed_writes(tmp_path: Path) -> None:
     assert rows == [("a",), ("b",)]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows schuetzt Dateien per DACL statt POSIX-Modusbits")
 def test_backup_file_has_no_group_or_other_permissions(tmp_path: Path, quelle: Path) -> None:
     paket = tmp_path / "backup.bak"
     r = _run(["backup", "--datenbank", str(quelle), "--ausgabe", str(paket)], "geheim\n")

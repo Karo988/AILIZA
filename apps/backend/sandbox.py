@@ -176,9 +176,24 @@ def _resolve_strict(target_path: str) -> Path | None:
         return None
 
 
-def _is_sensitive_path(resolved: Path) -> bool:
-    path_str = str(resolved)
-    return any(frag in path_str for frag in _SENSITIVE_PATH_FRAGMENTS)
+def _is_sensitive_path(resolved: Path, trusted_workspace: Path | None = None) -> bool:
+    # Plattformneutral vergleichen: Windows verwendet Backslashes und seine
+    # Pfade sind nicht case-sensitiv. Die Schutzliste ist in POSIX-Form
+    # definiert und muss auf beiden Plattformen gleich fail-closed greifen.
+    # Liegt das konfigurierte Workspace selbst z.B. unter Windows-AppData,
+    # ist dieser Elternpfad bereits bewusst als Grenze freigegeben. Geprueft
+    # wird dann nur noch der relative Zielpfad innerhalb des Workspace. Ein
+    # per Symlink nach aussen aufgeloestes Ziel ist nicht relativ und wird
+    # weiterhin anhand seines vollstaendigen Pfads bewertet.
+    path_to_check = resolved
+    if trusted_workspace is not None:
+        try:
+            path_to_check = resolved.relative_to(trusted_workspace)
+        except ValueError:
+            pass
+    path_str = str(path_to_check).replace("\\", "/").casefold()
+    return any(frag.replace("\\", "/").casefold() in path_str
+               for frag in _SENSITIVE_PATH_FRAGMENTS)
 
 
 def _is_in_workspace(target_path: str | None) -> bool:
@@ -264,7 +279,7 @@ def assess_local_action(
     }
     if ac in _FILE_ACTIONS:
         try:
-            _get_workspace()
+            workspace = _get_workspace()
         except WorkspaceError as exc:
             return SandboxResult(
                 allowed=False,
@@ -277,7 +292,10 @@ def assess_local_action(
         target_label = "<workspace>" if in_ws else (target_path or "<unknown>")
 
     # Sensitive Pfade immer Owner-Approval — unabhängig von Workspace-Status
-    if resolved and _is_sensitive_path(resolved) and ac in _FILE_ACTIONS:
+    if resolved and _is_sensitive_path(
+        resolved,
+        workspace if in_ws else None,
+    ) and ac in _FILE_ACTIONS:
         return SandboxResult(
             allowed=False,
             action_class=ac.value,
@@ -460,7 +478,7 @@ class SandboxApproval:
         """
         if self.used:
             return False
-        if datetime.now(timezone.utc) > self.expires_at:
+        if datetime.now(timezone.utc) >= self.expires_at:
             return False
         if str(action_class) != self.action_class:
             return False

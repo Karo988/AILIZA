@@ -27,7 +27,22 @@ import pytest
 from apps.backend.errors import AILIZAError
 from apps.backend.providers.orchestrator import ProviderOrchestrator
 from apps.backend.providers.base import LLMProvider
+from apps.backend.providers.gate_types import ProviderResult
 from apps.backend.governance.data_governance import DataClass
+
+
+@pytest.fixture(autouse=True)
+def _enable_test_provider_path(monkeypatch):
+    """Failover-Tests explizit statt ueber importreihenfolgeabhaengiges setdefault."""
+    monkeypatch.setenv("AILIZA_EXTERNAL_LLM_ENABLED", "true")
+    monkeypatch.setenv("AILIZA_TEST_MODE", "true")
+
+
+class _DuckProviderMetadata:
+    """Metadatenadapter fuer die bewusst kleinen lokalen Duck-Type-Fakes."""
+
+    def generate_with_meta(self, messages, context=None, response_format=None):
+        return ProviderResult(text=self.generate(messages, context))
 
 
 # ── Fake Provider Helpers ─────────────────────────────────────────────────────
@@ -549,7 +564,7 @@ class TestProviderOrderEnvVar:
         """AILIZA_PROVIDER_ORDER=openai,groq → openai wird zuerst versucht."""
         calls = []
 
-        class FakeOpenAI:
+        class FakeOpenAI(_DuckProviderMetadata):
             provider_id = "openai"
             model = "gpt-4o-mini"
             def count_tokens(self, t): return 1
@@ -558,7 +573,7 @@ class TestProviderOrderEnvVar:
                 calls.append("openai")
                 return "ok"
 
-        class FakeGroq:
+        class FakeGroq(_DuckProviderMetadata):
             provider_id = "groq"
             model = "llama"
             def count_tokens(self, t): return 1
@@ -579,7 +594,7 @@ class TestProviderOrderEnvVar:
         """Groq 403 (provider_forbidden) → OpenAI antwortet, kein all_providers_failed."""
         from apps.backend.errors import AILIZAError
 
-        class FakeGroq:
+        class FakeGroq(_DuckProviderMetadata):
             provider_id = "groq"
             model = "llama"
             def count_tokens(self, t): return 1
@@ -588,7 +603,7 @@ class TestProviderOrderEnvVar:
                 raise AILIZAError.from_code("provider_forbidden",
                                              safe_alternatives=["Groq: HTTP 403"])
 
-        class FakeOpenAI:
+        class FakeOpenAI(_DuckProviderMetadata):
             provider_id = "openai"
             model = "gpt-4o-mini"
             def count_tokens(self, t): return 1
@@ -608,7 +623,7 @@ class TestProviderOrderEnvVar:
         """Chat antwortet erfolgreich, wenn OpenAI ok und Groq failt."""
         from apps.backend.errors import AILIZAError
 
-        class FakeGroq:
+        class FakeGroq(_DuckProviderMetadata):
             provider_id = "groq"
             model = "llama"
             def count_tokens(self, t): return 1
@@ -616,7 +631,7 @@ class TestProviderOrderEnvVar:
             def generate(self, messages, context=None):
                 raise AILIZAError.from_code("provider_forbidden")
 
-        class FakeOpenAI:
+        class FakeOpenAI(_DuckProviderMetadata):
             provider_id = "openai"
             model = "gpt-4o-mini"
             def count_tokens(self, t): return 1
@@ -637,7 +652,7 @@ class TestProviderOrderEnvVar:
         import pytest
         from apps.backend.errors import AILIZAError
 
-        class FailProvider:
+        class FailProvider(_DuckProviderMetadata):
             provider_id = "groq"
             model = "llama"
             def count_tokens(self, t): return 1
@@ -662,7 +677,7 @@ class TestProviderOrderEnvVar:
         import pytest
         from apps.backend.errors import AILIZAError
 
-        class FailProvider:
+        class FailProvider(_DuckProviderMetadata):
             provider_id = "openai"
             model = "gpt-4o-mini"
             def count_tokens(self, t): return 1
