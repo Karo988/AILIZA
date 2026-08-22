@@ -22,6 +22,7 @@ from apps.backend.art9_transfer_registry import (
 from apps.backend.routers.approvals import serialize_approval
 
 
+# Vollstaendig synthetische, namenlose Sicherheits-Fixture; kein realer Fall.
 _ART9_TEXT = "Die Patientin ist HIV-positiv und erhaelt eine Chemotherapie."
 
 
