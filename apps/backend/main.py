@@ -38,7 +38,9 @@ try:
     from .permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from .domains import (
         bootstrap_domain, revoke_membership, list_my_domain_memberships,
-        DomainBootstrapError, LastDomainManagerError,
+        assign_membership, list_domains_for_tenant, list_domain_members,
+        evaluate_domain_permission,
+        DomainBootstrapError, LastDomainManagerError, DomainMembershipError,
     )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
@@ -3073,6 +3075,89 @@ def post_domain_membership_revoke(
         )
     except LastDomainManagerError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+def _may_manage_domain(token: TokenData, domain_code: str) -> bool:
+    """Bereichsverwaltung: globale Admin-Rolle ODER aktive domain_manager-
+    Mittgliedschaft mit membership.manage IN GENAU DIESEM Bereich.
+
+    Das ist die erste Stelle, an der evaluate_domain_permission() eine
+    echte Zugriffsentscheidung traegt statt nur zu existieren. Fail-closed:
+    ohne eines von beidem gibt es keinen Verwaltungszugriff."""
+    # Bewusst exakter String-Vergleich statt Role.from_str(...) >= Role.ADMIN:
+    # from_str() faellt bei unbekannten Werten still auf USER zurueck (kein
+    # Fehler), und DSB hat numerisch einen HOEHEREN Wert als ADMIN, ist aber
+    # ausdruecklich nur leseberechtigt -- ein >=-Vergleich wuerde dem DSB
+    # Schreibrechte auf Mitgliedschaften geben.
+    if str(token.role).strip().lower() == "admin":
+        return True
+    decision = evaluate_domain_permission(
+        tenant_id=token.tenant_id, user_id=token.user_id,
+        domain_code=domain_code, action="membership.manage",
+    )
+    return decision.allowed
+
+
+@app.get("/domains")
+def get_domains(
+    token: TokenData = Depends(require_role(Role.USER)),
+) -> list[dict[str, Any]]:
+    """Alle Bereiche mit Freischaltstatus im eigenen Mandanten.
+
+    Reine Struktur-Auskunft: Bereichsnamen und Einstufungen sind festes
+    Vokabular, keine Mandantendaten. Der Freischaltstatus ist strikt auf
+    den eigenen Mandanten gefiltert."""
+    return list_domains_for_tenant(tenant_id=token.tenant_id)
+
+
+@app.get("/domains/{domain_code}/members")
+def get_domain_members(
+    domain_code: str,
+    token: TokenData = Depends(require_role(Role.USER)),
+) -> list[dict[str, Any]]:
+    """Mitgliederliste eines Bereichs -- nur fuer Verwaltungsberechtigte.
+
+    Wer den Bereich nicht verwalten darf, erhaelt 403 und NICHT etwa eine
+    leere Liste: eine leere Liste waere von "Bereich existiert, ist aber
+    leer" nicht zu unterscheiden."""
+    if not _may_manage_domain(token, domain_code):
+        raise HTTPException(
+            status_code=403,
+            detail="Für die Verwaltung dieses Bereichs fehlt Ihnen die Berechtigung.",
+        )
+    return list_domain_members(tenant_id=token.tenant_id, domain_code=domain_code)
+
+
+class DomainAssignRequest(BaseModel):
+    user_id: str
+    role_in_domain: str
+    assignment_reason: str
+
+
+@app.post("/domains/{domain_code}/members")
+def post_domain_member(
+    domain_code: str,
+    body: DomainAssignRequest,
+    token: TokenData = Depends(require_role(Role.USER)),
+) -> dict[str, Any]:
+    """Weist einer Person eine Rolle im Bereich zu.
+
+    Zulaessig fuer globale Admins und fuer domain_manager DIESES Bereichs.
+    Ohne diese Funktion war das Rechtemodell nicht bedienbar -- eine zweite
+    Person konnte einem Bereich nie hinzugefuegt werden."""
+    if not _may_manage_domain(token, domain_code):
+        raise HTTPException(
+            status_code=403,
+            detail="Für die Verwaltung dieses Bereichs fehlt Ihnen die Berechtigung.",
+        )
+    try:
+        return assign_membership(
+            tenant_id=token.tenant_id, domain_code=domain_code,
+            user_id=body.user_id, role_in_domain=body.role_in_domain,
+            assigned_by=token.user_id, assignment_reason=body.assignment_reason,
+        )
+    except DomainMembershipError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # Die frueher hier stehende GET-Variante von /agent/run/stream ist entfallen.
