@@ -324,6 +324,8 @@ class ProviderOrchestrator:
         tenant_id = getattr(context, "tenant_id", "default") if context else "default"
         user_id = getattr(context, "user_id", None) if context else None
         redaction_applied = getattr(context, "redaction_applied", False) if context else False
+        task_package = getattr(context, "task_package", None) if context else None
+        governed_route: dict[str, Any] | None = None
 
         # Capability-Check muss VOR der Providerwahl harte Datenklassen wie
         # CREDENTIALS/SPECIAL_CATEGORY mit `policy_blocked` abweisen. Der
@@ -341,9 +343,41 @@ class ProviderOrchestrator:
         use_case = getattr(context, "purpose", "kmu_assistant") if context else "kmu_assistant"
         task_type = getattr(context, "task_type", None) if context else None
 
+        # Once a task is connected to a governed task package, the component
+        # activation contract is authoritative.  The legacy provider order is
+        # no longer allowed to replace the router's model decision.
+        if task_package:
+            try:
+                from ..component_system import recommend_active_model
+                prompt_text = "\n".join(
+                    str(message.get("content", "")) for message in messages
+                )
+                router_task = task_type if task_type in {
+                    "chat", "summarize", "extract", "classify", "code", "translate", "table",
+                } else "chat"
+                governed_route = recommend_active_model(
+                    tenant_id=tenant_id, task_package=task_package,
+                    modality="text", task=router_task,
+                    data_classes=list(data_classes), prompt_text=prompt_text,
+                    required_capabilities=[router_task] if router_task != "chat" else [],
+                    use_case=use_case,
+                )
+                provider_id = governed_route["provider"]
+            except Exception as exc:
+                raise AILIZAError.from_code(
+                    "policy_blocked",
+                    safe_alternatives=["Modellfreigabe und Aufgabenpaket prüfen."],
+                ) from exc
+
         # Jeder tatsaechlich verwendbare Kandidat wird hier separat gegen
         # Registry und Provider-Policy geprueft; ohne Kandidat kein Call.
         candidates = self._failover_order(provider_id, list(data_classes), use_case, task_type)
+        if governed_route is not None:
+            candidates = [
+                (pid, provider) for pid, provider in candidates
+                if pid == governed_route["provider"]
+                and getattr(provider, "model", None) == governed_route["model"]
+            ]
         if not candidates:
             raise AILIZAError.from_code("provider_not_configured")
 
@@ -354,12 +388,30 @@ class ProviderOrchestrator:
 
         for pid, provider in candidates:
             tokens_in = sum(provider.count_tokens(m.get("content", "")) for m in messages)
+            reservation_id: str | None = None
+            if governed_route is not None:
+                try:
+                    from ..component_system import reserve_budget
+                    estimated_cost = float(provider.estimate_cost(tokens_in, 1000))
+                    if estimated_cost > 0:
+                        reservation = reserve_budget(
+                            tenant_id=tenant_id, task_package=task_package,
+                            amount=estimated_cost,
+                        )
+                        reservation_id = reservation["reservation_id"]
+                except Exception as exc:
+                    raise AILIZAError.from_code(
+                        "policy_blocked",
+                        safe_alternatives=["Budgetfreigabe oder Kostenlimit prüfen."],
+                    ) from exc
             start = time.time()
             error_type = None
+            provider_call_completed = False
             try:
                 result = self._gate.generate(
                     provider, messages, context, zweck=zweck, ingress_source=ingress_source,
                 )
+                provider_call_completed = True
                 tokens_out = provider.count_tokens(result)
                 model_name = getattr(provider, "model", "unknown")
                 print(
@@ -371,6 +423,13 @@ class ProviderOrchestrator:
                 self.last_model = model_name
                 self.last_failover_occurred = bool(failed_pids)
                 self.last_failover_from = list(failed_pids)
+                if reservation_id is not None:
+                    from ..component_system import settle_budget
+                    actual_cost = float(provider.estimate_cost(tokens_in, tokens_out))
+                    settle_budget(
+                        reservation_id=reservation_id, actual_amount=actual_cost,
+                        provider=pid, model=model_name,
+                    )
                 if failed_pids:
                     # Failover fand statt — kein stiller Wechsel: auditieren.
                     print(
@@ -396,6 +455,10 @@ class ProviderOrchestrator:
                         pass  # Audit-Fehler darf Antwort nicht blockieren
                 return result
             except AILIZAError as exc:
+                if provider_call_completed:
+                    # The external call already happened. Never retry merely
+                    # because internal accounting/auditing failed afterwards.
+                    raise
                 error_type = exc.code
                 tokens_out = 0
                 # Ursache für finale Fehlermeldung merken (ohne PII/Keys)
@@ -405,13 +468,28 @@ class ProviderOrchestrator:
                 failed_pids.append(pid)
                 print(f"AILIZA PROVIDER FAIL | provider={pid} code={exc.code} — trying next", flush=True)
                 last_exc = exc
+                if reservation_id is not None:
+                    from ..component_system import settle_budget
+                    settle_budget(
+                        reservation_id=reservation_id, actual_amount=0.0,
+                        provider=pid, model=getattr(provider, "model", None), failed=True,
+                    )
             except Exception as exc:  # noqa: BLE001
+                if provider_call_completed:
+                    error_type = type(exc).__name__
+                    raise AILIZAError.from_code("internal_error") from exc
                 error_type = type(exc).__name__
                 tokens_out = 0
                 failure_reasons.append(f"{pid}: {error_type}")
                 failed_pids.append(pid)
                 print(f"AILIZA PROVIDER FAIL | provider={pid} type={error_type} — trying next", flush=True)
                 last_exc = AILIZAError.from_code("internal_error")
+                if reservation_id is not None:
+                    from ..component_system import settle_budget
+                    settle_budget(
+                        reservation_id=reservation_id, actual_amount=0.0,
+                        provider=pid, model=getattr(provider, "model", None), failed=True,
+                    )
             finally:
                 latency_ms = int((time.time() - start) * 1000)
                 self._log_metrics(context, provider, latency_ms, tokens_in, tokens_out, error_type)
