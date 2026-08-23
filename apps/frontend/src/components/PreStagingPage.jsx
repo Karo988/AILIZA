@@ -183,7 +183,6 @@ export default function PreStagingPage() {
         {STEPS.map((step, index) => {
           const done = !!completed[step.id]
           const active = index === currentStep && !done
-          const justDone = done && index === currentStep - 1
           const nextStep = STEPS[index + 1]
           return (
             <div
