@@ -140,7 +140,7 @@ export default function ApprovalsPage() {
     setApprovals(data)
   }
 
-  function handleResolved(id, action) {
+  function handleResolved(id) {
     setApprovals((prev) => prev.filter((a) => a.id !== id))
   }
 

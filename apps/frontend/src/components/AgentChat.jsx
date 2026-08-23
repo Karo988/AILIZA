@@ -79,7 +79,7 @@ function ScanResult({ scan }) {
 // Nutzer-Blase: rechts, schließt sich nach 3s, Klick öffnet wieder
 function UserBubble({ content }) {
   const [collapsed, setCollapsed] = useState(false)
-  const [visible, setVisible] = useState(true)
+
 
   useEffect(() => {
     // Nach 3 Sekunden sanft kollabieren
