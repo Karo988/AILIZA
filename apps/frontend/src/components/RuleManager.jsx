@@ -15,14 +15,12 @@ export default function RuleManager({ userId }) {
 
   useEffect(() => {
     let cancelled = false
-    async function loadInitialRules() {
-      const data = await userApi.rules(userId)
+    userApi.rules(userId).then((data) => {
       if (!cancelled) {
         setRules(data.rules || [])
         setLoading(false)
       }
-    }
-    loadInitialRules()
+    })
     return () => { cancelled = true }
   }, [userId])
 
