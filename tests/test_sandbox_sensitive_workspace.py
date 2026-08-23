@@ -1,8 +1,15 @@
+"""Security-Vertrag fuer Workspace-Dateiaktionen ohne authentisierten Broker."""
+
+import os
 import shutil
+import stat
+import subprocess
+import sys
 from pathlib import Path, PureWindowsPath
 
 import pytest
 
+import apps.backend.sandbox as sandbox
 from apps.backend.sandbox import (
     ActionClass,
     WorkspaceError,
@@ -15,170 +22,188 @@ from apps.backend.sandbox import (
 )
 
 
-def test_sensitive_workspace_root_is_rejected(monkeypatch, tmp_path: Path) -> None:
-    workspace = tmp_path / "AppData"
-    workspace.mkdir()
-    target = workspace / "notes.txt"
-    target.write_text("secret", encoding="utf-8")
-    monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
+@pytest.mark.parametrize(
+    "action",
+    [
+        ActionClass.READ_FILE,
+        ActionClass.WRITE_FILE,
+        ActionClass.APPEND_FILE,
+        ActionClass.LIST_DIRECTORY,
+        ActionClass.COPY_FILE,
+        ActionClass.DELETE_FILE,
+        ActionClass.MOVE_FILE,
+        ActionClass.RENAME_FILE,
+    ],
+)
+def test_every_workspace_file_action_hands_off_before_path_access(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    action: ActionClass,
+) -> None:
+    target = tmp_path / "does-not-exist" / "nested" / "synthetic.txt"
 
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
+    def unexpected_path_access(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Dateipfad wurde vor dem Broker-Handoff ausgewertet")
+
+    monkeypatch.setattr(sandbox, "_get_workspace", unexpected_path_access)
+    monkeypatch.setattr(sandbox, "_resolve_strict", unexpected_path_access)
+
+    result = assess_local_action(action, str(target))
 
     assert result.allowed is False
-    assert "geschuetzten Pfad" in result.reason
+    assert result.decision == "responsibility_handoff"
+    assert result.responsibility_handoff is True
+    assert result.in_workspace is False
+    assert not target.parent.exists()
 
 
-def test_dedicated_workspace_below_broad_user_folder_is_usable(
-    monkeypatch, tmp_path: Path,
+def test_correctly_named_workspace_with_forged_json_marker_is_not_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    workspace = initialize_custom_workspace(
-        tmp_path / "AppData" / "Local" / "Temp",
+    workspace = tmp_path / "AILIZA" / "Workspace"
+    workspace.mkdir(parents=True)
+    marker = workspace / ".ailiza-workspace.json"
+    marker.write_text(
+        '{"version": 1, "canonical_path": "synthetic-copy"}',
+        encoding="utf-8",
     )
-    target = workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
     monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
 
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
+    result = assess_local_action(ActionClass.READ_FILE, str(workspace / "synthetic.txt"))
 
-    assert result.allowed is True
+    assert result.decision == "responsibility_handoff"
+    assert marker.exists(), "Die untrusted Datei wird weder gelesen noch destruktiv entfernt"
 
 
-def test_managed_workspace_is_created_and_remains_usable(
-    monkeypatch, tmp_path: Path,
+def test_copied_json_marker_is_not_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    workspace = initialize_managed_workspace(tmp_path)
-    target = workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
-    monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
-
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
-
-    assert result.allowed is True
-
-
-def test_custom_location_creates_dedicated_child_in_documents(
-    monkeypatch, tmp_path: Path,
-) -> None:
-    documents = tmp_path / "Documents"
-    workspace = initialize_custom_workspace(documents)
-    target = workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
-    monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
-
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
-
-    assert workspace == (documents / "AILIZA" / "Workspace").resolve()
-    assert result.allowed is True
-
-
-def test_arbitrary_unmarked_folder_cannot_be_configured(
-    monkeypatch, tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "ordinary-folder"
-    workspace.mkdir()
-    target = workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
-    monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
-
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
-
-    assert result.allowed is False
-    assert "kontrollierten AILIZA-Einrichtungsweg" in result.reason
-
-
-def test_workspace_marker_cannot_be_copied_to_another_folder(
-    monkeypatch, tmp_path: Path,
-) -> None:
-    workspace = initialize_custom_workspace(tmp_path / "first")
-    copied_workspace = tmp_path / "second" / "AILIZA" / "Workspace"
+    source = tmp_path / "source"
+    source.mkdir()
+    source_marker = source / ".ailiza-workspace.json"
+    source_marker.write_text(
+        '{"version": 1, "canonical_path": "synthetic-source"}',
+        encoding="utf-8",
+    )
+    copied_workspace = tmp_path / "copied" / "AILIZA" / "Workspace"
     copied_workspace.mkdir(parents=True)
-    shutil.copy2(
-        workspace / ".ailiza-workspace.json",
-        copied_workspace / ".ailiza-workspace.json",
-    )
-    target = copied_workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
+    copied_marker = shutil.copy2(source_marker, copied_workspace / source_marker.name)
     monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(copied_workspace))
 
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
+    result = assess_local_action(
+        ActionClass.LIST_DIRECTORY,
+        str(copied_workspace),
+    )
 
-    assert result.allowed is False
-    assert "kontrollierten AILIZA-Einrichtungsweg" in result.reason
+    assert result.decision == "responsibility_handoff"
+    assert Path(copied_marker).read_bytes() == source_marker.read_bytes()
 
 
-def test_workspace_replaced_by_link_is_rechecked_before_operation(
-    monkeypatch, tmp_path: Path,
+def test_json_marker_api_is_completely_removed_as_trust_proof() -> None:
+    assert not hasattr(sandbox, "_WORKSPACE_MARKER")
+    assert not hasattr(sandbox, "_write_workspace_marker")
+    assert not hasattr(sandbox, "_has_valid_workspace_marker")
+
+
+def test_managed_workspace_setup_requires_broker_without_side_effect(tmp_path: Path) -> None:
+    candidate = tmp_path / "AILIZA" / "Workspace"
+
+    with pytest.raises(WorkspaceError, match="authentisierter Workspace-Broker"):
+        initialize_managed_workspace(tmp_path)
+
+    assert not candidate.exists()
+
+
+def test_custom_workspace_setup_requires_broker_without_side_effect(tmp_path: Path) -> None:
+    candidate = tmp_path / "custom" / "AILIZA" / "Workspace"
+
+    with pytest.raises(WorkspaceError, match="authentisierter Workspace-Broker"):
+        initialize_custom_workspace(tmp_path / "custom")
+
+    assert not candidate.exists()
+
+
+def test_custom_path_environment_variable_is_not_a_trust_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    workspace = initialize_custom_workspace(tmp_path)
-    real_workspace = workspace.parent / "Workspace-real"
-    workspace.rename(real_workspace)
-    try:
-        workspace.symlink_to(real_workspace, target_is_directory=True)
-    except (OSError, NotImplementedError) as exc:
-        real_workspace.rename(workspace)
-        pytest.skip(f"Symlink-Semantik auf diesem System nicht verfuegbar: {exc}")
-    target = real_workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
-    monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
-
-    result = assess_local_action(ActionClass.READ_FILE, str(workspace / target.name))
-
-    assert result.allowed is False
-    assert "Symlink oder eine Junction" in result.reason
-
-
-@pytest.mark.parametrize("profile_parts", [
-    ("AppData", "Local", "Google", "Chrome", "User Data", "Profile 1"),
-    ("AppData", "Local", "Microsoft", "Edge", "User Data", "Default"),
-    ("AppData", "Roaming", "Mozilla", "Firefox", "Profiles", "demo.default-release"),
-])
-def test_windows_browser_profile_cannot_be_workspace(
-    monkeypatch, tmp_path: Path, profile_parts: tuple[str, ...],
-) -> None:
-    workspace = tmp_path.joinpath(*profile_parts)
+    workspace = tmp_path / "AILIZA" / "Workspace"
     workspace.mkdir(parents=True)
-    target = workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
     monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
 
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
+    result = assess_local_action(ActionClass.WRITE_FILE, str(workspace / "output.txt"))
 
+    assert result.decision == "responsibility_handoff"
     assert result.allowed is False
-    assert "geschuetzten Pfad" in result.reason
 
 
-@pytest.mark.parametrize("protected_part", [".ssh", ".aws", ".gnupg"])
-def test_credential_folder_is_rejected_at_any_depth(
-    monkeypatch, tmp_path: Path, protected_part: str,
+def test_macos_application_support_exception_is_only_the_canonical_standard_path() -> None:
+    home = Path("synthetic-home")
+    canonical = home / "Library" / "Application Support" / "AILIZA" / "Workspace"
+    copied_elsewhere = (
+        Path("other-home") / "Library" / "Application Support" / "AILIZA" / "Workspace"
+    )
+    wrong_product = home / "Library" / "Application Support" / "Other" / "Workspace"
+    application_support = home / "Library" / "Application Support"
+    nested_application_support = (
+        home
+        / "workspace"
+        / "testdata"
+        / "Library"
+        / "Application Support"
+        / "AILIZA"
+        / "Workspace"
+    )
+
+    assert _is_forbidden_workspace_root(
+        canonical,
+        platform_name="darwin",
+        home=home,
+    ) is False
+    assert _is_forbidden_workspace_root(
+        copied_elsewhere,
+        platform_name="darwin",
+        home=home,
+    ) is True
+    assert _is_forbidden_workspace_root(
+        wrong_product,
+        platform_name="darwin",
+        home=home,
+    ) is True
+    assert _is_forbidden_workspace_root(
+        application_support,
+        platform_name="darwin",
+        home=home,
+    ) is True
+    assert _is_forbidden_workspace_root(
+        nested_application_support,
+        platform_name="darwin",
+        home=home,
+    ) is True
+    assert _is_forbidden_workspace_root(
+        canonical,
+        platform_name="linux",
+        home=home,
+    ) is True
+
+
+def test_macos_canonical_path_still_hands_off_without_broker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    workspace = tmp_path / "nested" / protected_part / "ailiza"
+    home = tmp_path / "home"
+    workspace = home / "Library" / "Application Support" / "AILIZA" / "Workspace"
     workspace.mkdir(parents=True)
-    target = workspace / "synthetic.txt"
-    target.write_text("synthetic", encoding="utf-8")
     monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
 
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
+    result = assess_local_action(ActionClass.READ_FILE, str(workspace / "synthetic.txt"))
 
-    assert result.allowed is False
-    assert "geschuetzten Pfad" in result.reason
-
-
-@pytest.mark.parametrize("suffix", [".pem", ".p12", ".pfx"])
-def test_certificate_access_inside_workspace_requires_owner_approval(
-    monkeypatch, tmp_path: Path, suffix: str,
-) -> None:
-    workspace = initialize_custom_workspace(tmp_path)
-    target = workspace / f"synthetic-certificate{suffix}"
-    target.write_text("synthetic", encoding="utf-8")
-    monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
-
-    result = assess_local_action(ActionClass.READ_FILE, str(target))
-
-    assert result.allowed is False
-    assert result.requires_owner_approval is True
+    assert result.decision == "responsibility_handoff"
 
 
-def test_mixed_case_windows_browser_profile_is_rejected() -> None:
+def test_mixed_case_windows_browser_profile_remains_sensitive() -> None:
     path = PureWindowsPath(
         r"C:\Users\Demo\aPpDaTa\LoCaL\GoOgLe\ChRoMe\UsEr DaTa\Profile 1"
     )
@@ -187,7 +212,7 @@ def test_mixed_case_windows_browser_profile_is_rejected() -> None:
     assert _is_sensitive_path(path) is True
 
 
-def test_unc_windows_browser_profile_is_rejected() -> None:
+def test_unc_windows_browser_profile_remains_sensitive() -> None:
     path = PureWindowsPath(
         r"\\server\share\AppData\Local\Microsoft\Edge\User Data\Default"
     )
@@ -197,50 +222,63 @@ def test_unc_windows_browser_profile_is_rejected() -> None:
     assert _is_unc_path(path) is True
 
 
-def test_unc_workspace_is_rejected_before_filesystem_access(monkeypatch) -> None:
+def test_unc_candidate_hands_off_without_filesystem_access(monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = PureWindowsPath(r"\\server\share\AILIZA\Workspace")
     monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
 
-    result = assess_local_action(
-        ActionClass.READ_FILE,
-        str(workspace / "synthetic.txt"),
-    )
+    result = assess_local_action(ActionClass.READ_FILE, str(workspace / "synthetic.txt"))
 
+    assert result.decision == "responsibility_handoff"
     assert result.allowed is False
-    assert "UNC- und Netzwerkpfade" in result.reason
 
 
-def test_custom_setup_rejects_browser_profile_parent(tmp_path: Path) -> None:
-    profile = (
-        tmp_path / "AppData" / "Local" / "Microsoft" / "Edge" /
-        "User Data" / "Default"
+def test_real_ci_platform_matches_runner_and_macos_rule() -> None:
+    expected = os.getenv("AILIZA_EXPECTED_CI_PLATFORM", "").strip()
+    actual = (
+        "windows" if os.name == "nt" else
+        "macos" if sys.platform == "darwin" else
+        "linux"
     )
+    if expected:
+        assert actual == expected
 
-    with pytest.raises(WorkspaceError, match="geschuetzten Pfad"):
-        initialize_custom_workspace(profile)
+    if actual == "macos":
+        home = Path.home()
+        canonical = (
+            home / "Library" / "Application Support" / "AILIZA" / "Workspace"
+        )
+        assert sandbox._is_canonical_macos_standard_workspace(canonical) is True
+        assert _is_forbidden_workspace_root(canonical) is False
+        assert _is_forbidden_workspace_root(
+            home / "Library" / "Application Support",
+        ) is True
+        result = assess_local_action(ActionClass.READ_FILE, str(canonical / "synthetic.txt"))
+        assert result.decision == "responsibility_handoff"
 
 
-def test_link_from_workspace_into_browser_profile_is_blocked(
-    monkeypatch, tmp_path: Path,
-) -> None:
-    workspace = initialize_custom_workspace(
-        tmp_path / "AppData" / "Local" / "Temp",
-    )
-    profile = (
-        tmp_path / "external" / "AppData" / "Local" / "Google" /
-        "Chrome" / "User Data" / "Profile 1"
-    )
-    profile.mkdir(parents=True)
-    history = profile / "History"
-    history.write_text("synthetic", encoding="utf-8")
-    link = workspace / "profile-link"
+def test_real_platform_link_or_junction_hands_off(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "workspace-link"
+
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+            errors="replace",
+        )
+        assert completed.returncode == 0, completed.stderr or completed.stdout
+        attributes = getattr(os.lstat(link), "st_file_attributes", 0)
+        assert attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    else:
+        link.symlink_to(target, target_is_directory=True)
+        assert link.is_symlink()
+
     try:
-        link.symlink_to(profile, target_is_directory=True)
-    except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"Symlink/Junction-Semantik auf diesem System nicht verfuegbar: {exc}")
-    monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(workspace))
-
-    result = assess_local_action(ActionClass.READ_FILE, str(link / "History"))
-
-    assert result.allowed is False
-    assert result.requires_owner_approval is True
+        result = assess_local_action(ActionClass.LIST_DIRECTORY, str(link))
+        assert result.decision == "responsibility_handoff"
+    finally:
+        if os.name == "nt" and link.exists():
+            os.rmdir(link)

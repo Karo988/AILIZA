@@ -150,7 +150,7 @@ _reg(CapabilityProfile(
         OperationMode.RESTRICTED.value,
     ),
     beta_approved=True,
-    notes="Schreiben nur in AILIZA_WORKSPACE_PATH.",
+    notes="Workspace-Schreiben bleibt bis zum authentisierten Broker im Handoff.",
 ))
 
 _reg(CapabilityProfile(

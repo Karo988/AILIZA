@@ -7,7 +7,18 @@ import json, logging, os
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from ..sandbox import ActionClass, assess_local_action
+except ImportError:  # Direkter Start mit apps/backend im PYTHONPATH
+    from sandbox import ActionClass, assess_local_action
+
 logger = logging.getLogger(__name__)
+
+
+def _workspace_handoff(action: ActionClass, path: str) -> dict:
+    """Prueft die zentrale Sandbox vor jeder Beruehrung des Dateisystems."""
+    result = assess_local_action(action, path)
+    return result.to_dict()
 
 def get_standard_tools():
     return {
@@ -25,6 +36,9 @@ def tool_get_time(timezone="UTC"):
     return {"datetime_utc": now.isoformat()+"Z", "date": now.strftime("%d.%m.%Y"), "time": now.strftime("%H:%M:%S"), "timezone": timezone}
 
 def tool_read_file(path, encoding="utf-8"):
+    handoff = _workspace_handoff(ActionClass.READ_FILE, path)
+    if not handoff["allowed"]:
+        return handoff
     try:
         p = Path(path)
         if not p.exists(): return {"error": f"Datei nicht gefunden: {path}"}
@@ -34,6 +48,10 @@ def tool_read_file(path, encoding="utf-8"):
         return {"error": str(e)}
 
 def tool_write_file(path, content, mode="write"):
+    action = ActionClass.APPEND_FILE if mode == "append" else ActionClass.WRITE_FILE
+    handoff = _workspace_handoff(action, path)
+    if not handoff["allowed"]:
+        return handoff
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -46,6 +64,9 @@ def tool_write_file(path, content, mode="write"):
         return {"error": str(e)}
 
 def tool_list_directory(path, show_hidden=False):
+    handoff = _workspace_handoff(ActionClass.LIST_DIRECTORY, path)
+    if not handoff["allowed"]:
+        return handoff
     try:
         p = Path(path)
         if not p.exists(): return {"error": f"Nicht gefunden: {path}"}
@@ -63,6 +84,9 @@ def tool_calculate(expression):
         return {"error": str(e)}
 
 def tool_read_pdf(path, pages="all"):
+    handoff = _workspace_handoff(ActionClass.READ_FILE, path)
+    if not handoff["allowed"]:
+        return handoff
     try:
         import pdfplumber
         p = Path(path)
@@ -78,6 +102,9 @@ def tool_read_pdf(path, pages="all"):
         return {"error": str(e)}
 
 def tool_read_image(path, language="deu+eng"):
+    handoff = _workspace_handoff(ActionClass.READ_FILE, path)
+    if not handoff["allowed"]:
+        return handoff
     try:
         import pytesseract
         from PIL import Image

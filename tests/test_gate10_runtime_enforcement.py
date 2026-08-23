@@ -283,25 +283,30 @@ class TestSandboxSmokeTest:
 
     from sandbox import assess_local_action, ActionClass
 
-    def test_read_file_in_workspace_allowed(self, tmp_path, monkeypatch):
-        from sandbox import assess_local_action, ActionClass, initialize_custom_workspace
-        ws = initialize_custom_workspace(tmp_path)
+    def test_read_file_in_workspace_hands_off_without_broker(self, tmp_path, monkeypatch):
+        from sandbox import assess_local_action, ActionClass
+        ws = tmp_path / "AILIZA" / "Workspace"
+        ws.mkdir(parents=True)
         monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(ws))
         f = ws / "synthetic_report.txt"
         f.write_text("Synthetische Testdaten: Kunde A, Auftrag 42")
         result = assess_local_action(ActionClass.READ_FILE, str(f))
-        assert result.allowed is True
+        assert result.allowed is False
+        assert result.decision == "responsibility_handoff"
 
-    def test_write_report_in_workspace_allowed(self, tmp_path, monkeypatch):
-        from sandbox import assess_local_action, ActionClass, initialize_custom_workspace
-        ws = initialize_custom_workspace(tmp_path)
+    def test_write_report_in_workspace_hands_off_without_broker(self, tmp_path, monkeypatch):
+        from sandbox import assess_local_action, ActionClass
+        ws = tmp_path / "AILIZA" / "Workspace"
+        ws.mkdir(parents=True)
         monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(ws))
         result = assess_local_action(ActionClass.WRITE_FILE, str(ws / "compliance_report.pdf"))
-        assert result.allowed is True
+        assert result.allowed is False
+        assert result.decision == "responsibility_handoff"
 
     def test_delete_outside_workspace_blocked(self, tmp_path, monkeypatch):
-        from sandbox import assess_local_action, ActionClass, initialize_custom_workspace
-        ws = initialize_custom_workspace(tmp_path)
+        from sandbox import assess_local_action, ActionClass
+        ws = tmp_path / "AILIZA" / "Workspace"
+        ws.mkdir(parents=True)
         monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(ws))
         external = tmp_path / "important_data" / "contracts.pdf"
         external.parent.mkdir()
@@ -310,15 +315,17 @@ class TestSandboxSmokeTest:
         assert result.allowed is False
 
     def test_shell_command_always_blocked(self, tmp_path, monkeypatch):
-        from sandbox import assess_local_action, ActionClass, initialize_custom_workspace
-        ws = initialize_custom_workspace(tmp_path)
+        from sandbox import assess_local_action, ActionClass
+        ws = tmp_path / "AILIZA" / "Workspace"
+        ws.mkdir(parents=True)
         monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(ws))
         result = assess_local_action(ActionClass.EXECUTE_SHELL, "rm -rf /tmp")
         assert result.allowed is False
 
     def test_biometric_access_always_blocked(self, tmp_path, monkeypatch):
-        from sandbox import assess_local_action, ActionClass, initialize_custom_workspace
-        ws = initialize_custom_workspace(tmp_path)
+        from sandbox import assess_local_action, ActionClass
+        ws = tmp_path / "AILIZA" / "Workspace"
+        ws.mkdir(parents=True)
         monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(ws))
         result = assess_local_action(ActionClass.ACCESS_PHOTOS, "/dev/camera")
         assert result.allowed is False
