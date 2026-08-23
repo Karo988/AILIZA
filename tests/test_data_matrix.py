@@ -17,6 +17,22 @@ def test_special_category_block_external():
     assert d == PolicyDecision.BLOCK
 
 
+def test_special_category_has_no_ordinary_approval_activation_path():
+    """A normal approval must never turn an Art.-9 decision into ALLOW."""
+    for target in DataTarget:
+        without_approval = check_data_target(
+            [DataClass.SPECIAL_CATEGORY], target, False, False, True,
+        )
+        with_approval = check_data_target(
+            [DataClass.SPECIAL_CATEGORY], target, False, True, True,
+        )
+        assert with_approval == without_approval, target
+        if target in {DataTarget.EXTERNAL_LLM, DataTarget.CRM, DataTarget.EMAIL}:
+            assert with_approval not in {
+                PolicyDecision.ALLOW, PolicyDecision.ALLOW_WITH_NOTICE,
+            }, target
+
+
 def test_personal_data_redact_required():
     d = check_data_target([DataClass.PERSONAL_DATA], DataTarget.EXTERNAL_LLM, False, False, True)
     assert d == PolicyDecision.REDACT_REQUIRED

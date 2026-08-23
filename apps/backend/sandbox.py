@@ -153,6 +153,14 @@ def _get_workspace() -> Path:
         raise WorkspaceError(
             f"AILIZA_WORKSPACE_PATH '{raw}' ist kein Verzeichnis."
         )
+    # Ein freigegebener Arbeitsbereich darf nicht selbst ein geschuetzter
+    # Benutzer-/Credential-Pfad sein. Sonst wuerde z. B. AppData als Ganzes
+    # zur autonomen Lese- und Schreibzone werden.
+    if _is_forbidden_workspace_root(p):
+        raise WorkspaceError(
+            f"AILIZA_WORKSPACE_PATH '{raw}' liegt in einem geschuetzten Pfad. "
+            "Bitte einen eigenen, nicht sensitiven Arbeitsordner verwenden."
+        )
     return p
 
 
@@ -176,6 +184,38 @@ def _resolve_strict(target_path: str) -> Path | None:
         return None
 
 
+def _is_forbidden_workspace_root(resolved: Path) -> bool:
+    """Reject protected roots without banning every dedicated child folder.
+
+    Broad user folders (for example AppData or Documents) are unsafe when
+    selected as the workspace itself.  A dedicated child such as
+    ``AppData/Local/Temp/.../ailiza_workspace`` remains usable, while actual
+    credential/profile paths stay forbidden at every depth.
+    """
+    parts = tuple(part.casefold() for part in resolved.parts)
+    if not parts:
+        return True
+    broad_roots = {"appdata", "contacts", "photos", "downloads", "documents"}
+    if parts[-1] in broad_roots:
+        return True
+    protected_parts = {
+        ".ssh", ".gnupg", ".aws", ".mozilla", "ntuser.dat",
+        "id_rsa", "id_ed25519", "id_ecdsa", "known_hosts", "authorized_keys",
+    }
+    if any(part in protected_parts for part in parts):
+        return True
+    protected_sequences = {
+        (".config", "google-chrome"), (".config", "chromium"),
+        ("library", "application support"),
+    }
+    for sequence in protected_sequences:
+        width = len(sequence)
+        if any(parts[index:index + width] == sequence
+               for index in range(len(parts) - width + 1)):
+            return True
+    return parts[-1].endswith((".pem", ".p12", ".pfx"))
+
+
 def _is_sensitive_path(resolved: Path, trusted_workspace: Path | None = None) -> bool:
     # Plattformneutral vergleichen: Windows verwendet Backslashes und seine
     # Pfade sind nicht case-sensitiv. Die Schutzliste ist in POSIX-Form
@@ -191,9 +231,25 @@ def _is_sensitive_path(resolved: Path, trusted_workspace: Path | None = None) ->
             path_to_check = resolved.relative_to(trusted_workspace)
         except ValueError:
             pass
-    path_str = str(path_to_check).replace("\\", "/").casefold()
-    return any(frag.replace("\\", "/").casefold() in path_str
-               for frag in _SENSITIVE_PATH_FRAGMENTS)
+    parts = tuple(part.casefold() for part in path_to_check.parts)
+    certificate_suffixes = {".pem", ".p12", ".pfx"}
+    for raw_fragment in _SENSITIVE_PATH_FRAGMENTS:
+        fragment_parts = tuple(
+            part.casefold() for part in raw_fragment.replace("\\", "/").split("/") if part
+        )
+        if len(fragment_parts) == 1:
+            fragment = fragment_parts[0]
+            if fragment in certificate_suffixes:
+                if parts and parts[-1].endswith(fragment):
+                    return True
+            elif fragment in parts:
+                return True
+            continue
+        width = len(fragment_parts)
+        if any(parts[index:index + width] == fragment_parts
+               for index in range(len(parts) - width + 1)):
+            return True
+    return False
 
 
 def _is_in_workspace(target_path: str | None) -> bool:
