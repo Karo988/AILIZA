@@ -47,6 +47,7 @@ try:
     )
     from .gateway import guarded_tool_call
     from .routers.approvals import router as approvals_router
+    from .routers.components import router as components_router
     from .errors import AILIZAError, MESSAGES
     from .providers.orchestrator import ProviderOrchestrator
     from .providers.gate_types import Zweck
@@ -125,6 +126,7 @@ except ImportError:
     from apps.backend.permissions import evaluate_permission, AGENT_RUN_LIST, GENERIC_DENIED_MESSAGE
     from apps.backend.gateway import guarded_tool_call
     from apps.backend.routers.approvals import router as approvals_router
+    from apps.backend.routers.components import router as components_router
     from apps.backend.errors import AILIZAError, MESSAGES
     from apps.backend.providers.orchestrator import ProviderOrchestrator
     from apps.backend.providers.gate_types import Zweck
@@ -542,6 +544,7 @@ app.add_middleware(_RequestIdMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 
 app.include_router(approvals_router)
+app.include_router(components_router)
 
 
 # ── B8a: Beta-Zugangsschutz ────────────────────────────────────────────────────

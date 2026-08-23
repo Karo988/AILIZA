@@ -580,10 +580,151 @@ model_candidates = Table(
     # B4: Wer den Kandidaten eingebracht hat -- Grundlage der
     # Selbstfreigabe-Pruefung (Vier-Augen-Prinzip) in approve_model_candidate().
     Column("created_by", String(64), nullable=True),
+    Column("candidate_object_hash", String(64), nullable=True),
+    Column("provider_profile_version", String(64), nullable=True),
+    Column("provider_profile_hash", String(64), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Index("ix_model_candidates_provider_model", "provider", "model_id", unique=True),
     Index("ix_model_candidates_status", "status"),
+)
+
+# Versioned evidence and approval contracts for model candidates.  Approval
+# records are append-only; their status may only move through the governed
+# service functions in component_system.py.
+component_evidence = Table(
+    "component_evidence",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("candidate_id", Integer, ForeignKey("model_candidates.id"), nullable=False),
+    Column("source_url", Text, nullable=False),
+    Column("source_type", String(32), nullable=False),
+    Column("source_checksum", String(64), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("valid_until", DateTime(timezone=True), nullable=True),
+    Column("review_status", String(32), nullable=False, default="unreviewed"),
+    Index("ix_component_evidence_candidate", "candidate_id", "observed_at"),
+)
+
+evaluation_runs = Table(
+    "evaluation_runs",
+    metadata_obj,
+    Column("evaluation_run_id", String(36), primary_key=True),
+    Column("candidate_id", Integer, ForeignKey("model_candidates.id"), nullable=False),
+    Column("candidate_object_hash", String(64), nullable=False),
+    Column("provider_profile_hash", String(64), nullable=False),
+    Column("benchmark_version", String(64), nullable=False),
+    Column("data_kind", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("metrics", JSON, nullable=False, default=dict),
+    Column("artifact_checksum", String(64), nullable=True),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("created_by", String(64), nullable=False),
+    Index("ix_evaluation_runs_candidate", "candidate_id", "started_at"),
+)
+
+component_approvals = Table(
+    "component_approvals",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("candidate_id", Integer, ForeignKey("model_candidates.id"), nullable=False),
+    Column("tenant_id", String(64), nullable=False, default=DEFAULT_TENANT_ID),
+    Column("approval_mode", String(32), nullable=False),
+    Column("approval_kind", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("candidate_object_hash", String(64), nullable=False),
+    Column("provider_profile_version", String(64), nullable=False),
+    Column("provider_profile_hash", String(64), nullable=False),
+    Column("approval_basis_hash", String(64), nullable=False),
+    Column("task_package", String(128), nullable=False),
+    Column("purpose", String(255), nullable=False),
+    Column("allowed_data_classes", JSON, nullable=False, default=list),
+    Column("max_records", Integer, nullable=True),
+    Column("cost_limit", Float, nullable=False),
+    Column("approver_user_id", String(64), nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("approved_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("invalidated_at", DateTime(timezone=True), nullable=True),
+    Column("invalidated_reason", String(255), nullable=True),
+    Index("ix_component_approvals_candidate_status", "candidate_id", "tenant_id", "status"),
+)
+
+tenant_governance_settings = Table(
+    "tenant_governance_settings",
+    metadata_obj,
+    Column("tenant_id", String(64), primary_key=True),
+    Column("organization_mode", String(32), nullable=False, default="multi_person"),
+    Column("configured_by", String(64), nullable=False),
+    Column("configured_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+budget_policies = Table(
+    "budget_policies",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_id", String(64), nullable=False),
+    Column("task_package", String(128), nullable=False),
+    Column("currency", String(3), nullable=False, default="EUR"),
+    Column("hard_limit", Float, nullable=False),
+    Column("warning_threshold", Float, nullable=False),
+    Column("period_start", DateTime(timezone=True), nullable=False),
+    Column("period_end", DateTime(timezone=True), nullable=False),
+    Column("created_by", String(64), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("tenant_id", "task_package", "period_start", name="uq_budget_policy_period"),
+)
+
+budget_reservations = Table(
+    "budget_reservations",
+    metadata_obj,
+    Column("reservation_id", String(36), primary_key=True),
+    Column("policy_id", Integer, ForeignKey("budget_policies.id"), nullable=False),
+    Column("tenant_id", String(64), nullable=False),
+    Column("task_package", String(128), nullable=False),
+    Column("amount_reserved", Float, nullable=False),
+    Column("amount_actual", Float, nullable=True),
+    Column("status", String(32), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("settled_at", DateTime(timezone=True), nullable=True),
+    Index("ix_budget_reservations_policy_status", "policy_id", "status"),
+)
+
+cost_events = Table(
+    "cost_events",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("reservation_id", String(36), ForeignKey("budget_reservations.reservation_id"), nullable=False),
+    Column("tenant_id", String(64), nullable=False),
+    Column("task_package", String(128), nullable=False),
+    Column("provider", String(64), nullable=True),
+    Column("model", String(128), nullable=True),
+    Column("event_type", String(32), nullable=False),
+    Column("amount", Float, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ix_cost_events_tenant_created", "tenant_id", "created_at"),
+)
+
+component_activations = Table(
+    "component_activations",
+    metadata_obj,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("approval_id", Integer, ForeignKey("component_approvals.id"), nullable=False),
+    Column("candidate_id", Integer, ForeignKey("model_candidates.id"), nullable=False),
+    Column("tenant_id", String(64), nullable=False),
+    Column("task_package", String(128), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("fallback_candidate_id", Integer, ForeignKey("model_candidates.id"), nullable=True),
+    Column("activated_by", String(64), nullable=False),
+    Column("activated_at", DateTime(timezone=True), nullable=False),
+    Column("disabled_at", DateTime(timezone=True), nullable=True),
+    Column("disable_reason", String(255), nullable=True),
+    Index("uq_active_component_task_package", "tenant_id", "task_package",
+          unique=True, sqlite_where=text("status = 'active'"),
+          postgresql_where=text("status = 'active'")),
 )
 
 # Append-only Protokoll jeder Routing-Empfehlung -- fuer Nachvollziehbarkeit,
