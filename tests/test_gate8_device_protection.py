@@ -12,11 +12,12 @@ Akzeptanztests aus dem Gate-8-Spezifikationsdokument:
   - agent_cannot_send_messages_without_preview_and_approval
   - shell_command_requires_policy_gate
   - destructive_local_action_is_blocked_by_default
-  - workspace_write_allowed_but_external_write_requires_approval
+  - workspace_file_actions_handoff_without_authenticated_broker
 """
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -41,25 +42,36 @@ from sandbox import (
 from errors import AILIZAError
 
 
-def _create_symlink_or_skip(
+def _create_link_for_security_test(
     link: Path,
     target: Path,
     *,
     target_is_directory: bool = False,
 ) -> None:
-    """Erzeugt einen Symlink oder markiert nur fehlende OS-Faehigkeit als Skip.
+    """Erzeugt ohne Skip einen echten Link/Alias fuer die Sicherheitspruefung.
 
     Unter Windows benoetigt das Erstellen von Symlinks je nach Systemrichtlinie
     den Entwicklermodus oder das Privileg SeCreateSymbolicLinkPrivilege. Die
-    Sicherheitspruefung selbst darf deshalb nicht als fehlgeschlagen gelten,
-    wenn bereits die Testvorbereitung mit WinError 1314 abgewiesen wird.
-    Alle anderen Fehler bleiben echte Testfehler.
+    Bei fehlendem Windows-Symlink-Privileg wird fuer Verzeichnisse eine Junction
+    und fuer Dateien ein Hardlink verwendet. Damit bleibt der Test ausgefuehrt;
+    fehlende Plattformfaehigkeit wird nicht als gruen uebersprungen.
     """
     try:
         link.symlink_to(target, target_is_directory=target_is_directory)
     except OSError as exc:
         if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
-            pytest.skip("Windows-Symlink-Privileg ist auf diesem Host nicht verfuegbar")
+            if target_is_directory:
+                completed = subprocess.run(
+                    ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                )
+                assert completed.returncode == 0, completed.stderr or completed.stdout
+            else:
+                os.link(target, link)
+            return
         raise
 
 
@@ -67,8 +79,9 @@ def _create_symlink_or_skip(
 
 @pytest.fixture
 def workspace_dir(tmp_path, monkeypatch):
-    ws = tmp_path / "ailiza_workspace"
-    ws.mkdir()
+    # Ein korrekt benannter Ordner ist absichtlich nur untrusted Testeingabe.
+    ws = tmp_path / "AILIZA" / "Workspace"
+    ws.mkdir(parents=True)
     monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(ws))
     return ws
 
@@ -135,20 +148,20 @@ class TestDestructiveActionsRequireOwnerApproval:
     def test_agent_cannot_delete_files_outside_workspace(self, workspace_dir, external_path):
         result = assess_local_action(ActionClass.DELETE_FILE, external_path)
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
     def test_destructive_local_action_is_blocked_by_default(self, workspace_dir):
         ws_file = str(workspace_dir / "report.txt")
         result = assess_local_action(ActionClass.DELETE_FILE, ws_file)
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
-    def test_delete_in_workspace_allowed_in_maintenance_mode(self, workspace_dir, monkeypatch):
+    def test_delete_in_workspace_hands_off_even_in_maintenance_mode(self, workspace_dir, monkeypatch):
         monkeypatch.setenv("AILIZA_MAINTENANCE_MODE", "true")
         ws_file = str(workspace_dir / "old_log.txt")
         result = assess_local_action(ActionClass.DELETE_FILE, ws_file)
-        assert result.allowed is True
-        assert result.in_workspace is True
+        assert result.allowed is False
+        assert result.decision == "responsibility_handoff"
 
     def test_delete_outside_workspace_blocked_even_in_maintenance_mode(self, workspace_dir, external_path, monkeypatch):
         monkeypatch.setenv("AILIZA_MAINTENANCE_MODE", "true")
@@ -172,7 +185,7 @@ class TestDestructiveActionsRequireOwnerApproval:
     def test_move_file_requires_owner_approval(self, workspace_dir, external_path):
         result = assess_local_action(ActionClass.MOVE_FILE, external_path)
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
 
 # ── TestApprovalRequiredActions ─────────────────────────────────────────────
@@ -214,40 +227,39 @@ class TestApprovalRequiredActions:
 # ── TestWorkspaceBoundary ─────────────────────────────────────────────────────
 
 class TestWorkspaceBoundary:
-    """Workspace-Grenze: innerhalb erlaubt, außerhalb geblockt."""
+    """Ohne Broker ist weder ein interner noch externer Pfad autonom vertrauenswuerdig."""
 
-    def test_workspace_write_allowed(self, workspace_dir):
+    def test_workspace_write_hands_off(self, workspace_dir):
         ws_file = str(workspace_dir / "output.txt")
         result = assess_local_action(ActionClass.WRITE_FILE, ws_file)
-        assert result.allowed is True
-        assert result.in_workspace is True
+        assert result.allowed is False
+        assert result.decision == "responsibility_handoff"
 
-    def test_workspace_read_allowed(self, workspace_dir):
+    def test_workspace_read_hands_off(self, workspace_dir):
         ws_file = str(workspace_dir / "input.csv")
         result = assess_local_action(ActionClass.READ_FILE, ws_file)
-        assert result.allowed is True
-        assert result.in_workspace is True
+        assert result.allowed is False
+        assert result.decision == "responsibility_handoff"
 
-    def test_workspace_write_allowed_but_external_write_requires_approval(self, workspace_dir, external_path):
+    def test_internal_and_external_write_both_hand_off(self, workspace_dir, external_path):
         ws_result = assess_local_action(ActionClass.WRITE_FILE, str(workspace_dir / "out.txt"))
         ext_result = assess_local_action(ActionClass.WRITE_FILE, external_path)
-        assert ws_result.allowed is True
+        assert ws_result.allowed is False
+        assert ws_result.decision == "responsibility_handoff"
         assert ext_result.allowed is False
-        assert ext_result.requires_owner_approval is True
+        assert ext_result.decision == "responsibility_handoff"
 
     def test_read_outside_workspace_requires_approval(self, workspace_dir, external_path):
         result = assess_local_action(ActionClass.READ_FILE, external_path)
         assert result.allowed is False
-        # Auf Windows liegt pytest standardmaessig unter AppData. Das ist ein
-        # sensitiver Pfad und verlangt deshalb die strengere Owner-Freigabe.
-        assert result.requires_approval is True or result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
-    def test_subdirectory_in_workspace_allowed(self, workspace_dir):
+    def test_subdirectory_in_workspace_hands_off(self, workspace_dir):
         subdir = workspace_dir / "reports" / "2024"
         subdir.mkdir(parents=True)
         result = assess_local_action(ActionClass.WRITE_FILE, str(subdir / "report.pdf"))
-        assert result.allowed is True
-        assert result.in_workspace is True
+        assert result.allowed is False
+        assert result.decision == "responsibility_handoff"
 
     def test_path_traversal_outside_workspace_blocked(self, workspace_dir):
         traversal = str(workspace_dir / ".." / "etc" / "passwd")
@@ -266,14 +278,16 @@ class TestEnforceSandbox:
         assert exc_info.value.code == "sandbox_blocked"
         assert "Device Protection" in exc_info.value.message_de or "permanent" in exc_info.value.message_de
 
-    def test_enforce_does_not_raise_for_workspace_write(self, workspace_dir):
+    def test_enforce_hands_off_workspace_write(self, workspace_dir):
         ws_file = str(workspace_dir / "safe.txt")
-        enforce_sandbox(ActionClass.WRITE_FILE, ws_file)  # kein Raise
+        with pytest.raises(AILIZAError) as exc_info:
+            enforce_sandbox(ActionClass.WRITE_FILE, ws_file)
+        assert exc_info.value.code == "responsibility_handoff"
 
-    def test_enforce_raises_for_external_write(self, external_path):
+    def test_enforce_raises_for_external_write(self, workspace_dir, external_path):
         with pytest.raises(AILIZAError) as exc_info:
             enforce_sandbox(ActionClass.WRITE_FILE, external_path)
-        assert exc_info.value.code == "sandbox_blocked"
+        assert exc_info.value.code == "responsibility_handoff"
 
     def test_enforce_raises_for_shell_command(self):
         with pytest.raises(AILIZAError):
@@ -292,26 +306,40 @@ class TestSandboxStatus:
 
     def test_sandbox_status_keys(self, workspace_dir):
         status = sandbox_status()
-        assert "workspace_path" in status
+        assert "workspace_path_candidate" in status
+        assert "authenticated_broker_available" in status
+        assert status["decision"] == "responsibility_handoff"
         assert "maintenance_mode" in status
         assert "always_blocked" in status
         assert "require_owner_approval" in status
         assert "require_approval" in status
         assert "workspace_autonomous" in status
 
-    def test_sandbox_status_always_blocked_non_empty(self):
+    def test_sandbox_status_always_blocked_non_empty(self, workspace_dir):
         status = sandbox_status()
         assert len(status["always_blocked"]) >= 7
 
-    def test_sandbox_status_maintenance_mode_default_false(self, monkeypatch):
+    def test_sandbox_status_maintenance_mode_default_false(self, workspace_dir, monkeypatch):
         monkeypatch.delenv("AILIZA_MAINTENANCE_MODE", raising=False)
         status = sandbox_status()
         assert status["maintenance_mode"] is False
 
-    def test_sandbox_status_workspace_not_configured(self, monkeypatch):
+    def test_sandbox_status_reports_default_candidate_without_creating_it(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
         status = sandbox_status()
         assert status["workspace_configured"] is False
+        assert status["authenticated_broker_available"] is False
+        if os.name == "nt":
+            expected = tmp_path / "AILIZA" / "Workspace"
+        elif sys.platform == "darwin":
+            expected = tmp_path / "Library" / "Application Support" / "AILIZA" / "Workspace"
+        else:
+            expected = tmp_path / "ailiza" / "workspace"
+        assert Path(status["workspace_path_candidate"]) == expected
+        assert not expected.exists()
 
 
 # ── TestSymlinkTraversal ──────────────────────────────────────────────────────
@@ -323,7 +351,7 @@ class TestSymlinkTraversal:
         external_dir = tmp_path / "external"
         external_dir.mkdir()
         link = workspace_dir / "escape_link"
-        _create_symlink_or_skip(link, external_dir, target_is_directory=True)
+        _create_link_for_security_test(link, external_dir, target_is_directory=True)
         target_via_link = str(link / "secret.txt")
         result = assess_local_action(ActionClass.WRITE_FILE, target_via_link)
         assert result.allowed is False
@@ -332,7 +360,7 @@ class TestSymlinkTraversal:
         external_file = tmp_path / "external_file.txt"
         external_file.write_text("data")
         link = workspace_dir / "link_to_external"
-        _create_symlink_or_skip(link, external_file)
+        _create_link_for_security_test(link, external_file)
         result = assess_local_action(ActionClass.DELETE_FILE, str(link))
         assert result.allowed is False
 
@@ -340,18 +368,18 @@ class TestSymlinkTraversal:
         external = tmp_path / "other_dir"
         external.mkdir()
         link = workspace_dir / "read_escape"
-        _create_symlink_or_skip(link, external, target_is_directory=True)
+        _create_link_for_security_test(link, external, target_is_directory=True)
         result = assess_local_action(ActionClass.READ_FILE, str(link / "data.csv"))
         assert result.allowed is False
 
-    def test_symlink_inside_workspace_to_workspace_is_allowed(self, workspace_dir):
+    def test_symlink_inside_workspace_also_hands_off(self, workspace_dir):
         real_file = workspace_dir / "real.txt"
         real_file.write_text("hello")
         link = workspace_dir / "link_to_real"
-        _create_symlink_or_skip(link, real_file)
+        _create_link_for_security_test(link, real_file)
         result = assess_local_action(ActionClass.READ_FILE, str(link))
-        assert result.allowed is True
-        assert result.in_workspace is True
+        assert result.allowed is False
+        assert result.decision == "responsibility_handoff"
 
 
 # ── TestWorkspaceNotConfigured ────────────────────────────────────────────────
@@ -361,6 +389,7 @@ class TestWorkspaceNotConfigured:
 
     def test_workspace_not_set_is_fail_closed(self, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("AILIZA_DISABLE_MANAGED_WORKSPACE", "true")
         result = assess_local_action(ActionClass.READ_FILE, "/tmp/file.txt")
         assert result.allowed is False
         assert "nicht konfiguriert" in result.reason.lower() or "workspace" in result.reason.lower()
@@ -377,30 +406,32 @@ class TestWorkspaceNotConfigured:
 
     def test_workspace_not_set_raises_workspace_error(self, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("AILIZA_DISABLE_MANAGED_WORKSPACE", "true")
         with pytest.raises(WorkspaceError):
             _get_workspace()
 
     def test_enforce_sandbox_fails_closed_without_workspace(self, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("AILIZA_DISABLE_MANAGED_WORKSPACE", "true")
         with pytest.raises(AILIZAError) as exc_info:
             enforce_sandbox(ActionClass.WRITE_FILE, "/some/path.txt")
-        assert exc_info.value.code == "sandbox_blocked"
+        assert exc_info.value.code == "responsibility_handoff"
 
 
 # ── TestSensitivePaths ────────────────────────────────────────────────────────
 
 class TestSensitivePaths:
-    """Sensitive Pfade (SSH-Keys, Browser-Profile, Credentials) sind immer Owner-Approval."""
+    """Broker-Handoff geschieht vor jeder Auswertung sensitiver Dateipfade."""
 
     def test_ssh_key_read_blocked(self, workspace_dir):
         result = assess_local_action(ActionClass.READ_FILE, str(Path.home() / ".ssh" / "id_rsa"))
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
     def test_aws_credentials_blocked(self, workspace_dir):
         result = assess_local_action(ActionClass.READ_FILE, str(Path.home() / ".aws" / "credentials"))
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
     def test_browser_profile_blocked(self, workspace_dir):
         result = assess_local_action(
@@ -408,19 +439,19 @@ class TestSensitivePaths:
             str(Path.home() / ".config" / "google-chrome" / "Default" / "Cookies"),
         )
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
     def test_known_hosts_blocked(self, workspace_dir):
         result = assess_local_action(ActionClass.READ_FILE, str(Path.home() / ".ssh" / "known_hosts"))
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
     def test_pem_file_blocked(self, workspace_dir, tmp_path):
         pem = tmp_path / "server.pem"
         pem.write_text("-----BEGIN CERTIFICATE-----")
         result = assess_local_action(ActionClass.READ_FILE, str(pem))
         assert result.allowed is False
-        assert result.requires_owner_approval is True
+        assert result.decision == "responsibility_handoff"
 
 
 # ── TestHighRiskShellCommands ─────────────────────────────────────────────────

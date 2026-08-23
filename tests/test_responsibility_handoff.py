@@ -124,6 +124,46 @@ def test_check_capability_passes_through_responsibility_domain(monkeypatch):
     assert not result.allowed
 
 
+def test_capability_without_approval_requirement_does_not_invent_approval(monkeypatch):
+    """Capability metadata is not evidence that a human approved a request."""
+    import apps.backend.capabilities.registry as registry_mod
+
+    observed = {}
+
+    def capture_policy(context):
+        observed["approval_given"] = context.approval_given
+        return type("Result", (), {
+            "decision": PolicyDecision.ALLOW,
+            "reason": "test",
+            "allowed": True,
+            "risk_level": "low",
+            "requires_owner_approval": False,
+            "context_summary": {},
+        })()
+
+    fake_cap = Capability(
+        capability_id="_test_no_approval_evidence",
+        name="Testsonde ohne Freigabepflicht",
+        description="Nur fuer diesen Test",
+        target=DataTarget.RAM,
+        allowed_data_classes=[DataClass.PUBLIC],
+        risk_level=RiskLevel.LOW,
+        requires_approval=False,
+        external_call=False,
+        gdpr_purpose="Test",
+    )
+    monkeypatch.setitem(_CAPABILITIES, fake_cap.capability_id, fake_cap)
+    monkeypatch.setattr(registry_mod, "evaluate_policy", capture_policy)
+
+    result = check_capability(
+        fake_cap.capability_id, data_classes=[DataClass.PUBLIC],
+        tenant_id="default", user_id="alice", approval_given=False,
+    )
+
+    assert result.allowed
+    assert observed["approval_given"] is False
+
+
 # ── 3. Unbekannte Domain wird fail-closed blockiert ──────────────────────────
 
 def test_unknown_domain_is_blocked_not_handed_off():

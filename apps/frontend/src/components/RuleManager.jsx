@@ -13,7 +13,16 @@ export default function RuleManager({ userId }) {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [userId])
+  useEffect(() => {
+    let cancelled = false
+    userApi.rules(userId).then((data) => {
+      if (!cancelled) {
+        setRules(data.rules || [])
+        setLoading(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [userId])
 
   async function addRule() {
     if (!newRule.trim()) return

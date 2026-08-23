@@ -159,11 +159,18 @@ _SPECIAL_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
         r"\b(sexuelle\s+Orientierung|Geschlechtsidentität|transgender|nicht-?binär"
         r"|sexual\s+orientation|gender\s+identity|non-?binary)\b", re.I,
     )),
-    ("criminal", re.compile(
-        r"\b(Vorstrafe|Strafakte|strafrechtliche\s+Verurteilung|Strafregister"
-        r"|criminal\s+record|conviction|criminal\s+history)\b", re.I,
-    )),
 ]
+
+# DSGVO Art. 10 is deliberately separate from the special categories in
+# Art. 9.  Treating criminal-offence data as LEGAL also activates the router's
+# hard external-routing block without making a false Art.-9 assertion.
+_ARTICLE_10_PATTERN = re.compile(
+    r"\b(Vorstrafe|Strafakte|Strafverfahren|strafrechtlich(?:e|en|er)?"
+    r"|Verurteilung|Straftat|Strafregister|Ermittlungsverfahren|angeklagt"
+    r"|Aktenzeichen\s+[0-9A-Za-z./\- ]+|criminal\s+(?:record|offence|history)"
+    r"|conviction|prosecution)\b",
+    re.I,
+)
 
 # ── Referenznummern (Kundennummer, Rechnungsnummer, Aktenzeichen — Identifier) ─
 _REFERENCE_NUMBER_PATTERN = re.compile(
@@ -272,6 +279,12 @@ def classify(text: str) -> ClassificationResult:
                 classes.add(DataClass.SPECIAL_CATEGORY)
                 if rule_name == "biometric":
                     requires_human_decision = True
+
+        # ── DSGVO Art. 10 — strafrechtliche Daten (nicht Art. 9) ────────────
+        if _ARTICLE_10_PATTERN.search(text):
+            matched.append("article_10_criminal_data")
+            classes.add(DataClass.LEGAL)
+            requires_human_decision = True
 
         # ── HR / Personalentscheidungen (DSGVO Art. 22) ──────────────────────
         if _HR_PATTERN.search(text):

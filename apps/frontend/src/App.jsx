@@ -9,7 +9,7 @@ function App() {
   const [session, setSession] = useState(null)
   const [activePage, setActivePage] = useState("Dashboard")
   const [auditLogs, setAuditLogs] = useState([])
-  const [chatSessions, setChatSessions] = useState([{ id: Date.now(), title: "Neuer Chat", messages: [] }])
+  const [chatSessions, setChatSessions] = useState(() => [{ id: Date.now(), title: "Neuer Chat", messages: [] }])
   const [activeChatId, setActiveChatId] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 900)
 

@@ -260,18 +260,21 @@ def test_each_blocked_class_prevents_routing(klasse, text):
     assert "nicht extern geroutet" in ergebnis["reason"]
 
 
-@pytest.mark.xfail(reason="B-GOV-1 offen: classify() erkennt Art.-10-Daten nicht als LEGAL",
-                   strict=True)
-def test_legal_class_is_not_yet_detected():
-    """Dokumentiert die BEKANNTE Luecke als fehlschlagenden Test statt sie zu
-    verschweigen. strict=True: sobald classify() nachgebessert wird, faellt
-    dieser Test auf und muss zum Regeltest umgestellt werden."""
+def test_legal_class_is_detected_and_blocked():
+    """Art.-10-Daten werden als LEGAL erkannt und extern blockiert."""
     from apps.backend.database import recommend_model
+    from apps.backend.governance.data_governance import DataClass, classify
 
     _kandidat(); _freigeben()
+    prompt = (
+        "SYNTHETISCH: Strafverfahren gegen Testperson A, "
+        "Aktenzeichen 4 Ls 123/24, verurteilt wegen Diebstahl."
+    )
+    classification = classify(prompt)
+    assert DataClass.LEGAL in classification.data_classes
     ergebnis = recommend_model(
         TENANT, modality="text", task="chat",
-        prompt_text="Strafverfahren gegen Meier, Aktenzeichen 4 Ls 123/24, verurteilt wegen Diebstahl.",
+        prompt_text=prompt,
     )
     assert ergebnis["selected"] is None
 

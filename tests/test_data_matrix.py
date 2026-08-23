@@ -1,3 +1,5 @@
+import pytest
+
 from apps.backend.governance.data_governance import DataClass, DataTarget
 from apps.backend.governance.data_matrix import check_data_target, PolicyDecision
 
@@ -15,6 +17,35 @@ def test_credentials_allowed_in_ram():
 def test_special_category_block_external():
     d = check_data_target([DataClass.SPECIAL_CATEGORY], DataTarget.EXTERNAL_LLM, True, True, True)
     assert d == PolicyDecision.BLOCK
+
+
+def test_special_category_has_no_ordinary_approval_activation_path():
+    """A normal approval must never turn an Art.-9 decision into ALLOW."""
+    for target in DataTarget:
+        without_approval = check_data_target(
+            [DataClass.SPECIAL_CATEGORY], target, False, False, True,
+        )
+        with_approval = check_data_target(
+            [DataClass.SPECIAL_CATEGORY], target, False, True, True,
+        )
+        assert with_approval == without_approval, target
+        if target in {DataTarget.EXTERNAL_LLM, DataTarget.CRM, DataTarget.EMAIL}:
+            assert with_approval not in {
+                PolicyDecision.ALLOW, PolicyDecision.ALLOW_WITH_NOTICE,
+            }, target
+
+
+@pytest.mark.parametrize("target", [DataTarget.CRM, DataTarget.EMAIL])
+def test_special_category_business_recipient_cannot_be_activated(target):
+    """CRM und E-Mail bleiben einzeln gegen spaetere Aufweichung geschuetzt."""
+    for approval_given in (False, True):
+        decision = check_data_target(
+            [DataClass.SPECIAL_CATEGORY], target,
+            redaction_applied=False,
+            approval_given=approval_given,
+            provider_profile_active=True,
+        )
+        assert decision == PolicyDecision.APPROVAL_REQUIRED
 
 
 def test_personal_data_redact_required():

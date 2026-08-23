@@ -56,7 +56,10 @@ def _decide_single(
         if target in {DataTarget.EXTERNAL_LLM, DataTarget.MEMORY, DataTarget.VECTOR_DB}:
             return PolicyDecision.BLOCK
         if target in _EXTERNAL_TARGETS:
-            return PolicyDecision.APPROVAL_REQUIRED if approval_given else PolicyDecision.APPROVAL_REQUIRED
+            # Kein Aktivierungspfad: auch approval_given=True aendert die
+            # Entscheidung fuer CRM oder E-Mail nicht. Die semantische
+            # Umstellung auf BLOCK gehoert in ein eigenes Governance-Paket.
+            return PolicyDecision.APPROVAL_REQUIRED
         return PolicyDecision.ALLOW_WITH_NOTICE
 
     # SECURITY_SENSITIVE: extern nur nach Approval

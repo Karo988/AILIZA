@@ -5,18 +5,17 @@ AILIZA handelt autonom *innerhalb* definierter, geprüfter Arbeitsbereiche.
 Änderungen an externen Programmen, Betriebssystem, Handy-Daten oder fremden
 Dateien erfolgen nie ohne explizite, nachvollziehbare Freigabe.
 
-Standardverhalten:
-  - Lesen:    nur freigegebene Dateien (AILIZA_WORKSPACE_PATH)
-  - Schreiben: nur im Workspace oder explizit gewähltem Zielordner
-  - Löschen:  verboten (außer Wartungsmodus oder owner-Freigabe)
+Standardverhalten ohne authentisierten Workspace-Broker:
+  - Dateioperationen: fail-closed mit ``responsibility_handoff``
+  - Löschen/Verschieben: ebenfalls Handoff; keine In-Process-Ausnahme
   - System:   keine Shell, keine Einstellungen, keine Programme
 
 Env-Variablen:
-  AILIZA_WORKSPACE_PATH   — Pfad des freigegebenen Arbeitsordners (kein Default — muss explizit gesetzt sein)
+  AILIZA_WORKSPACE_PATH   — nur ein Pfadkandidat; ohne Broker kein Vertrauensnachweis
   AILIZA_MAINTENANCE_MODE — "1"/"true" erlaubt destruktive Aktionen im Workspace für Admins
 
 Fail-closed bei:
-  - AILIZA_WORKSPACE_PATH nicht gesetzt, leer oder Verzeichnis existiert nicht
+  - Authentisierter Workspace-Broker nicht verfuegbar
   - Symlinks die aus dem Workspace nach außen zeigen
   - Unbekannte ActionClass
   - Ungültige/nicht auflösbare Pfade
@@ -24,6 +23,7 @@ Fail-closed bei:
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -41,8 +41,12 @@ class ActionClass(str, Enum):
     # Datei-Operationen
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
+    APPEND_FILE = "append_file"
+    LIST_DIRECTORY = "list_directory"
+    COPY_FILE = "copy_file"
     DELETE_FILE = "delete_file"
     MOVE_FILE = "move_file"
+    RENAME_FILE = "rename_file"
 
     # System / Programme
     INSTALL_APP = "install_app"
@@ -104,13 +108,35 @@ _REQUIRE_APPROVAL: frozenset[ActionClass] = frozenset({
 _WORKSPACE_AUTONOMOUS: frozenset[ActionClass] = frozenset({
     ActionClass.READ_FILE,
     ActionClass.WRITE_FILE,
+    ActionClass.APPEND_FILE,
+    ActionClass.LIST_DIRECTORY,
 })
+
+_FILE_ACTIONS: frozenset[ActionClass] = frozenset({
+    ActionClass.READ_FILE,
+    ActionClass.WRITE_FILE,
+    ActionClass.APPEND_FILE,
+    ActionClass.LIST_DIRECTORY,
+    ActionClass.COPY_FILE,
+    ActionClass.DELETE_FILE,
+    ActionClass.MOVE_FILE,
+    ActionClass.RENAME_FILE,
+})
+
+_WORKSPACE_BROKER_HANDOFF_REASON = (
+    "Autonome Workspace-Dateioperation ist deaktiviert: Es ist kein "
+    "authentisierter Workspace-Broker verfuegbar. Die Verantwortung wird "
+    "an die kontrollierte Broker-Einrichtung durch einen Administrator uebergeben."
+)
 
 
 # Sensitive Pfade außerhalb des Workspace die immer Owner-Approval benötigen,
 # auch wenn sie zufällig im Workspace-Tree liegen könnten.
 _SENSITIVE_PATH_FRAGMENTS: tuple[str, ...] = (
     ".ssh", ".gnupg", ".aws", ".config/google-chrome", ".config/chromium",
+    "AppData/Local/Google/Chrome/User Data",
+    "AppData/Local/Microsoft/Edge/User Data",
+    "AppData/Roaming/Mozilla/Firefox/Profiles",
     ".mozilla", "Contacts", "Photos", "Downloads", "Documents",
     "Library/Application Support", "AppData", "NTUSER.DAT",
     "id_rsa", "id_ed25519", "id_ecdsa", ".pem", ".p12", ".pfx",
@@ -131,29 +157,50 @@ class WorkspaceError(Exception):
     """Workspace ist nicht korrekt konfiguriert — fail-closed."""
 
 
+def _is_unc_path(path: Path) -> bool:
+    """Netzwerkpfade sind keine lokal kontrollierte autonome Grenze."""
+    return str(path).startswith("\\\\") or str(path.anchor).startswith("\\\\")
+
+
+def _default_workspace_path(
+    *,
+    platform_name: str | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Berechnet nur den kanonischen Pfad; die Funktion vertraut ihm nicht."""
+    platform_name = platform_name or sys.platform
+    home = home or Path.home()
+    if platform_name.startswith("win") or platform_name == "cygwin":
+        raw_base = os.getenv("LOCALAPPDATA", "").strip()
+        if not raw_base:
+            raise WorkspaceError("LOCALAPPDATA ist fuer den Standard-Workspace nicht gesetzt.")
+        return Path(raw_base) / "AILIZA" / "Workspace"
+    if platform_name == "darwin":
+        return home / "Library" / "Application Support" / "AILIZA" / "Workspace"
+    base = Path(os.getenv("XDG_DATA_HOME", "").strip() or (home / ".local" / "share"))
+    return base / "ailiza" / "workspace"
+
+
+def _authenticated_workspace_broker_available() -> bool:
+    """Bewusste Sperre bis zum getrennten, OS-isolierten Security-PR."""
+    return False
+
+
+def initialize_managed_workspace(base_dir: str | Path | None = None) -> Path:
+    """Kein In-Process-Einrichtungsweg: nur der kuenftige Broker darf anlegen."""
+    del base_dir
+    raise WorkspaceError(_WORKSPACE_BROKER_HANDOFF_REASON)
+
+
+def initialize_custom_workspace(parent_dir: str | Path) -> Path:
+    """Benutzerdefinierte Workspaces bleiben bis zum Broker-PR deaktiviert."""
+    del parent_dir
+    raise WorkspaceError(_WORKSPACE_BROKER_HANDOFF_REASON)
+
+
 def _get_workspace() -> Path:
-    """
-    Gibt den konfigurierten Workspace zurück.
-    Wirft WorkspaceError wenn AILIZA_WORKSPACE_PATH nicht gesetzt oder Verzeichnis fehlt.
-    Kein Default — fail-closed bei fehlender Konfiguration.
-    """
-    raw = os.getenv("AILIZA_WORKSPACE_PATH", "").strip()
-    if not raw:
-        raise WorkspaceError(
-            "AILIZA_WORKSPACE_PATH ist nicht gesetzt. "
-            "Der Workspace muss explizit konfiguriert sein."
-        )
-    p = Path(raw).resolve()
-    if not p.exists():
-        raise WorkspaceError(
-            f"AILIZA_WORKSPACE_PATH '{raw}' existiert nicht. "
-            "Verzeichnis anlegen oder Pfad korrigieren."
-        )
-    if not p.is_dir():
-        raise WorkspaceError(
-            f"AILIZA_WORKSPACE_PATH '{raw}' ist kein Verzeichnis."
-        )
-    return p
+    """Ohne authentisierten Broker existiert kein vertrauenswuerdiger Workspace."""
+    raise WorkspaceError(_WORKSPACE_BROKER_HANDOFF_REASON)
 
 
 def _is_maintenance_mode() -> bool:
@@ -176,6 +223,81 @@ def _resolve_strict(target_path: str) -> Path | None:
         return None
 
 
+def _is_canonical_macos_standard_workspace(
+    resolved: Path,
+    *,
+    platform_name: str | None = None,
+    home: Path | None = None,
+) -> bool:
+    """Pfad-Ausnahme, aber ausdruecklich kein Kontroll- oder Vertrauensnachweis."""
+    platform_name = platform_name or sys.platform
+    if platform_name != "darwin":
+        return False
+    return resolved == _default_workspace_path(
+        platform_name="darwin",
+        home=home or Path.home(),
+    )
+
+
+def _is_forbidden_workspace_root(
+    resolved: Path,
+    *,
+    platform_name: str | None = None,
+    home: Path | None = None,
+) -> bool:
+    """Reject protected roots without banning every dedicated child folder.
+
+    Broad user folders (for example AppData or Documents) are unsafe when
+    selected as the workspace itself.  A dedicated child such as
+    ``AppData/Local/Temp/.../ailiza_workspace`` remains usable, while actual
+    credential/profile paths stay forbidden at every depth.
+    """
+    if _is_canonical_macos_standard_workspace(
+        resolved,
+        platform_name=platform_name,
+        home=home,
+    ):
+        return False
+    parts = tuple(part.casefold() for part in resolved.parts)
+    parts = tuple(part.casefold() for part in resolved.parts)
+    if not parts:
+        return True
+    # Muss nach der exakten macOS-Standardpfad-Ausnahme stehen:
+    # Nur dieser Pfad wurde dort bereits als zulässiger Kandidat klassifiziert.
+    if (platform_name or sys.platform) == "darwin":
+        application_support_parts = ("library", "application support")
+        if any(
+            parts[index:index + 2] == application_support_parts
+            for index in range(len(parts) - 1)
+        ):
+            return True
+
+    if not parts:
+        return True
+    broad_roots = {"appdata", "contacts", "photos", "downloads", "documents"}
+    if parts[-1] in broad_roots:
+        return True
+    protected_parts = {
+        ".ssh", ".gnupg", ".aws", ".mozilla", "ntuser.dat",
+        "id_rsa", "id_ed25519", "id_ecdsa", "known_hosts", "authorized_keys",
+    }
+    if any(part in protected_parts for part in parts):
+        return True
+    protected_sequences = {
+        (".config", "google-chrome"), (".config", "chromium"),
+        ("library", "application support"),
+        ("appdata", "local", "google", "chrome", "user data"),
+        ("appdata", "local", "microsoft", "edge", "user data"),
+        ("appdata", "roaming", "mozilla", "firefox", "profiles"),
+    }
+    for sequence in protected_sequences:
+        width = len(sequence)
+        if any(parts[index:index + width] == sequence
+               for index in range(len(parts) - width + 1)):
+            return True
+    return parts[-1].endswith((".pem", ".p12", ".pfx"))
+
+
 def _is_sensitive_path(resolved: Path, trusted_workspace: Path | None = None) -> bool:
     # Plattformneutral vergleichen: Windows verwendet Backslashes und seine
     # Pfade sind nicht case-sensitiv. Die Schutzliste ist in POSIX-Form
@@ -191,27 +313,25 @@ def _is_sensitive_path(resolved: Path, trusted_workspace: Path | None = None) ->
             path_to_check = resolved.relative_to(trusted_workspace)
         except ValueError:
             pass
-    path_str = str(path_to_check).replace("\\", "/").casefold()
-    return any(frag.replace("\\", "/").casefold() in path_str
-               for frag in _SENSITIVE_PATH_FRAGMENTS)
-
-
-def _is_in_workspace(target_path: str | None) -> bool:
-    """
-    True nur wenn der vollständig aufgelöste Pfad (inkl. Symlink-Ziel) innerhalb
-    des Workspace liegt. Symlinks nach außen werden damit erkannt und geblockt.
-    """
-    if not target_path:
-        return False
-    try:
-        workspace = _get_workspace()
-    except WorkspaceError:
-        return False
-    resolved = _resolve_strict(target_path)
-    if resolved is None:
-        return False
-    # Symlink-Schutz: resolved zeigt auf echtes Ziel, workspace ist ebenfalls resolved
-    return resolved == workspace or workspace in resolved.parents
+    parts = tuple(part.casefold() for part in path_to_check.parts)
+    certificate_suffixes = {".pem", ".p12", ".pfx"}
+    for raw_fragment in _SENSITIVE_PATH_FRAGMENTS:
+        fragment_parts = tuple(
+            part.casefold() for part in raw_fragment.replace("\\", "/").split("/") if part
+        )
+        if len(fragment_parts) == 1:
+            fragment = fragment_parts[0]
+            if fragment in certificate_suffixes:
+                if parts and parts[-1].endswith(fragment):
+                    return True
+            elif fragment in parts:
+                return True
+            continue
+        width = len(fragment_parts)
+        if any(parts[index:index + width] == fragment_parts
+               for index in range(len(parts) - width + 1)):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -223,6 +343,17 @@ class SandboxResult:
     requires_approval: bool = False
     requires_owner_approval: bool = False
     in_workspace: bool = False
+    responsibility_handoff: bool = False
+
+    @property
+    def decision(self) -> str:
+        if self.responsibility_handoff:
+            return "responsibility_handoff"
+        if self.allowed:
+            return "allow"
+        if self.requires_approval or self.requires_owner_approval:
+            return "approval_required"
+        return "block"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -233,6 +364,8 @@ class SandboxResult:
             "requires_approval": self.requires_approval,
             "requires_owner_approval": self.requires_owner_approval,
             "in_workspace": self.in_workspace,
+            "decision": self.decision,
+            "responsibility_handoff": self.responsibility_handoff,
         }
 
 
@@ -257,9 +390,6 @@ def assess_local_action(
             reason=f"Unbekannte Aktionsklasse '{action_class}' — fail-closed geblockt.",
         )
 
-    # Defaults — werden für Nicht-Datei-Aktionen nicht überschrieben
-    in_ws = False
-    resolved = None
     target_label = target_path or "<unknown>"
 
     # Immer geblockt — keine Freigabe möglich (kein Workspace nötig)
@@ -269,40 +399,18 @@ def assess_local_action(
             action_class=ac.value,
             target=target_label,
             reason=f"Aktion '{ac.value}' ist permanent gesperrt (Device Protection Gate).",
-            in_workspace=in_ws,
         )
 
-    # Workspace-Konfiguration — nur für dateisystem-basierte Aktionen prüfen
-    _FILE_ACTIONS = {
-        ActionClass.READ_FILE, ActionClass.WRITE_FILE,
-        ActionClass.DELETE_FILE, ActionClass.MOVE_FILE,
-    }
+    # Ohne OS-isolierten, authentisierten Broker darf keine Workspace-Dateiaktion
+    # bis zur Pfadauflösung oder Dateiberührung gelangen. Eine Umgebungsvariable,
+    # ein Verzeichnisname oder eine JSON-Datei sind ausdrücklich kein Ersatz.
     if ac in _FILE_ACTIONS:
-        try:
-            workspace = _get_workspace()
-        except WorkspaceError as exc:
-            return SandboxResult(
-                allowed=False,
-                action_class=ac.value,
-                target=target_path or "<unknown>",
-                reason=f"Workspace nicht konfiguriert — fail-closed: {exc}",
-            )
-        in_ws = _is_in_workspace(target_path)
-        resolved = _resolve_strict(target_path) if target_path else None
-        target_label = "<workspace>" if in_ws else (target_path or "<unknown>")
-
-    # Sensitive Pfade immer Owner-Approval — unabhängig von Workspace-Status
-    if resolved and _is_sensitive_path(
-        resolved,
-        workspace if in_ws else None,
-    ) and ac in _FILE_ACTIONS:
         return SandboxResult(
             allowed=False,
             action_class=ac.value,
             target=target_label,
-            reason="Pfad enthält sensitive Daten (SSH-Keys, Browser-Profile, Credentials o.ä.) — Owner-Freigabe erforderlich.",
-            requires_owner_approval=True,
-            in_workspace=in_ws,
+            reason=_WORKSPACE_BROKER_HANDOFF_REASON,
+            responsibility_handoff=True,
         )
 
     # Destruktive Aktionen: nur im Wartungsmodus und nur im Workspace
@@ -317,72 +425,23 @@ def assess_local_action(
                     action_class=ac.value,
                     target="<shell-command>",
                     reason=f"Shell-Befehl enthält hochriskantes Token '{found.strip()}' — permanent blockiert.",
-                    in_workspace=in_ws,
                 )
-        if ac == ActionClass.DELETE_FILE and _is_maintenance_mode() and in_ws:
-            return SandboxResult(
-                allowed=True,
-                action_class=ac.value,
-                target=target_label,
-                reason="Wartungsmodus aktiv — Löschen im Workspace erlaubt.",
-                in_workspace=True,
-            )
         return SandboxResult(
             allowed=False,
             action_class=ac.value,
             target=target_label,
             reason=f"Aktion '{ac.value}' erfordert explizite Owner-Freigabe.",
             requires_owner_approval=True,
-            in_workspace=in_ws,
         )
 
     # Approval-pflichtige Aktionen
     if ac in _REQUIRE_APPROVAL:
-        # Write im Workspace autonom erlaubt
-        if ac == ActionClass.WRITE_FILE and in_ws:
-            return SandboxResult(
-                allowed=True,
-                action_class=ac.value,
-                target=target_label,
-                reason="Schreiben im Workspace ist autonom erlaubt.",
-                in_workspace=True,
-            )
-        # Write außerhalb Workspace → Owner-Approval
-        if ac == ActionClass.WRITE_FILE and not in_ws:
-            return SandboxResult(
-                allowed=False,
-                action_class=ac.value,
-                target=target_label,
-                reason="Schreiben außerhalb des Workspace erfordert Owner-Freigabe.",
-                requires_owner_approval=True,
-                in_workspace=False,
-            )
         return SandboxResult(
             allowed=False,
             action_class=ac.value,
             target=target_label,
             reason=f"Aktion '{ac.value}' erfordert explizite Nutzer-Freigabe mit Vorschau.",
             requires_approval=True,
-            in_workspace=in_ws,
-        )
-
-    # Lesen: nur im Workspace
-    if ac == ActionClass.READ_FILE:
-        if in_ws:
-            return SandboxResult(
-                allowed=True,
-                action_class=ac.value,
-                target=target_label,
-                reason="Lesen im Workspace ist erlaubt.",
-                in_workspace=True,
-            )
-        return SandboxResult(
-            allowed=False,
-            action_class=ac.value,
-            target=target_label,
-            reason="Lesen außerhalb des Workspace erfordert explizite Freigabe.",
-            requires_approval=True,
-            in_workspace=False,
         )
 
     return SandboxResult(
@@ -390,7 +449,6 @@ def assess_local_action(
         action_class=ac.value,
         target=target_label,
         reason=f"Aktion '{ac.value}' ist nicht im erlaubten Standardverhalten.",
-        in_workspace=in_ws,
     )
 
 
@@ -398,33 +456,44 @@ def enforce_sandbox(action_class: ActionClass | str, target_path: str | None = N
     """Wirft AILIZAError wenn die lokale Aktion nicht erlaubt ist."""
     result = assess_local_action(action_class, target_path)
     if not result.allowed:
-        raise AILIZAError(
-            message_de=result.reason,
-            code="sandbox_blocked",
-            safe_alternatives=[
-                "Aktion auf den freigegebenen AILIZA-Workspace beschränken",
+        if result.responsibility_handoff:
+            alternatives = [
+                "Workspace-Dateiaktion an den authentisierten Broker uebergeben",
+                "Administrator mit der kontrollierten Broker-Einrichtung beauftragen",
+                "Nicht-dateibasierte AILIZA-Funktion verwenden",
+            ]
+        else:
+            alternatives = [
+                "Aktion auf einen zulässigen Umfang beschränken",
                 "Explizite Nutzerfreigabe einholen",
                 "Administrator kontaktieren",
-            ],
+            ]
+        raise AILIZAError(
+            message_de=result.reason,
+            code="responsibility_handoff" if result.responsibility_handoff else "sandbox_blocked",
+            safe_alternatives=alternatives,
         )
 
 
 def sandbox_status() -> dict[str, Any]:
     """Gibt Sandbox-Konfiguration zurück (für Admin-Endpoint)."""
+    configured = os.getenv("AILIZA_WORKSPACE_PATH", "").strip()
     try:
-        ws = str(_get_workspace())
-        ws_ok = True
+        candidate = configured or str(_default_workspace_path())
     except WorkspaceError as exc:
-        ws = f"<nicht konfiguriert: {exc}>"
-        ws_ok = False
+        candidate = f"<nicht bestimmbar: {exc}>"
     return {
-        "workspace_path": ws,
-        "workspace_configured": ws_ok,
+        "workspace_path_candidate": candidate,
+        "workspace_configured": False,
+        "authenticated_broker_available": _authenticated_workspace_broker_available(),
+        "decision": "responsibility_handoff",
+        "reason": _WORKSPACE_BROKER_HANDOFF_REASON,
         "maintenance_mode": _is_maintenance_mode(),
         "always_blocked": sorted(a.value for a in _ALWAYS_BLOCKED),
         "require_owner_approval": sorted(a.value for a in _REQUIRE_OWNER_APPROVAL),
         "require_approval": sorted(a.value for a in _REQUIRE_APPROVAL),
-        "workspace_autonomous": sorted(a.value for a in _WORKSPACE_AUTONOMOUS),
+        "workspace_autonomous": [],
+        "workspace_autonomous_requested": sorted(a.value for a in _WORKSPACE_AUTONOMOUS),
     }
 
 

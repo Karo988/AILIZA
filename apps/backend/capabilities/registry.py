@@ -391,7 +391,10 @@ def check_capability(
         data_classes=data_classes,
         highest_risk_class=highest,
         redaction_applied=redaction_applied,
-        approval_given=approval_given or (not cap.requires_approval),
+        # `approval_given` is evidence about an actual decision.  A capability
+        # that does not require approval must not manufacture that evidence;
+        # policy rules may attach independent meaning to a real approval.
+        approval_given=approval_given,
         provider_profile_id=provider_profile_id,
         tool=capability_id,
         responsibility_domain=cap.responsibility_domain,

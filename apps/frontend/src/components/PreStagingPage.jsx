@@ -18,7 +18,7 @@ const STEPS = [
     help: [
       "Öffne groq.com und melde dich an.",
       'Gehe zu "API Keys".',
-      "Klicke auf den alten Schlüssel und wähle „Löschen" oder „Revoke".",
+      "Klicke auf den alten Schlüssel und wähle „Löschen“ oder „Revoke“.",
       "Erstelle danach einen neuen Schlüssel.",
     ],
   },
@@ -183,7 +183,6 @@ export default function PreStagingPage() {
         {STEPS.map((step, index) => {
           const done = !!completed[step.id]
           const active = index === currentStep && !done
-          const justDone = done && index === currentStep - 1
           const nextStep = STEPS[index + 1]
           return (
             <div
