@@ -6,24 +6,27 @@ AILIZA handelt autonom *innerhalb* definierter, geprüfter Arbeitsbereiche.
 Dateien erfolgen nie ohne explizite, nachvollziehbare Freigabe.
 
 Standardverhalten:
-  - Lesen:    nur freigegebene Dateien (AILIZA_WORKSPACE_PATH)
+  - Lesen:    nur im von AILIZA verwalteten Arbeitsbereich
   - Schreiben: nur im Workspace oder explizit gewähltem Zielordner
   - Löschen:  verboten (außer Wartungsmodus oder owner-Freigabe)
   - System:   keine Shell, keine Einstellungen, keine Programme
 
 Env-Variablen:
-  AILIZA_WORKSPACE_PATH   — Pfad des freigegebenen Arbeitsordners (kein Default — muss explizit gesetzt sein)
+  AILIZA_WORKSPACE_PATH   — optionaler, ueber AILIZA eingerichteter Arbeitsordner
   AILIZA_MAINTENANCE_MODE — "1"/"true" erlaubt destruktive Aktionen im Workspace für Admins
 
 Fail-closed bei:
-  - AILIZA_WORKSPACE_PATH nicht gesetzt, leer oder Verzeichnis existiert nicht
+  - Standard-Workspace nicht sicher anlegbar oder expliziter Pfad ungueltig
   - Symlinks die aus dem Workspace nach außen zeigen
   - Unbekannte ActionClass
   - Ungültige/nicht auflösbare Pfade
 """
 from __future__ import annotations
 
+import json
 import os
+import stat
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -111,6 +114,9 @@ _WORKSPACE_AUTONOMOUS: frozenset[ActionClass] = frozenset({
 # auch wenn sie zufällig im Workspace-Tree liegen könnten.
 _SENSITIVE_PATH_FRAGMENTS: tuple[str, ...] = (
     ".ssh", ".gnupg", ".aws", ".config/google-chrome", ".config/chromium",
+    "AppData/Local/Google/Chrome/User Data",
+    "AppData/Local/Microsoft/Edge/User Data",
+    "AppData/Roaming/Mozilla/Firefox/Profiles",
     ".mozilla", "Contacts", "Photos", "Downloads", "Documents",
     "Library/Application Support", "AppData", "NTUSER.DAT",
     "id_rsa", "id_ed25519", "id_ecdsa", ".pem", ".p12", ".pfx",
@@ -131,19 +137,171 @@ class WorkspaceError(Exception):
     """Workspace ist nicht korrekt konfiguriert — fail-closed."""
 
 
+_WORKSPACE_MARKER = ".ailiza-workspace.json"
+_WORKSPACE_MARKER_VERSION = 1
+
+
+def _is_unc_path(path: Path) -> bool:
+    """Netzwerkpfade sind keine lokal kontrollierte autonome Grenze."""
+    return str(path).startswith("\\\\") or str(path.anchor).startswith("\\\\")
+
+
+def _is_link_or_junction(path: Path) -> bool:
+    """True fuer Symlinks sowie Windows-Junctions und Reparse-Points."""
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        if is_junction and is_junction():
+            return True
+        attributes = getattr(
+            path.stat(follow_symlinks=False),
+            "st_file_attributes",
+            0,
+        )
+        return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    except OSError:
+        return True
+
+
+def _has_link_component(path: Path) -> bool:
+    """Prueft jeden bereits vorhandenen Bestandteil vor dem resolve()."""
+    absolute = path.expanduser().absolute()
+    current = Path(absolute.anchor) if absolute.anchor else Path()
+    start = 1 if absolute.anchor else 0
+    for part in absolute.parts[start:]:
+        current = current / part
+        if current.exists() and _is_link_or_junction(current):
+            return True
+    return False
+
+
+def _write_workspace_marker(workspace: Path) -> None:
+    marker = workspace / _WORKSPACE_MARKER
+    marker.write_text(json.dumps({
+        "version": _WORKSPACE_MARKER_VERSION,
+        "canonical_path": str(workspace.resolve()),
+    }, sort_keys=True), encoding="utf-8")
+
+
+def _has_valid_workspace_marker(workspace: Path) -> bool:
+    marker = workspace / _WORKSPACE_MARKER
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        return (
+            data.get("version") == _WORKSPACE_MARKER_VERSION
+            and data.get("canonical_path") == str(workspace.resolve())
+            and not _is_link_or_junction(marker)
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _create_controlled_workspace(workspace: Path, managed_root: Path) -> Path:
+    """Legt einen kontrollierten Workspace an und prueft seine echte Grenze."""
+    workspace = workspace.expanduser().absolute()
+    managed_root = managed_root.expanduser().absolute()
+    if _is_unc_path(workspace) or _is_unc_path(managed_root):
+        raise WorkspaceError("UNC- und Netzwerkpfade sind als Workspace gesperrt.")
+    if _has_link_component(managed_root) or _has_link_component(workspace):
+        raise WorkspaceError("Arbeitsbereich enthaelt einen Symlink oder eine Junction.")
+    preflight_root = managed_root.resolve()
+    preflight_workspace = workspace.resolve()
+    if preflight_workspace.parent != preflight_root:
+        raise WorkspaceError(
+            "Arbeitsbereich liegt nicht exakt unter dem kontrollierten AILIZA-Stamm."
+        )
+    if _is_forbidden_workspace_root(preflight_workspace):
+        raise WorkspaceError("Arbeitsbereich liegt in einem geschuetzten Pfad.")
+    try:
+        managed_root.mkdir(parents=True, exist_ok=True)
+        workspace.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise WorkspaceError(
+            "Der kontrollierte AILIZA-Arbeitsbereich konnte nicht angelegt werden."
+        ) from exc
+    if _has_link_component(managed_root) or _has_link_component(workspace):
+        raise WorkspaceError("Arbeitsbereich enthaelt einen Symlink oder eine Junction.")
+    resolved_root = managed_root.resolve()
+    resolved_workspace = workspace.resolve()
+    if resolved_workspace.parent != resolved_root:
+        raise WorkspaceError(
+            "Arbeitsbereich liegt nicht exakt unter dem kontrollierten AILIZA-Stamm."
+        )
+    if _is_forbidden_workspace_root(resolved_workspace):
+        raise WorkspaceError("Arbeitsbereich liegt in einem geschuetzten Pfad.")
+    try:
+        _write_workspace_marker(resolved_workspace)
+    except OSError as exc:
+        raise WorkspaceError(
+            "Der AILIZA-Arbeitsbereich konnte nicht sicher markiert werden."
+        ) from exc
+    return resolved_workspace
+
+
+def initialize_managed_workspace(base_dir: str | Path | None = None) -> Path:
+    """Erzeugt den plattformspezifischen, von AILIZA kontrollierten Standard."""
+    if base_dir is not None:
+        base = Path(base_dir)
+        root = base / "AILIZA"
+        return _create_controlled_workspace(root / "Workspace", root)
+    if os.name == "nt":
+        raw_base = os.getenv("LOCALAPPDATA", "").strip()
+        if not raw_base:
+            raise WorkspaceError("LOCALAPPDATA ist fuer den Standard-Workspace nicht gesetzt.")
+        base = Path(raw_base)
+        root = base / "AILIZA"
+        workspace = root / "Workspace"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+        root = base / "AILIZA"
+        workspace = root / "Workspace"
+    else:
+        base = Path(os.getenv("XDG_DATA_HOME", "").strip() or (Path.home() / ".local" / "share"))
+        root = base / "ailiza"
+        workspace = root / "workspace"
+    return _create_controlled_workspace(workspace, root)
+
+
+def initialize_custom_workspace(parent_dir: str | Path) -> Path:
+    """Sicherer Einrichtungsweg fuer einen benutzerdefinierten Elternordner."""
+    parent = Path(parent_dir).expanduser().absolute()
+    if _is_unc_path(parent):
+        raise WorkspaceError("UNC- und Netzwerkpfade sind als Workspace gesperrt.")
+    if _has_link_component(parent):
+        raise WorkspaceError("Der gewaehlte Speicherort ist nicht sicher.")
+    root = parent / "AILIZA"
+    return _create_controlled_workspace(root / "Workspace", root)
+
+
 def _get_workspace() -> Path:
     """
-    Gibt den konfigurierten Workspace zurück.
-    Wirft WorkspaceError wenn AILIZA_WORKSPACE_PATH nicht gesetzt oder Verzeichnis fehlt.
-    Kein Default — fail-closed bei fehlender Konfiguration.
+    Gibt den kontrollierten Workspace zurueck.
+    Ohne expliziten Pfad wird der plattformspezifische Standard angelegt.
+    Explizite Pfade muessen zuvor ueber den AILIZA-Einrichtungsweg erzeugt sein.
     """
-    raw = os.getenv("AILIZA_WORKSPACE_PATH", "").strip()
+    configured = os.getenv("AILIZA_WORKSPACE_PATH")
+    if configured is None:
+        if os.getenv("AILIZA_DISABLE_MANAGED_WORKSPACE", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            raise WorkspaceError("Der verwaltete Standard-Workspace ist deaktiviert.")
+        return initialize_managed_workspace()
+    raw = configured.strip()
     if not raw:
         raise WorkspaceError(
-            "AILIZA_WORKSPACE_PATH ist nicht gesetzt. "
-            "Der Workspace muss explizit konfiguriert sein."
+            "AILIZA_WORKSPACE_PATH ist leer."
         )
-    p = Path(raw).resolve()
+    if raw.startswith("\\\\"):
+        raise WorkspaceError("UNC- und Netzwerkpfade sind als Workspace gesperrt.")
+    lexical = Path(raw).expanduser().absolute()
+    if _is_unc_path(lexical):
+        raise WorkspaceError("UNC- und Netzwerkpfade sind als Workspace gesperrt.")
+    if _has_link_component(lexical):
+        raise WorkspaceError(
+            f"AILIZA_WORKSPACE_PATH '{raw}' enthaelt einen Symlink oder eine Junction."
+        )
+    p = lexical.resolve()
     if not p.exists():
         raise WorkspaceError(
             f"AILIZA_WORKSPACE_PATH '{raw}' existiert nicht. "
@@ -160,6 +318,11 @@ def _get_workspace() -> Path:
         raise WorkspaceError(
             f"AILIZA_WORKSPACE_PATH '{raw}' liegt in einem geschuetzten Pfad. "
             "Bitte einen eigenen, nicht sensitiven Arbeitsordner verwenden."
+        )
+    if not _has_valid_workspace_marker(p):
+        raise WorkspaceError(
+            f"AILIZA_WORKSPACE_PATH '{raw}' wurde nicht ueber den kontrollierten "
+            "AILIZA-Einrichtungsweg angelegt."
         )
     return p
 
@@ -207,6 +370,9 @@ def _is_forbidden_workspace_root(resolved: Path) -> bool:
     protected_sequences = {
         (".config", "google-chrome"), (".config", "chromium"),
         ("library", "application support"),
+        ("appdata", "local", "google", "chrome", "user data"),
+        ("appdata", "local", "microsoft", "edge", "user data"),
+        ("appdata", "roaming", "mozilla", "firefox", "profiles"),
     }
     for sequence in protected_sequences:
         width = len(sequence)

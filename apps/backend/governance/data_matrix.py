@@ -56,8 +56,9 @@ def _decide_single(
         if target in {DataTarget.EXTERNAL_LLM, DataTarget.MEMORY, DataTarget.VECTOR_DB}:
             return PolicyDecision.BLOCK
         if target in _EXTERNAL_TARGETS:
-            # Art.-9 data stays fail-closed for every external recipient.
-            # An ordinary approval is not an activation path.
+            # Kein Aktivierungspfad: auch approval_given=True aendert die
+            # Entscheidung fuer CRM oder E-Mail nicht. Die semantische
+            # Umstellung auf BLOCK gehoert in ein eigenes Governance-Paket.
             return PolicyDecision.APPROVAL_REQUIRED
         return PolicyDecision.ALLOW_WITH_NOTICE
 

@@ -1,3 +1,5 @@
+import pytest
+
 from apps.backend.governance.data_governance import DataClass, DataTarget
 from apps.backend.governance.data_matrix import check_data_target, PolicyDecision
 
@@ -31,6 +33,19 @@ def test_special_category_has_no_ordinary_approval_activation_path():
             assert with_approval not in {
                 PolicyDecision.ALLOW, PolicyDecision.ALLOW_WITH_NOTICE,
             }, target
+
+
+@pytest.mark.parametrize("target", [DataTarget.CRM, DataTarget.EMAIL])
+def test_special_category_business_recipient_cannot_be_activated(target):
+    """CRM und E-Mail bleiben einzeln gegen spaetere Aufweichung geschuetzt."""
+    for approval_given in (False, True):
+        decision = check_data_target(
+            [DataClass.SPECIAL_CATEGORY], target,
+            redaction_applied=False,
+            approval_given=approval_given,
+            provider_profile_active=True,
+        )
+        assert decision == PolicyDecision.APPROVAL_REQUIRED
 
 
 def test_personal_data_redact_required():

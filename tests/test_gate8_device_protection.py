@@ -32,6 +32,7 @@ from sandbox import (
     WorkspaceError,
     assess_local_action,
     enforce_sandbox,
+    initialize_custom_workspace,
     sandbox_status,
     _get_workspace,
     _ALWAYS_BLOCKED,
@@ -67,8 +68,7 @@ def _create_symlink_or_skip(
 
 @pytest.fixture
 def workspace_dir(tmp_path, monkeypatch):
-    ws = tmp_path / "ailiza_workspace"
-    ws.mkdir()
+    ws = initialize_custom_workspace(tmp_path)
     monkeypatch.setenv("AILIZA_WORKSPACE_PATH", str(ws))
     return ws
 
@@ -270,7 +270,7 @@ class TestEnforceSandbox:
         ws_file = str(workspace_dir / "safe.txt")
         enforce_sandbox(ActionClass.WRITE_FILE, ws_file)  # kein Raise
 
-    def test_enforce_raises_for_external_write(self, external_path):
+    def test_enforce_raises_for_external_write(self, workspace_dir, external_path):
         with pytest.raises(AILIZAError) as exc_info:
             enforce_sandbox(ActionClass.WRITE_FILE, external_path)
         assert exc_info.value.code == "sandbox_blocked"
@@ -299,19 +299,29 @@ class TestSandboxStatus:
         assert "require_approval" in status
         assert "workspace_autonomous" in status
 
-    def test_sandbox_status_always_blocked_non_empty(self):
+    def test_sandbox_status_always_blocked_non_empty(self, workspace_dir):
         status = sandbox_status()
         assert len(status["always_blocked"]) >= 7
 
-    def test_sandbox_status_maintenance_mode_default_false(self, monkeypatch):
+    def test_sandbox_status_maintenance_mode_default_false(self, workspace_dir, monkeypatch):
         monkeypatch.delenv("AILIZA_MAINTENANCE_MODE", raising=False)
         status = sandbox_status()
         assert status["maintenance_mode"] is False
 
-    def test_sandbox_status_workspace_not_configured(self, monkeypatch):
+    def test_sandbox_status_creates_managed_default(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
         status = sandbox_status()
-        assert status["workspace_configured"] is False
+        assert status["workspace_configured"] is True
+        if os.name == "nt":
+            expected = tmp_path / "AILIZA" / "Workspace"
+        elif sys.platform == "darwin":
+            expected = tmp_path / "Library" / "Application Support" / "AILIZA" / "Workspace"
+        else:
+            expected = tmp_path / "ailiza" / "workspace"
+        assert Path(status["workspace_path"]) == expected.resolve()
 
 
 # ── TestSymlinkTraversal ──────────────────────────────────────────────────────
@@ -361,6 +371,7 @@ class TestWorkspaceNotConfigured:
 
     def test_workspace_not_set_is_fail_closed(self, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("AILIZA_DISABLE_MANAGED_WORKSPACE", "true")
         result = assess_local_action(ActionClass.READ_FILE, "/tmp/file.txt")
         assert result.allowed is False
         assert "nicht konfiguriert" in result.reason.lower() or "workspace" in result.reason.lower()
@@ -377,11 +388,13 @@ class TestWorkspaceNotConfigured:
 
     def test_workspace_not_set_raises_workspace_error(self, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("AILIZA_DISABLE_MANAGED_WORKSPACE", "true")
         with pytest.raises(WorkspaceError):
             _get_workspace()
 
     def test_enforce_sandbox_fails_closed_without_workspace(self, monkeypatch):
         monkeypatch.delenv("AILIZA_WORKSPACE_PATH", raising=False)
+        monkeypatch.setenv("AILIZA_DISABLE_MANAGED_WORKSPACE", "true")
         with pytest.raises(AILIZAError) as exc_info:
             enforce_sandbox(ActionClass.WRITE_FILE, "/some/path.txt")
         assert exc_info.value.code == "sandbox_blocked"
