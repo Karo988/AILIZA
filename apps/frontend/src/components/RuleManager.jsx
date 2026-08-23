@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { userApi } from "../api/ailizaClient"
 
 export default function RuleManager({ userId }) {
@@ -6,14 +6,25 @@ export default function RuleManager({ userId }) {
   const [newRule, setNewRule] = useState("")
   const [loading, setLoading] = useState(true)
 
-  const load = useCallback(async () => {
+  async function load() {
     setLoading(true)
     const data = await userApi.rules(userId)
     setRules(data.rules || [])
     setLoading(false)
-  }, [userId])
+  }
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    let cancelled = false
+    async function loadInitialRules() {
+      const data = await userApi.rules(userId)
+      if (!cancelled) {
+        setRules(data.rules || [])
+        setLoading(false)
+      }
+    }
+    loadInitialRules()
+    return () => { cancelled = true }
+  }, [userId])
 
   async function addRule() {
     if (!newRule.trim()) return
