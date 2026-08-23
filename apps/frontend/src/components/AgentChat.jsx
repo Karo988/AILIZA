@@ -110,8 +110,6 @@ function AilizaBubble({ content, isError, isCredentialWarning, notice, governanc
 
   useEffect(() => {
     if (!content) return
-    setOpen(false)
-    setDisplayed("")
     // Kurze Pause dann aufgehen
     const openTimer = setTimeout(() => setOpen(true), 80)
     return () => clearTimeout(openTimer)
@@ -121,7 +119,6 @@ function AilizaBubble({ content, isError, isCredentialWarning, notice, governanc
     if (!open || !content) return
     // Text Zeichen für Zeichen von links einfließen lassen
     let i = 0
-    setDisplayed("")
     const interval = setInterval(() => {
       i++
       setDisplayed(content.slice(0, i))

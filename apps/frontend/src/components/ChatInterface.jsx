@@ -10,6 +10,12 @@ export default function ChatInterface({ userId, sessionId }) {
   const [pendingPii, setPendingPii] = useState(null)
   const [pendingMessage, setPendingMessage] = useState(null)
   const bottomRef = useRef(null)
+  const messageIdRef = useRef(0)
+
+  function nextMessageId() {
+    messageIdRef.current += 1
+    return messageIdRef.current
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -20,7 +26,7 @@ export default function ChatInterface({ userId, sessionId }) {
     setInput("")
     setLoading(true)
 
-    const userMsg = { role: "user", content: text, id: Date.now() }
+    const userMsg = { role: "user", content: text, id: nextMessageId() }
     setMessages((prev) => [...prev, userMsg])
 
     try {
@@ -40,7 +46,7 @@ export default function ChatInterface({ userId, sessionId }) {
     } catch {
       setMessages((prev) => [
         ...prev,
-        { role: "error", content: "Verbindungsfehler. Läuft der Backend-Server?", id: Date.now() },
+        { role: "error", content: "Verbindungsfehler. Läuft der Backend-Server?", id: nextMessageId() },
       ])
     }
     setLoading(false)
@@ -53,7 +59,7 @@ export default function ChatInterface({ userId, sessionId }) {
       {
         role: "assistant",
         content: answer,
-        id: Date.now(),
+        id: nextMessageId(),
         message_id: res.message_id,
         pii: res.pii_detected,
       },

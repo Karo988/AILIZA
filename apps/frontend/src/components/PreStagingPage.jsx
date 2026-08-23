@@ -18,7 +18,7 @@ const STEPS = [
     help: [
       "Öffne groq.com und melde dich an.",
       'Gehe zu "API Keys".',
-      "Klicke auf den alten Schlüssel und wähle „Löschen" oder „Revoke".",
+      "Klicke auf den alten Schlüssel und wähle „Löschen“ oder „Revoke“.",
       "Erstelle danach einen neuen Schlüssel.",
     ],
   },
