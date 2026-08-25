@@ -1,5 +1,11 @@
 # AILIZA — Abschlussbericht (Konsolidierung)
 
+> **HISTORISCH — Stand 19.06.2026, Basis vor allen Governance-Paketen.**
+> Dieses Dokument beschreibt einen überholten Zustand und wird **nicht**
+> fortgeschrieben. Aktuelle Wahrheitsquelle für den Umsetzungsstand ist
+> `docs/AILIZA_IMPLEMENTATION_STATUS.md` (nachgeprüft am 25.08.2026 gegen
+> `c19cc1d`). Der Inhalt bleibt als Nachweis des damaligen Stands erhalten.
+
 Datum: 2026-06-19
 
 ## 1. Geaenderte / erstellte Dateien
