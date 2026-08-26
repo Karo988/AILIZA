@@ -14,11 +14,62 @@ title = "AILIZA Secret-Scan"
 
 [extend]
 # Alle mitgelieferten Regeln bleiben aktiv, insbesondere die praezisen
-# anbieterspezifischen Regeln (AWS, GitHub, OpenAI, Anthropic, Groq,
-# private Schluessel usw.). Diese gelten AUSNAHMSLOS ueberall -- auch in
+# anbieterspezifischen Regeln (AWS, GitHub, OpenAI, Anthropic, private
+# Schluessel usw.). Diese gelten AUSNAHMSLOS ueberall -- auch in
 # Testdateien. Ein echter Anbieter-Schluessel in einem Test ist ein
 # echter Fund und wird nicht unterdrueckt.
+#
+# WICHTIG: Der mitgelieferte Regelsatz deckt NICHT alle von AILIZA
+# genutzten Anbieter ab. Siehe den Abschnitt "Eigene Anbieterregeln"
+# unten -- eine frueher an dieser Stelle stehende Behauptung, gitleaks
+# bringe eine Groq-Regel mit, war falsch.
 useDefault = true
+
+# ---------------------------------------------------------------------------
+# Eigene Anbieterregeln -- Luecke im mitgelieferten Regelsatz
+#
+# Belegt am 26.08.2026 gegen gitleaks 8.28.0 (config/gitleaks.toml des
+# offiziellen Release): Regeln existieren fuer openai-api-key,
+# anthropic-api-key, anthropic-admin-api-key, github-pat (und weitere
+# github-*), aws-access-token. Es existiert KEINE Regel fuer Groq und
+# KEINE fuer OpenRouter -- beide werden von AILIZA produktiv genutzt
+# (apps/backend/registry/provider_registry.yaml, apps/backend/providers/).
+#
+# Ohne die folgenden Regeln haengt die Erkennung eines Groq- oder
+# OpenRouter-Schluessels allein an der Heuristik "generic-api-key". Das
+# reicht nachweislich nicht. Empirischer Beleg (Wegwerf-Repository,
+# gitleaks 8.28.0, nur Standardregeln):
+#
+#   Datei                        Inhalt                        Ergebnis
+#   apps/backend/a.py            GROQ_API_KEY = "gsk_<52>"     gefunden
+#   apps/backend/b.py            wert         = "gsk_<52>"     UEBERSEHEN
+#
+# Identischer Schluessel, identischer Pfad -- nur der Variablenname
+# unterscheidet sich. "generic-api-key" wertet den Bezeichner-Kontext mit
+# aus und faellt aus, sobald der Schluessel nicht wie ein Schluessel
+# benannt ist. Zusammen mit der Testpfad-Abschwaechung weiter unten
+# entstuenden daraus drei Luecken gleichzeitig.
+#
+# Die folgenden Regeln greifen am Schluesselformat selbst und sind damit
+# unabhaengig von Variablenname UND Pfad. Sie gelten ueberall, auch in
+# Testpfaden -- die Allowlist weiter unten ist ausdruecklich an die
+# Regel-ID "generic-api-key" gebunden und beruehrt sie nicht.
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "ailiza-groq-api-key"
+description = "Groq API key (kein Bestandteil des gitleaks-Standardregelsatzes)"
+# Format laut apps/backend/registry/provider_registry.yaml:
+#   "Render-Env: GROQ_API_KEY=gsk_..."
+regex = '''\bgsk_[A-Za-z0-9]{52}\b'''
+keywords = ["gsk_"]
+entropy = 3.0
+
+[[rules]]
+id = "ailiza-openrouter-api-key"
+description = "OpenRouter API key (kein Bestandteil des gitleaks-Standardregelsatzes)"
+regex = '''\bsk-or-v1-[A-Fa-f0-9]{64}\b'''
+keywords = ["sk-or-v1-"]
 
 # ---------------------------------------------------------------------------
 # Einzige Abschwaechung: die Heuristik "generic-api-key" in Testpfaden.
@@ -46,23 +97,47 @@ useDefault = true
 # Push-Sicherheitsregel erlaubt ausdruecklich, klar gekennzeichnete
 # Testdaten als synthetisch zu behandeln.
 #
-# Warum als Regel-Allowlist und nicht als globale Allowlist: eine globale
-# [[allowlists]]-Pfadangabe schaltet in diesem gitleaks-Stand SAEMTLICHE
-# Regeln fuer den Pfad ab -- ein echter AWS- oder GitHub-Schluessel in
-# einer Testdatei bliebe dann unentdeckt. Die Bindung an genau eine
-# Regel-ID ist der engere und damit sicherere Schnitt. (Das Feld
-# `targetRules` in einer globalen Allowlist wirkt in diesem Stand nicht
-# und wurde deshalb bewusst nicht verwendet.)
+# Warum als Regel-Allowlist und nicht als globale Allowlist mit
+# `targetRules`: beides wurde am 26.08.2026 gegen 8.28.0 gemessen.
+#
+#   Variante                                     tests/      Produktivpfad
+#   globale Allowlist MIT targetRules            NICHT       aktiv
+#                                                unterdrueckt
+#   globale Allowlist OHNE targetRules           unterdrueckt aktiv (aber
+#                                                             ALLE Regeln
+#                                                             in tests/ tot)
+#   Regel-Allowlist unter [[rules]] (gewaehlt)   unterdrueckt aktiv
+#
+# `targetRules` in einer globalen Allowlist bleibt in diesem Stand ohne
+# Wirkung -- die Allowlist greift dann gar nicht. Der Fehler faellt zur
+# sicheren Seite aus (mehr Funde), taugt aber nicht als Konfiguration.
+# Eine globale Allowlist ohne `targetRules` wuerde umgekehrt SAEMTLICHE
+# Regeln fuer den Pfad abschalten -- ein echter AWS-, GitHub-, Groq- oder
+# OpenRouter-Schluessel in einer Testdatei bliebe dann unentdeckt. Die
+# Bindung an genau eine Regel-ID ist deshalb der einzige tragfaehige
+# Schnitt.
 #
 # Bewusst NICHT getan: die Regel global abschalten oder eine
 # .gitleaksignore mit 180 Fingerabdruecken anlegen. Ersteres wuerde echte
 # Funde in Produktivcode verschlucken, Letzteres wuerde kuenftige Funde in
 # denselben Dateien stillschweigend mit abdecken.
 #
-# Hinweis: die Pfadmuster sind repository-relativ und greifen daher im
-# `gitleaks git`-Modus, den der CI-Job verwendet. Im `dir`-Modus sind die
-# Pfade absolut und die Allowlist greift nicht -- das faellt zur sicheren
-# Seite aus (mehr Funde, nicht weniger).
+# VERBLEIBENDES RESTRISIKO, bewusst getragen und hier benannt: ein
+# hochentropischer Schluessel eines Anbieters, fuer den WEDER eine
+# gitleaks-Standardregel NOCH eine eigene Regel oben existiert, bliebe in
+# den unten gelisteten Pfaden unentdeckt. Fuer die vier heute genutzten
+# Anbieter (Groq, OpenAI, Anthropic, OpenRouter) besteht diese Luecke
+# nicht mehr. Wird ein weiterer Anbieter aufgenommen, ist zuerst zu
+# pruefen, ob gitleaks eine Regel dafuer mitbringt -- und falls nicht, hier
+# eine zu ergaenzen. tests/test_secret_scan_rules.py haelt genau das fest.
+#
+# Hinweis: die Pfadmuster sind repository-relativ. Der CI-Job nutzt beide
+# gitleaks-Modi; gemessen am 26.08.2026 gegen 8.28.0 greift die Allowlist
+# in beiden, sofern wie im Job als Scan-Wurzel "." uebergeben wird (Gegen-
+# probe: `gitleaks dir` ueber dieses Repository liefert 0 Funde, waehrend
+# ohne Allowlist allein .secrets.baseline 126 Treffer erzeugt). Eine
+# frueher an dieser Stelle stehende Behauptung, im `dir`-Modus greife die
+# Allowlist grundsaetzlich nicht, war damit falsch.
 # ---------------------------------------------------------------------------
 [[rules]]
 id = "generic-api-key"

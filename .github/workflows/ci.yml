@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       AILIZA_DATABASE_URL: "sqlite:///:memory:"
       AILIZA_EXTERNAL_LLM_ENABLED: "false"
@@ -17,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Python 3.11
         uses: actions/setup-python@v5
@@ -28,8 +33,29 @@ jobs:
       - name: Abhängigkeiten installieren
         run: pip install -r apps/backend/requirements-core.txt pytest pytest-asyncio httpx bcrypt pyotp python-jose[cryptography]
 
+      # gitleaks wird hier gebraucht, damit tests/test_secret_scan_rules.py
+      # tatsaechlich laeuft. Ohne die Installation ueberspringt pytest diese
+      # Datei stillschweigend (skipif) -- der Lauf saehe gruen aus, obwohl
+      # die Scanner-Selbsttests nie ausgefuehrt wurden. Genau das verhindert
+      # der Anti-Skip-Schritt weiter unten.
+      - name: gitleaks installieren (fuer die Scanner-Selbsttests)
+        uses: ./.github/actions/install-gitleaks
+
       - name: Tests (Root)
         run: pytest tests/ -v --tb=short
+
+      # Gegenprobe: ein "skipped" bei den Scanner-Selbsttests ist ein
+      # Fehler, kein zulaessiges Ergebnis. Ein Scanner-Test, der nie laeuft,
+      # ist genauso wertlos wie ein Scanner, der nichts findet.
+      - name: Scanner-Selbsttests duerfen nicht uebersprungen werden
+        run: |
+          set -euo pipefail
+          out="$(pytest tests/test_secret_scan_rules.py -q --tb=short)"
+          echo "$out"
+          if echo "$out" | grep -qiE '[0-9]+ skipped'; then
+            echo "::error::Scanner-Selbsttests wurden uebersprungen -- gitleaks fehlt oder skipif greift faelschlich."
+            exit 1
+          fi
 
       # apps/backend/tests/ ist verwaist (kaputte Imports auf nicht mehr
       # existierende Module: compliance_auditor, KillSwitch, policy_engine,
@@ -49,6 +75,9 @@ jobs:
   # und muss gefunden werden.
   secret-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -56,19 +85,12 @@ jobs:
           # Vollstaendige Historie -- ohne sie laesst sich der Commit-Bereich
           # nicht aufloesen und der Scan wuerde stillschweigend zu wenig pruefen.
           fetch-depth: 0
+          # Der Job liest nur; ein im Runner hinterlegtes Push-Token waere
+          # unnoetige Angriffsflaeche.
+          persist-credentials: false
 
-      - name: gitleaks installieren (feste Version)
-        env:
-          # Version bewusst gepinnt: ein automatisches "latest" wuerde die
-          # Regelmenge unangekuendigt aendern und den Job unvorhersehbar machen.
-          GITLEAKS_VERSION: "8.28.0"
-        run: |
-          set -euo pipefail
-          curl -sSfL -o /tmp/gitleaks.tar.gz \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
-          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
-          gitleaks version
+      - name: gitleaks installieren
+        uses: ./.github/actions/install-gitleaks
 
       - name: Prüfbereich bestimmen
         id: range
@@ -76,7 +98,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.sha }}
+          # Bei einem Pull Request ist github.sha der von GitHub erzeugte
+          # Merge-Commit, nicht der tatsaechliche Branch-Kopf. Fuer den
+          # Pruefbereich zaehlt der echte Kopf.
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FALLBACK_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           NULL_SHA="0000000000000000000000000000000000000000"
@@ -85,13 +111,19 @@ jobs:
           # (neuer Branch, Force-Push, fehlender Vorgaenger-Commit), wird die
           # VOLLSTAENDIGE Historie geprueft -- lieber zu viel als zu wenig.
           if [ "$EVENT" = "pull_request" ] && [ -n "${BASE_SHA:-}" ] \
-             && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            LOG_OPTS="--no-merges ${BASE_SHA}..${HEAD_SHA}"
-            SCOPE="Pull Request: ${BASE_SHA}..${HEAD_SHA}"
+             && [ -n "${PR_HEAD_SHA:-}" ] \
+             && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null \
+             && git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+            # Echter Merge-Base statt der Basis-Spitze: sonst wuerden bei
+            # zwischenzeitlich weitergelaufenem Zielbranch fremde Commits
+            # mitgeprueft oder eigene uebersehen.
+            MB="$(git merge-base "$BASE_SHA" "$PR_HEAD_SHA")"
+            LOG_OPTS="${MB}..${PR_HEAD_SHA}"
+            SCOPE="Pull Request: ${MB}..${PR_HEAD_SHA} (Merge-Base ermittelt)"
           elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$NULL_SHA" ] \
              && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            LOG_OPTS="--no-merges ${BEFORE}..${HEAD_SHA}"
-            SCOPE="Push: ${BEFORE}..${HEAD_SHA}"
+            LOG_OPTS="${BEFORE}..${FALLBACK_SHA}"
+            SCOPE="Push: ${BEFORE}..${FALLBACK_SHA}"
           else
             LOG_OPTS="--all"
             SCOPE="Vollständige Historie (Bereich nicht eindeutig bestimmbar — fail-closed)"
@@ -102,30 +134,64 @@ jobs:
           echo "### Secret-Scan — Prüfbereich" >> "$GITHUB_STEP_SUMMARY"
           echo "${SCOPE}" >> "$GITHUB_STEP_SUMMARY"
 
-      # --redact ist verbindlich: bei einem Fund werden ausschliesslich
-      # Kategorie, Datei und Zeile ausgegeben, NIE der gefundene Wert --
-      # auch nicht gekuerzt oder maskiert (Push-Sicherheitsregel,
-      # Abschnitt 2). Ein CI-Protokoll ist fuer jede Person einsehbar, die
-      # das Repository lesen darf; ein dort ausgegebenes Secret waere ein
-      # zweiter Vorfall zusaetzlich zum ersten.
+      # --redact schwaerzt den gefundenen Wert. Das allein genuegt nicht:
+      # der eingebaute --verbose-Ausdruck gibt zusaetzlich Author und Email
+      # aus -- personenbezogene Daten in einem Protokoll, das jede Person
+      # lesen kann, die das Repository lesen darf. Gemessen am 26.08.2026
+      # gegen 8.28.0. Deshalb kein --verbose, sondern eine eigene Vorlage,
+      # die ausschliesslich Regel, Datei, Zeile und Commit ausgibt
+      # (.github/gitleaks-report.tmpl).
+      #
+      # Hinweis: --report-template setzt das Format entgegen dem Hilfetext
+      # NICHT selbst; --report-format template muss mit angegeben werden,
+      # sonst bricht gitleaks mit "Unknown report format" ab.
       #
       # --exit-code 1 macht den Job bei einem Fund tatsaechlich rot. Kein
       # continue-on-error, keine reine Warnung.
-      - name: Secret-Scan
+      - name: Secret-Scan (Commit-Bereich)
         run: |
           set -euo pipefail
+          report="${RUNNER_TEMP}/gitleaks-range.txt"
+          status=0
           gitleaks git \
             --config .gitleaks.toml \
             --log-opts "${{ steps.range.outputs.log_opts }}" \
             --redact \
             --no-banner \
             --exit-code 1 \
-            --verbose \
-            .
+            --report-format template \
+            --report-template .github/gitleaks-report.tmpl \
+            --report-path "$report" || status=$?
+          if [ -s "$report" ]; then cat "$report"; fi
+          exit $status
+
+      # Zweiter Modus, bewusst zusaetzlich. Gemessen am 26.08.2026 gegen
+      # 8.28.0: ein Secret, das ausschliesslich bei einer Merge-Konflikt-
+      # aufloesung entsteht, findet der git-Modus NICHT -- auch nicht mit
+      # --log-opts "--all". Der Dateistand-Scan findet es. Umgekehrt findet
+      # nur der git-Modus ein Secret, das hinzugefuegt und spaeter wieder
+      # geloescht wurde. Erst beide zusammen decken beide Faelle ab; das
+      # blosse Weglassen von --no-merges reicht nachweislich nicht.
+      - name: Secret-Scan (Dateistand — Merge-Auflösungen)
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/gitleaks-dir.txt"
+          status=0
+          gitleaks dir \
+            --config .gitleaks.toml \
+            --redact \
+            --no-banner \
+            --exit-code 1 \
+            --report-format template \
+            --report-template .github/gitleaks-report.tmpl \
+            --report-path "$report" \
+            . || status=$?
+          if [ -s "$report" ]; then cat "$report"; fi
+          exit $status
 
       # Kein Upload eines Fundberichts als Artefakt: der Bericht enthaelt
       # Fundstellen und waere ein weiterer Ort, an dem sensible Treffer
-      # liegen. Datei und Zeile stehen bereits im Protokoll oben.
+      # liegen. Regel, Datei und Zeile stehen bereits im Protokoll oben.
 
   frontend-quality:
     runs-on: ubuntu-latest
