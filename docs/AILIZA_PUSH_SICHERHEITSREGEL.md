@@ -30,8 +30,8 @@ Deployment.
 
 1. Ziel-Remote und Ziel-Branch eindeutig feststellen.
 2. Neu zu übertragenden Commit-Bereich bestimmen.
-3. Diesen Bereich auf Secrets prüfen — **werkzeuggestützt, sobald ein
-   Scanner eingeführt ist** (siehe Übergangsregel unten).
+3. Diesen Bereich **werkzeuggestützt** auf Secrets prüfen (gitleaks,
+   siehe Abschnitt „Durchführung von Prüfschritt 3").
 4. Geänderte Inhalte ergänzend auf personenbezogene Daten, besondere
    Kategorien personenbezogener Daten und vertrauliche Unternehmensdaten
    prüfen.
@@ -50,25 +50,32 @@ Bei jedem Fund werden ausschließlich Kategorie, Datei und Zeile
 beziehungsweise Commit genannt. **Der gefundene Wert wird niemals
 ausgegeben**, auch nicht gekürzt oder maskiert.
 
-### Übergangsregel zu Prüfschritt 3
+### Durchführung von Prüfschritt 3
 
-Im Repository ist derzeit **kein** Secret-Scanner eingeführt (Stand siehe
-Abschnitt 11). Bis das nachgeholt ist, gilt:
+Eingeführtes Werkzeug ist **gitleaks**, Version 8.28.0, mit der
+Konfiguration `.gitleaks.toml` (Beleg: Abschnitt 11). Die frühere
+Übergangsregel mit Sichtprüfung ist damit entfallen. Eine reine
+Sichtprüfung ist als alleiniger Nachweis **nicht mehr zulässig**.
 
-- Prüfschritt 3 wird als **Sichtprüfung** des neu zu übertragenden
-  Commit-Bereichs durchgeführt.
-- Das Ergebnis ist im Nachweis ausdrücklich als `Sichtprüfung` zu
-  kennzeichnen — nicht als werkzeuggestützte Prüfung.
-- Eine so durchgeführte Prüfung kann GÜLTIG sein. Das Fehlen eines
-  Scanners allein sperrt den Push **nicht**.
+Der Prüfschritt wird an zwei Stellen ausgeführt:
 
-Diese Übergangsregel endet, sobald ein Scanner eingeführt ist. Ab dann
-ist die Sichtprüfung als alleiniger Nachweis nicht mehr zulässig.
+| Ort | Verbindlichkeit | Bemerkung |
+|---|---|---|
+| Lokal vor dem Push | **empfohlen** | Anleitung: `docs/SECRET_SCAN_LOKAL.md`. Findet das Problem, bevor es das Repository erreicht. |
+| CI-Job `secret-scan` | **verbindlich** | Läuft bei jedem Push und jedem Pull Request. Ein Fund macht den Job rot. |
 
-**Abgrenzung zu Abschnitt 10:** Ein *ausgefallenes* Werkzeug sperrt den
-Push — ein *noch nicht eingeführtes* Werkzeug nicht. Andernfalls wäre
-jeder Push bis zur Scanner-Einführung ungültig, was die Regel praktisch
-unanwendbar machen würde.
+Der verbindliche Nachweis ist das Ergebnis des CI-Jobs. Ist gitleaks
+lokal nicht installiert, darf gepusht werden — der CI-Scan holt den
+Prüfschritt nach. Das ist bewusst so: eine fehlende lokale Installation
+soll die Arbeit nicht blockieren, und der Scan wird dadurch nicht
+übersprungen, sondern nur später ausgeführt.
+
+**Abgrenzung zu Abschnitt 10:** Schlägt der CI-Job `secret-scan` wegen
+eines **Funds** fehl, gilt die Prüfung als UNGÜLTIG; weiteres Vorgehen
+nach Abschnitt 6. Fällt er aus einem **technischen Grund** aus
+(Download nicht erreichbar, Runner-Fehler), gilt Abschnitt 5: der Lauf
+darf einmal wiederholt werden. Ein dauerhaft ausgefallenes Werkzeug
+sperrt den Push.
 
 ## 3. Technische Schutzschichten
 
@@ -173,8 +180,8 @@ Für jeden geprüften Push sind mindestens festzuhalten:
 - Repository
 - Ziel-Remote und Ziel-Branch
 - geprüfter Commit-Bereich
-- Prüfmethode (Sichtprüfung oder werkzeuggestützt) und — falls ein
-  Werkzeug eingesetzt wurde — dessen Name und Version
+- Prüfmethode (lokaler Scan oder CI-Job `secret-scan`) sowie Name und
+  Version des eingesetzten Werkzeugs
 - Ergebnis
 - erkannte Ausnahmen
 - verantwortliche Freigabe, falls erforderlich
@@ -189,7 +196,7 @@ vollständigen Nachweis** der Einhaltung von Art. 32 DSGVO dar.
 ```
 Prüfbereich/Commits:       GÜLTIG / UNGÜLTIG
 Prüfung Secrets:           GÜLTIG / UNGÜLTIG / MANUELLE PRÜFUNG
-Methode Secret-Prüfung:    Sichtprüfung / <Werkzeug + Version>
+Methode Secret-Prüfung:    lokaler Scan / CI-Job secret-scan (gitleaks 8.28.0)
 Prüfung personenbezogen:   GÜLTIG / UNGÜLTIG / MANUELLE PRÜFUNG
 Prüfung Art.-9-Daten:      GÜLTIG / UNGÜLTIG / MANUELLE PRÜFUNG
 Prüfung interne Angaben:   GÜLTIG / UNGÜLTIG / MANUELLE PRÜFUNG
@@ -198,10 +205,10 @@ Werkzeugstatus:            GÜLTIG / UNGÜLTIG / NICHT ANWENDBAR
 Pushfreigabe:              JA / NEIN
 ```
 
-`Werkzeugstatus: NICHT ANWENDBAR` gilt genau dann, wenn ausschliesslich
-per Sichtprüfung geprüft wurde und kein Werkzeug eingesetzt war. Wurde
-ein Werkzeug eingesetzt, ist `GÜLTIG` oder `UNGÜLTIG` zu setzen —
-`NICHT ANWENDBAR` darf ein fehlgeschlagenes Werkzeug nicht verdecken.
+Seit der Einführung von gitleaks ist bei jedem Push ein Werkzeug im
+Einsatz. `Werkzeugstatus` ist daher auf `GÜLTIG` oder `UNGÜLTIG` zu
+setzen — `NICHT ANWENDBAR` darf ein fehlgeschlagenes Werkzeug nicht
+verdecken und ist für die Secret-Prüfung nicht mehr vorgesehen.
 
 ## 10. Harte Sperre
 
@@ -214,9 +221,11 @@ Kein Push bei:
 - unklarem Ziel-Remote
 - unvollständigem Commit-Prüfbereich
 - dauerhaft ausgefallenem Sicherheitswerkzeug — gemeint ist ein
-  **eingeführtes** Werkzeug, das nicht mehr zuverlässig läuft. Ein noch
-  nicht eingeführtes Werkzeug fällt unter die Übergangsregel in
-  Abschnitt 2 und sperrt den Push nicht.
+  **eingeführtes** Werkzeug, das nicht mehr zuverlässig läuft. Ein
+  einmaliger technischer Fehlschlag des CI-Jobs `secret-scan` fällt
+  dagegen unter Abschnitt 5 (einmalige Wiederholung zulässig). Eine
+  fehlende **lokale** gitleaks-Installation ist kein Ausfall — dafür
+  gilt die Aufteilung in Abschnitt 2.
 - unbelegter erforderlicher Freigabe
 
 Die Sperre ist fail-closed, aber auf den betroffenen Push beziehungsweise
@@ -227,14 +236,19 @@ angehalten.
 
 ## 11. Technisch belegte Absicherung
 
-Stand der Prüfung: **21. August 2026**, gegen `main`.
+Stand der Prüfung: **26. August 2026**, gegen `main`.
 Diese Liste ist im Repository überprüfbar.
 
 | Schutzmaßnahme | Status | Beleg |
 |---|---|---|
+| Secret-Scanner (gitleaks) | **vorhanden** | `.github/workflows/ci.yml`, Job **`secret-scan`**; Konfiguration `.gitleaks.toml`; Version fest auf 8.28.0 gepinnt |
+| Secret-Scan in der CI | **vorhanden** | Job `secret-scan`, läuft bei jedem Push und bei jedem Pull Request (`--exit-code 1`, kein `continue-on-error`) |
+| Scan des Commit-Bereichs statt nur des Dateistands | **vorhanden** | Schritt „Prüfbereich bestimmen" im Job `secret-scan`: Push `before..sha`, Pull Request `base..head`; bei nicht eindeutig bestimmbarem Bereich fail-closed auf die vollständige Historie |
+| Fundausgabe ohne Klartextwert | **vorhanden** | `--redact` im Job `secret-scan`; kein Upload eines Fundberichts als Artefakt |
+| Anleitung für den lokalen Scan | **vorhanden** | `docs/SECRET_SCAN_LOKAL.md` |
 | Verschlüsseltes lokales Backup | **vorhanden** | `scripts/ailiza_backup.py`, AES-256-GCM; Tests in `tests/test_ailiza_backup.py` |
 | Restore-Funktion | **vorhanden** | Restore-Pfad in `scripts/ailiza_backup.py`, getestet |
-| CI bei jedem Push | **vorhanden** | `.github/workflows/ci.yml` — drei Jobs: `test`, `postgres-audit`, `frontend-e2e` |
+| CI bei jedem Push | **vorhanden** | `.github/workflows/ci.yml` — Jobs: `test`, `secret-scan`, `frontend-quality`, `sandbox-platform`, `postgres-audit`, `frontend-e2e` |
 | PostgreSQL-Migrationsprüfung in CI | **vorhanden** | Job `postgres-audit` |
 | Frontend-Prüfung in CI | **vorhanden** | Job `frontend-e2e` |
 | `.env` von der Versionierung ausgeschlossen | **vorhanden, mit benannten Ausnahmen** | `.gitignore` blockiert `.env`. Getrackt und ausdrücklich freigegeben sind die zwei öffentlichen Vorlagen `.env.example` und `apps/frontend/.env.example` — beide ohne Schlüsselwerte. Eine dritte `.env`-Variante gibt es nicht. |
@@ -249,9 +263,7 @@ bezieht sich damit auf `tests/`, nicht auf den gesamten Testbestand.
 
 | Schutzmaßnahme | Status |
 |---|---|
-| gitleaks oder ein anderer Secret-Scanner | **nicht vorhanden** — kein Treffer in `.github/` |
-| Secret-Scan in der CI | **nicht vorhanden** — keiner der drei vorhandenen Jobs führt einen Secret-Scan aus |
-| Pre-Commit-Hooks | **nicht vorhanden** — kein `.pre-commit-config.yaml`, kein `.husky/` |
+| Pre-Commit-Hooks | **nicht vorhanden** — kein `.pre-commit-config.yaml`, kein `.husky/`. Bewusste Entscheidung: der lokale Scan ist eine Anleitung (`docs/SECRET_SCAN_LOKAL.md`), kein erzwungener Hook. Verbindlich ist die CI. |
 | Serverseitige Push Protection | **nicht nachgewiesen** — nur in den GitHub-Einstellungen prüfbar, nicht im Repository |
 | Branch-Schutz auf `main` | **nicht nachgewiesen** — nur in den GitHub-Einstellungen prüfbar |
 | Betriebsfähiges Backup-Verfahren | **nicht nachgewiesen** — Skript und Tests existieren; Ziel, Zeitplan, Schlüsselverwahrung, Verantwortlichkeit und regelmäßige Restore-Probe sind nicht dokumentiert |
@@ -262,9 +274,11 @@ Diese Punkte sind Empfehlungen. Sie sind **nicht** Bestandteil der
 verbindlichen Regel, solange sie nicht umgesetzt und in Abschnitt 11
 belegt sind.
 
-1. **Secret-Scanner einführen** (`gitleaks` oder gleichwertig) und in die
-   CI aufnehmen. Ohne Werkzeug bleibt Prüfschritt 3 eine Sichtprüfung
-   über die Commit-Historie — langsam und unzuverlässig.
+1. ~~**Secret-Scanner einführen** (`gitleaks` oder gleichwertig) und in die
+   CI aufnehmen.~~ — **erledigt am 26. August 2026.** Umgesetzt als Job
+   `secret-scan` in `.github/workflows/ci.yml` mit `.gitleaks.toml`;
+   lokale Anleitung in `docs/SECRET_SCAN_LOKAL.md`. Belegt in
+   Abschnitt 11.
 2. **Serverseitige Push Protection aktivieren.** Sie ist die einzige
    Schutzschicht, die nicht davon abhängt, ob eine Regel befolgt wurde.
 3. **Branch-Schutz auf `main`** einrichten und den Status dokumentieren.
@@ -275,7 +289,5 @@ belegt sind.
    Stelle sammeln, damit die Regel auditierbar wird und nicht nur
    beschrieben ist.
 
-Bis Punkt 1 umgesetzt ist, gilt die **Übergangsregel in Abschnitt 2**:
-Prüfschritt 3 wird als Sichtprüfung durchgeführt und im Nachweis
-ausdrücklich als solche gekennzeichnet. Das Fehlen eines Scanners sperrt
-den Push nicht — ein ausgefallenes eingeführtes Werkzeug dagegen schon.
+Die frühere Übergangsregel zu Prüfschritt 3 ist mit der Umsetzung von
+Punkt 1 **entfallen**. Es gilt ausschließlich der Wortlaut in Abschnitt 2.

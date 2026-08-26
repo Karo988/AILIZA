@@ -39,6 +39,94 @@ jobs:
       # - name: Tests (Backend, verwaist -- vorerst deaktiviert)
       #   run: PYTHONPATH=. pytest apps/backend/tests/ -v --tb=short
 
+  # Secret-Scan (docs/AILIZA_PUSH_SICHERHEITSREGEL.md, Abschnitt 3,
+  # Schutzschicht 3). Eigener Job, damit ein Fund sofort als Sicherheits-
+  # ereignis erkennbar ist und nicht in einem Testprotokoll untergeht.
+  #
+  # Geprueft wird der neu zu uebertragende COMMIT-BEREICH, nicht nur der
+  # aktuelle Dateistand: ein Secret, das in einem Zwischencommit hinzugefuegt
+  # und im naechsten wieder entfernt wurde, steht dauerhaft in der Historie
+  # und muss gefunden werden.
+  secret-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Vollstaendige Historie -- ohne sie laesst sich der Commit-Bereich
+          # nicht aufloesen und der Scan wuerde stillschweigend zu wenig pruefen.
+          fetch-depth: 0
+
+      - name: gitleaks installieren (feste Version)
+        env:
+          # Version bewusst gepinnt: ein automatisches "latest" wuerde die
+          # Regelmenge unangekuendigt aendern und den Job unvorhersehbar machen.
+          GITLEAKS_VERSION: "8.28.0"
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Prüfbereich bestimmen
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          NULL_SHA="0000000000000000000000000000000000000000"
+
+          # Fail-closed: laesst sich der Bereich nicht sicher bestimmen
+          # (neuer Branch, Force-Push, fehlender Vorgaenger-Commit), wird die
+          # VOLLSTAENDIGE Historie geprueft -- lieber zu viel als zu wenig.
+          if [ "$EVENT" = "pull_request" ] && [ -n "${BASE_SHA:-}" ] \
+             && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            LOG_OPTS="--no-merges ${BASE_SHA}..${HEAD_SHA}"
+            SCOPE="Pull Request: ${BASE_SHA}..${HEAD_SHA}"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$NULL_SHA" ] \
+             && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            LOG_OPTS="--no-merges ${BEFORE}..${HEAD_SHA}"
+            SCOPE="Push: ${BEFORE}..${HEAD_SHA}"
+          else
+            LOG_OPTS="--all"
+            SCOPE="Vollständige Historie (Bereich nicht eindeutig bestimmbar — fail-closed)"
+          fi
+
+          echo "log_opts=${LOG_OPTS}" >> "$GITHUB_OUTPUT"
+          echo "Prüfbereich: ${SCOPE}"
+          echo "### Secret-Scan — Prüfbereich" >> "$GITHUB_STEP_SUMMARY"
+          echo "${SCOPE}" >> "$GITHUB_STEP_SUMMARY"
+
+      # --redact ist verbindlich: bei einem Fund werden ausschliesslich
+      # Kategorie, Datei und Zeile ausgegeben, NIE der gefundene Wert --
+      # auch nicht gekuerzt oder maskiert (Push-Sicherheitsregel,
+      # Abschnitt 2). Ein CI-Protokoll ist fuer jede Person einsehbar, die
+      # das Repository lesen darf; ein dort ausgegebenes Secret waere ein
+      # zweiter Vorfall zusaetzlich zum ersten.
+      #
+      # --exit-code 1 macht den Job bei einem Fund tatsaechlich rot. Kein
+      # continue-on-error, keine reine Warnung.
+      - name: Secret-Scan
+        run: |
+          set -euo pipefail
+          gitleaks git \
+            --config .gitleaks.toml \
+            --log-opts "${{ steps.range.outputs.log_opts }}" \
+            --redact \
+            --no-banner \
+            --exit-code 1 \
+            --verbose \
+            .
+
+      # Kein Upload eines Fundberichts als Artefakt: der Bericht enthaelt
+      # Fundstellen und waere ein weiterer Ort, an dem sensible Treffer
+      # liegen. Datei und Zeile stehen bereits im Protokoll oben.
+
   frontend-quality:
     runs-on: ubuntu-latest
 
