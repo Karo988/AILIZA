@@ -59,15 +59,19 @@ useDefault = true
 [[rules]]
 id = "ailiza-groq-api-key"
 description = "Groq API key (kein Bestandteil des gitleaks-Standardregelsatzes)"
-# Praefix belegt: apps/backend/registry/provider_registry.yaml
-# ("Render-Env: GROQ_API_KEY=gsk_...") und die Groq-Dokumentation.
+# ACHTUNG -- KONSERVATIVE HEURISTIK, KEINE BELEGTE FORMATZUSAGE.
+# Belegt ist ausschliesslich das Praefix "gsk_"
+# (apps/backend/registry/provider_registry.yaml: "Render-Env:
+# GROQ_API_KEY=gsk_..." sowie die Groq-Dokumentation). Eine verbindliche
+# Laengen- oder Zeichensatzzusage von Groq liegt NICHT vor. Der Bereich
+# unten ist deshalb eine Abwaegung, keine Spezifikation: aendert Groq das
+# Format, kann diese Regel still falsch-negativ werden. Wer sich auf sie
+# verlaesst, muss das wissen.
 #
-# Die LAENGE ist bewusst ein Bereich statt exakt 52. Eine fruehere Fassung
-# verlangte genau 52 Zeichen -- diese Zahl stammte aus einem
-# Beispielschluessel, nicht aus einer verbindlichen Zusage von Groq. Bei
-# einem abweichenden oder kuenftig geaenderten Format waere die Regel
-# still falsch-negativ geworden, also genau so ausgefallen, wie sie es
-# verhindern soll.
+# Zur Laenge im Einzelnen: eine fruehere Fassung verlangte genau 52
+# Zeichen. Diese Zahl stammte aus einem Beispielschluessel. Bei einem
+# abweichenden Format waere die Regel still falsch-negativ geworden --
+# genau so ausgefallen, wie sie es verhindern soll.
 #
 # Der Bereich 40-60 ist eine gemessene Abwaegung, kein Schaetzwert:
 # {20,100} zusammen mit `_` und `-` im Zeichensatz erzeugte 28 Treffer auf

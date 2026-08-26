@@ -206,6 +206,23 @@ jobs:
           if [ -s "$report" ]; then cat "$report"; fi
           exit $status
 
+      # Dritter Scan, weil gitleaks eine belegte Luecke hat: es prueft
+      # ausschliesslich Datei-INHALTE, keine Pfadnamen -- gemessen am
+      # 26.08.2026 in beiden Modi. Genau so entstand der Vorfall in
+      # 06_release/SECURITY_INCIDENT_2026-06-25.md: der Schluessel stand im
+      # DATEINAMEN, der Inhalt war nur ein Platzhalter. Kein Regex-Wert
+      # haette das gefunden, weil der Pfad gar nicht erst gelesen wird.
+      #
+      # Das Skript nutzt dieselben Anbieterregeln aus .gitleaks.toml (eine
+      # Quelle, nicht zwei) und denselben Pruefbereich wie der Scan oben.
+      # Die Fundausgabe redigiert den Treffer IM PFAD -- der Wert steht
+      # sonst im Klartext im CI-Protokoll, das jede lesende Person sieht.
+      - name: Secret-Scan (Pfadnamen — gitleaks-Lücke)
+        run: |
+          set -euo pipefail
+          python3 scripts/scan_pfadnamen_auf_secrets.py \
+            --log-opts="${{ steps.range.outputs.log_opts }}"
+
       # Kein Upload eines Fundberichts als Artefakt: der Bericht enthaelt
       # Fundstellen und waere ein weiterer Ort, an dem sensible Treffer
       # liegen. Regel, Datei und Zeile stehen bereits im Protokoll oben.
