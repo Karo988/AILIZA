@@ -541,6 +541,41 @@ def _compare_schema_against_metadata(bind) -> _ComparisonResult:
         constraint_columns_by_name = {
             con.name: con.columns for con in expected_table.unique_constraints
         }
+
+        # Eigenstaendiger Vergleich der UniqueConstraints. Ohne ihn waere die
+        # Zuordnung unten eine Einbahnstrasse: sie entfernt nur Eintraege aus
+        # actual_indexes und ergaenzt nie expected_indexes. Ein in
+        # db_schema.py deklarierter, in der Datenbank aber vollstaendig
+        # FEHLENDER Constraint koennte damit nie in missing_idx auftauchen --
+        # die Pruefung bliebe gruen, obwohl eine Eindeutigkeitsregel fehlt.
+        # Nachgewiesen am 26.08.2026: vor dieser Ergaenzung meldete die
+        # Pruefung "ok", nachdem uq_tenant_domain aus der Datenbank entfernt
+        # worden war.
+        actual_constraints = {
+            uc["name"]: tuple(uc["column_names"])
+            for uc in inspector.get_unique_constraints(table_name)
+            if uc.get("name")
+        }
+        for con_name, con_columns in constraint_columns_by_name.items():
+            if con_name not in actual_constraints:
+                # SQLite meldet einen UNIQUE-Constraint je nach Herkunft als
+                # Constraint ODER nur als unique Index. Beides gilt als
+                # vorhanden -- gepruefft wird die fachliche Regel, nicht die
+                # Umsetzungsform.
+                als_index = actual_indexes.get(con_name)
+                if als_index and als_index["unique"] and als_index["columns"] == con_columns:
+                    continue
+                result.errors.append(
+                    f"{table_name}: UniqueConstraint {con_name} in db_schema.py "
+                    f"definiert, in der Datenbank nicht vorhanden"
+                )
+            elif actual_constraints[con_name] != con_columns:
+                result.errors.append(
+                    f"{table_name}.{con_name}: UniqueConstraint weicht ab "
+                    f"(db_schema.py={con_columns}, "
+                    f"Datenbank={actual_constraints[con_name]})"
+                )
+
         for idx_name, idx_info in list(actual_indexes.items()):
             if (
                 idx_name not in expected_indexes

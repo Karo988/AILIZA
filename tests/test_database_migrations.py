@@ -721,6 +721,62 @@ def test_drift_check_still_flags_undeclared_unique_index(tmp_path):
         engine.dispose()
 
 
+def test_drift_check_flags_missing_unique_constraint(tmp_path):
+    """Ein in db_schema.py deklarierter, in der Datenbank fehlender
+    UniqueConstraint muss auffallen.
+
+    Die Zuordnung von Constraint-Backing-Indizes ist eine Einbahnstrasse:
+    sie entfernt Eintraege aus der Ist-Liste, ergaenzt aber nie die
+    Soll-Liste. Ohne einen eigenstaendigen Constraint-Vergleich koennte
+    eine Migration, die `uq_tenant_domain` schlicht vergisst, unbemerkt
+    durchgehen -- die Pruefung meldete vor dieser Ergaenzung "ok".
+    """
+    import re
+    import sqlalchemy as sa
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend import alembic_adopt
+
+    db_url = f"sqlite:///{tmp_path / 'fehlender_constraint.db'}"
+    proc = _run_alembic("upgrade", "head", database_url=db_url)
+    assert proc.returncode == 0, proc.stderr
+
+    engine = sa.create_engine(db_url)
+    try:
+        assert alembic_adopt.check_schema_matches_metadata(engine).ok
+
+        # Tabelle ohne den UNIQUE-Constraint neu aufbauen, sonst alles
+        # unveraendert -- inklusive des regulaeren Index, damit wirklich
+        # nur der Constraint fehlt.
+        with engine.begin() as conn:
+            ddl = conn.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE name='tenant_business_domains'"
+            ).fetchone()[0]
+            ohne = re.sub(
+                r",?\s*CONSTRAINT uq_tenant_domain UNIQUE \([^)]*\)", "", ddl)
+            assert "uq_tenant_domain" not in ohne, "Constraint nicht entfernt"
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            conn.exec_driver_sql(
+                ohne.replace("tenant_business_domains", "tbd_ohne_uc", 1))
+            conn.exec_driver_sql(
+                "INSERT INTO tbd_ohne_uc SELECT * FROM tenant_business_domains")
+            conn.exec_driver_sql("DROP TABLE tenant_business_domains")
+            conn.exec_driver_sql(
+                "ALTER TABLE tbd_ohne_uc RENAME TO tenant_business_domains")
+            conn.exec_driver_sql(
+                "CREATE INDEX ix_tenant_business_domains_tenant "
+                "ON tenant_business_domains (tenant_id, is_enabled)")
+
+        errors = alembic_adopt.check_schema_matches_metadata(engine).errors
+        assert any("uq_tenant_domain" in e for e in errors), (
+            "Ein fehlender UniqueConstraint wurde NICHT gemeldet -- die "
+            f"Eindeutigkeitsregel koennte unbemerkt verlorengehen. "
+            f"Gemeldet: {errors}"
+        )
+    finally:
+        engine.dispose()
+
+
 def test_named_unique_constraints_are_known_to_the_check():
     """Die Zuordnung greift nur bei Name UND Spalten.
 
