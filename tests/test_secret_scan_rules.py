@@ -77,8 +77,15 @@ def _make_repo(tmp_path: Path, files: dict[str, str]) -> Path:
     return repo
 
 
-def _scan(repo: Path, log_opts: str = "--all --no-merges") -> list[dict]:
-    """Scannt das Wegwerf-Repo mit der echten AILIZA-Konfiguration."""
+def _scan(repo: Path, log_opts: str = "--all -m") -> list[dict]:
+    """Scannt das Wegwerf-Repo mit der echten AILIZA-Konfiguration.
+
+    Der Standardwert enthaelt bewusst `-m` und NICHT `--no-merges` -- genau
+    wie der CI-Job. Eine fruehere Fassung nutzte hier `--all --no-merges`;
+    damit belegte der Merge-Test lediglich, dass ein ausdruecklich
+    ausgeschlossener Merge nicht untersucht wird, und war als Nachweis
+    wertlos.
+    """
     report = repo / "report.json"
     subprocess.run(
         [
@@ -216,20 +223,11 @@ def _scan_dir(repo: Path) -> list[dict]:
     return json.loads(raw) if raw else []
 
 
-def test_secret_from_merge_resolution_needs_the_file_state_scan(tmp_path):
-    """Belegt, warum der CI-Job ZWEI Scans faehrt.
-
-    Ein Secret, das ausschliesslich bei einer Merge-Konfliktaufloesung
-    entsteht, steht in keinem der zusammengefuehrten Commits -- nur im
-    Merge-Commit selbst. Gemessen am 26.08.2026 gegen gitleaks 8.28.0
-    findet der git-Modus es NICHT, auch nicht mit `--log-opts --all`.
-    Der Dateistand-Scan findet es.
-
-    Schlaegt der erste Teil dieses Tests eines Tages fehl, weil gitleaks
-    Merge-Diffs mitscannt, ist das eine gute Nachricht -- dann kann der
-    zweite Scan im CI-Job neu bewertet werden. Bis dahin ist er noetig.
-    """
-    repo = tmp_path / "mergerepo"
+def _repo_mit_merge_secret(tmp_path: Path, name: str) -> Path:
+    """Baut ein Repo, in dem ein Secret ERST bei der Konfliktaufloesung
+    entsteht -- es steht damit in keinem der zusammengefuehrten Commits,
+    sondern ausschliesslich im Merge-Commit selbst."""
+    repo = tmp_path / name
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main", ".")
     _git(repo, "config", "user.email", "test@example.com")
@@ -252,27 +250,128 @@ def test_secret_from_merge_resolution_needs_the_file_state_scan(tmp_path):
 
     _git(repo, "checkout", "-q", "feature")
     subprocess.run(["git", "merge", "main", "-q"], cwd=repo, capture_output=True)
-    # Konfliktaufloesung fuehrt das Secret ausschliesslich hier ein.
     datei.write_text('GROQ_API_KEY = "%s"\n' % _synthetic_groq(), encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "merge aufgeloest")
+    return repo
+
+
+def test_merge_resolution_secret_requires_the_m_flag(tmp_path):
+    """Kernabsicherung fuer das `-m` im CI-Job.
+
+    `git log` zeigt fuer Merge-Commits ohne `-m` gar keinen Diff. Ein
+    Secret, das erst bei der Konfliktaufloesung entsteht, ist damit
+    unsichtbar -- auch bei `--all`. Erst `-m` macht es sichtbar.
+
+    Dieser Test vergleicht die Varianten ausdruecklich gegeneinander.
+    Eine fruehere Fassung rief nur den Standard `--all --no-merges` auf und
+    belegte damit lediglich, dass ein ausgeschlossener Merge nicht
+    untersucht wird -- als Nachweis wertlos.
+    """
+    repo = _repo_mit_merge_secret(tmp_path, "merge_m_flag")
+
+    ohne_flag = {f["RuleID"] for f in _scan(repo, log_opts="--all")}
+    ohne_merges = {f["RuleID"] for f in _scan(repo, log_opts="--all --no-merges")}
+    mit_m = {f["RuleID"] for f in _scan(repo, log_opts="--all -m")}
+
+    assert "ailiza-groq-api-key" in mit_m, (
+        "Mit -m muss die Merge-Aufloesung geprueft werden -- genau darauf "
+        "stuetzt sich der CI-Job."
+    )
+    assert "ailiza-groq-api-key" not in ohne_merges, (
+        "Mit --no-merges darf der Merge nicht geprueft werden; sonst sagt "
+        "der Vergleich in diesem Test nichts aus."
+    )
+    assert "ailiza-groq-api-key" not in ohne_flag, (
+        "Ohne -m findet gitleaks Merge-Aufloesungen jetzt doch. Das waere "
+        "eine gute Nachricht -- dann kann das -m im CI-Job neu bewertet "
+        "werden. Bis dahin ist es noetig."
+    )
+
+
+def test_merge_secret_deleted_later_is_missed_without_the_m_flag(tmp_path):
+    """Die Kombination, die BEIDE Scans einzeln verfehlen.
+
+    Entsteht ein Secret bei einer Merge-Aufloesung und wird es in einem
+    spaeteren Commit wieder geloescht, dann
+      - sieht der Dateistand-Scan es nicht mehr (aus dem Baum entfernt) und
+      - sieht der git-Modus es ohne `-m` ebenfalls nicht.
+    Nur `-m` faengt diesen Fall. Ohne diesen Test koennte das `-m` im
+    CI-Job spaeter als ueberfluessig entfernt werden.
+    """
+    repo = _repo_mit_merge_secret(tmp_path, "merge_dann_geloescht")
+    (repo / "datei.py").write_text("# entfernt\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "secret wieder entfernt")
+
+    assert "ailiza-groq-api-key" in {f["RuleID"] for f in _scan(repo, log_opts="--all -m")}, (
+        "Mit -m muss dieser Fall gefunden werden -- er ist der einzige "
+        "Schutz dagegen."
+    )
+    assert "ailiza-groq-api-key" not in {
+        f["RuleID"] for f in _scan(repo, log_opts="--all --no-merges")
+    }
+    assert "ailiza-groq-api-key" not in {f["RuleID"] for f in _scan_dir(repo)}, (
+        "Der Dateistand-Scan kann diesen Fall nicht abdecken -- das ist "
+        "der Grund, warum beide Scans noetig sind."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Bekannte Grenze: Secrets in DATEINAMEN
+# ---------------------------------------------------------------------------
+
+def test_known_limitation_secret_in_filename_is_not_detected(tmp_path):
+    """Haelt eine reale, nicht behebbare Grenze sichtbar.
+
+    gitleaks prueft ausschliesslich Datei-INHALTE, nicht Dateinamen --
+    gemessen am 26.08.2026 gegen 8.28.0, in beiden Modi (`git` und `dir`).
+    Ein Schluessel, der im Dateinamen steht, bleibt damit unentdeckt,
+    unabhaengig von jeder Regex.
+
+    Das ist kein theoretischer Fall: genau so ist der in
+    `06_release/SECURITY_INCIDENT_2026-06-25.md` dokumentierte Vorfall
+    entstanden -- der Schluessel stand im Dateinamen, der Dateiinhalt war
+    nur ein Platzhalter.
+
+    Dieser Test schlaegt bewusst NICHT fehl, solange die Grenze besteht.
+    Faengt gitleaks eines Tages auch Dateinamen, wird er rot -- dann ist
+    die Grenze aufgehoben und diese Dokumentation zu aktualisieren.
+    """
+    schluessel = _synthetic_groq()
+    repo = _make_repo(tmp_path, {
+        ".env%s" % schluessel: "PLACEHOLDER=nichts\n",
+    })
 
     aus_historie = {f["RuleID"] for f in _scan(repo)}
     aus_dateistand = {f["RuleID"] for f in _scan_dir(repo)}
 
     assert "ailiza-groq-api-key" not in aus_historie, (
-        "gitleaks findet Merge-Aufloesungen jetzt doch im git-Modus -- "
-        "gute Nachricht, aber der CI-Job und dieser Test sind dann neu zu "
-        "bewerten."
+        "gitleaks findet Secrets in Dateinamen jetzt im git-Modus -- gute "
+        "Nachricht. Grenze in .gitleaks.toml und in der Push-Regel "
+        "entsprechend aktualisieren."
     )
-    assert "ailiza-groq-api-key" in aus_dateistand, (
-        "Der Dateistand-Scan ist die einzige Absicherung gegen in Merge-"
-        "Aufloesungen eingefuehrte Secrets und muss hier anschlagen."
+    assert "ailiza-groq-api-key" not in aus_dateistand, (
+        "gitleaks findet Secrets in Dateinamen jetzt im dir-Modus -- gute "
+        "Nachricht. Grenze entsprechend aktualisieren."
+    )
+
+    # Gegenprobe: derselbe Schluessel IM INHALT wird sehr wohl gefunden.
+    # Ohne sie koennte der Test auch dann bestehen, wenn die Groq-Regel
+    # insgesamt kaputt waere.
+    zweiter = tmp_path / "inhalt"
+    zweiter.mkdir()
+    repo2 = _make_repo(zweiter, {
+        "apps/backend/x.py": 'KEY = "%s"\n' % schluessel,
+    })
+    assert "ailiza-groq-api-key" in {f["RuleID"] for f in _scan(repo2)}, (
+        "Derselbe Schluessel muss im Dateiinhalt gefunden werden -- sonst "
+        "sagt der Test oben nichts ueber Dateinamen aus."
     )
 
 
 # ---------------------------------------------------------------------------
-# 6. Konfiguration selbst
+# 7. Konfiguration selbst
 # ---------------------------------------------------------------------------
 
 def test_allowlist_is_bound_to_a_single_rule(tmp_path):

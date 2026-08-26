@@ -110,6 +110,18 @@ jobs:
           # Fail-closed: laesst sich der Bereich nicht sicher bestimmen
           # (neuer Branch, Force-Push, fehlender Vorgaenger-Commit), wird die
           # VOLLSTAENDIGE Historie geprueft -- lieber zu viel als zu wenig.
+          # -m ist sicherheitsrelevant und keine Feinheit: ohne dieses Flag
+          # zeigt `git log` fuer Merge-Commits gar keinen Diff, und ein
+          # Secret, das ERST bei einer Konfliktaufloesung entsteht, bleibt
+          # unentdeckt. Gemessen am 26.08.2026 gegen gitleaks 8.28.0:
+          #   --no-merges  -> nicht gefunden
+          #   (ohne Flag)  -> nicht gefunden
+          #   --cc         -> nicht gefunden
+          #   -m           -> GEFUNDEN
+          # Im Repository erzeugt -m keine zusaetzlichen Funde (0 vs. 0).
+          # Regressionstest: tests/test_secret_scan_rules.py.
+          MERGE_OPTS="-m"
+
           if [ "$EVENT" = "pull_request" ] && [ -n "${BASE_SHA:-}" ] \
              && [ -n "${PR_HEAD_SHA:-}" ] \
              && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null \
@@ -118,14 +130,14 @@ jobs:
             # zwischenzeitlich weitergelaufenem Zielbranch fremde Commits
             # mitgeprueft oder eigene uebersehen.
             MB="$(git merge-base "$BASE_SHA" "$PR_HEAD_SHA")"
-            LOG_OPTS="${MB}..${PR_HEAD_SHA}"
-            SCOPE="Pull Request: ${MB}..${PR_HEAD_SHA} (Merge-Base ermittelt)"
+            LOG_OPTS="${MERGE_OPTS} ${MB}..${PR_HEAD_SHA}"
+            SCOPE="Pull Request: ${MB}..${PR_HEAD_SHA} (Merge-Base ermittelt, Merge-Diffs mit -m)"
           elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$NULL_SHA" ] \
              && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            LOG_OPTS="${BEFORE}..${FALLBACK_SHA}"
-            SCOPE="Push: ${BEFORE}..${FALLBACK_SHA}"
+            LOG_OPTS="${MERGE_OPTS} ${BEFORE}..${FALLBACK_SHA}"
+            SCOPE="Push: ${BEFORE}..${FALLBACK_SHA} (Merge-Diffs mit -m)"
           else
-            LOG_OPTS="--all"
+            LOG_OPTS="--all ${MERGE_OPTS}"
             SCOPE="Vollständige Historie (Bereich nicht eindeutig bestimmbar — fail-closed)"
           fi
 
@@ -165,14 +177,19 @@ jobs:
           if [ -s "$report" ]; then cat "$report"; fi
           exit $status
 
-      # Zweiter Modus, bewusst zusaetzlich. Gemessen am 26.08.2026 gegen
-      # 8.28.0: ein Secret, das ausschliesslich bei einer Merge-Konflikt-
-      # aufloesung entsteht, findet der git-Modus NICHT -- auch nicht mit
-      # --log-opts "--all". Der Dateistand-Scan findet es. Umgekehrt findet
-      # nur der git-Modus ein Secret, das hinzugefuegt und spaeter wieder
-      # geloescht wurde. Erst beide zusammen decken beide Faelle ab; das
-      # blosse Weglassen von --no-merges reicht nachweislich nicht.
-      - name: Secret-Scan (Dateistand — Merge-Auflösungen)
+      # Zweiter Modus, bewusst zusaetzlich -- deckt den aktuellen Dateistand
+      # ab, unabhaengig davon, ueber welchen Commit-Weg ein Inhalt dorthin
+      # gelangt ist (Rebase, Cherry-Pick, Squash, manuelle Uebernahme).
+      #
+      # Korrektur zu einer frueheren Fassung dieses Kommentars: dort stand,
+      # der git-Modus koenne Merge-Aufloesungen grundsaetzlich nicht sehen
+      # und nur dieser Dateistand-Scan schliesse die Luecke. Das war falsch.
+      # Der git-Modus findet sie mit -m (siehe Schritt oben); umgekehrt
+      # verfehlt der Dateistand-Scan jedes Secret, das spaeter wieder
+      # geloescht wurde. Erst -m UND dieser Scan zusammen decken beide
+      # Richtungen ab -- der Dateistand-Scan allein haette die Kombination
+      # "in Merge-Aufloesung entstanden, spaeter geloescht" verfehlt.
+      - name: Secret-Scan (Dateistand)
         run: |
           set -euo pipefail
           report="${RUNNER_TEMP}/gitleaks-dir.txt"
