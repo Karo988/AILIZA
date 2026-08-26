@@ -179,6 +179,25 @@ jobs:
             exit 1
           fi
 
+      # Schema-Drift-Schutz (Issue #79). Die SQLite-Variante desselben
+      # Vergleichs laeuft bereits im "test"-Job mit `pytest tests/` und laesst
+      # ihn bei Abweichung rot werden. Die PostgreSQL-Variante wuerde dort
+      # mangels AILIZA_TEST_POSTGRES_ADMIN_URL still uebersprungen -- genau
+      # das verhindert dieser Schritt: hier ist ein Skip ein Fehler.
+      - name: Schema-Drift-Prüfung PostgreSQL (verpflichtend -- darf NICHT übersprungen werden)
+        run: |
+          set -o pipefail
+          pytest tests/test_database_migrations.py -k metadata_postgres -v --tb=short \
+            | tee /tmp/pg_schema_drift_output.txt
+          if grep -q "skipped" /tmp/pg_schema_drift_output.txt; then
+            echo "FEHLER: Schema-Drift-Prüfung gegen PostgreSQL wurde übersprungen -- in diesem Job nicht zulässig."
+            exit 1
+          fi
+          if ! grep -q "1 passed" /tmp/pg_schema_drift_output.txt; then
+            echo "FEHLER: Erwartet genau 1 bestandene Schema-Drift-Prüfung gegen PostgreSQL."
+            exit 1
+          fi
+
   # Eigener Job statt zusaetzlicher Schritt im bestehenden "test"-Job: ein
   # Browser- oder Server-Startfehler im E2E-Lauf soll das Python-Testergebnis
   # nicht unuebersichtlich machen (getrennte, klar zuordenbare CI-Ergebnisse).
