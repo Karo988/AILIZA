@@ -668,6 +668,90 @@ def test_drift_check_detects_injected_column(tmp_path):
         engine.dispose()
 
 
+def test_drift_check_still_flags_undeclared_unique_index(tmp_path):
+    """Gegenprobe zur UniqueConstraint-Zuordnung.
+
+    Benannte UniqueConstraints werden bewusst nicht mehr als Drift
+    gemeldet: PostgreSQL legt zu jedem UNIQUE CONSTRAINT einen
+    gleichnamigen Backing-Index an, der in `inspector.get_indexes()`
+    auftaucht, in `metadata_obj` aber unter `table.constraints` statt
+    `table.indexes` steht. Ohne diese Zuordnung meldete die Pruefung
+    `uq_tenant_domain` und `uq_domain_role_action` faelschlich als Drift --
+    aber nur unter PostgreSQL, weil SQLite dafuer ein
+    `sqlite_autoindex_*` anlegt, das ohnehin ausgefiltert wird.
+
+    Dieser Test stellt sicher, dass die Zuordnung eng bleibt: ein unique
+    Index, der in db_schema.py NIRGENDS deklariert ist -- weder als Index
+    noch als UniqueConstraint -- muss weiterhin auffallen. Sonst waere aus
+    der Korrektur eine Blindstelle geworden.
+    """
+    import sqlalchemy as sa
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend import alembic_adopt
+
+    db_url = f"sqlite:///{tmp_path / 'unique_gegenprobe.db'}"
+    proc = _run_alembic("upgrade", "head", database_url=db_url)
+    assert proc.returncode == 0, proc.stderr
+
+    engine = sa.create_engine(db_url)
+    try:
+        # Ausgangslage sauber -- sonst sagt der Test nichts aus.
+        assert alembic_adopt.check_schema_matches_metadata(engine).ok
+
+        # Ein unique Index direkt in der Datenbank, ohne jede Entsprechung
+        # in db_schema.py.
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                "CREATE UNIQUE INDEX uq_nirgends_deklariert "
+                "ON tenant_business_domains (tenant_id, domain_id, is_enabled)"
+            ))
+
+        errors = alembic_adopt.check_schema_matches_metadata(engine).errors
+        assert any("uq_nirgends_deklariert" in e for e in errors), (
+            "Ein nirgends deklarierter unique Index wurde NICHT als Drift "
+            f"gemeldet -- die UniqueConstraint-Zuordnung ist zu weit. "
+            f"Gemeldet: {errors}"
+        )
+
+        with engine.begin() as conn:
+            conn.execute(sa.text("DROP INDEX uq_nirgends_deklariert"))
+        assert alembic_adopt.check_schema_matches_metadata(engine).ok
+    finally:
+        engine.dispose()
+
+
+def test_named_unique_constraints_are_known_to_the_check():
+    """Die Zuordnung greift nur bei Name UND Spalten.
+
+    Belegt zugleich, dass die beiden real betroffenen Constraints
+    tatsaechlich aus metadata_obj gelesen werden -- ohne echte
+    PostgreSQL-Instanz nachvollziehbar.
+    """
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend import alembic_adopt
+
+    schema = alembic_adopt._metadata_reference_schema()
+
+    erwartet = {
+        "tenant_business_domains": ("uq_tenant_domain", ("tenant_id", "domain_id")),
+        "domain_role_permissions": (
+            "uq_domain_role_action",
+            ("tenant_id", "domain_id", "role_in_domain", "action"),
+        ),
+    }
+    for tabelle, (name, spalten) in erwartet.items():
+        constraints = {c.name: c.columns for c in schema[tabelle].unique_constraints}
+        assert name in constraints, (
+            f"{tabelle}: UniqueConstraint {name} wird nicht aus metadata_obj "
+            f"gelesen. Gefunden: {sorted(constraints)}"
+        )
+        assert constraints[name] == spalten, (
+            f"{tabelle}.{name}: Spalten weichen ab -- erwartet {spalten}, "
+            f"gelesen {constraints[name]}"
+        )
+
+
 @pytest.mark.parametrize("reflected,expected", [
     # SQLite-Schreibweisen
     ("DATETIME", "TIMESTAMP"), ("INTEGER", "INTEGER"),

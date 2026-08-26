@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import UniqueConstraint, create_engine, inspect
 
 try:
     from apps.backend.database import DATABASE_URL, engine
@@ -366,6 +366,12 @@ class _MetadataTable:
     indexes: tuple[_BaselineIndex, ...]
     unique_columns: frozenset[str]
     primary_key: tuple[str, ...]
+    # Benannte, mehrspaltige UniqueConstraint-Objekte. PostgreSQL legt zu
+    # jedem UNIQUE CONSTRAINT einen gleichnamigen Backing-Index an, der in
+    # inspector.get_indexes() auftaucht -- in metadata_obj steht er aber
+    # unter table.constraints, nicht unter table.indexes. Ohne diese
+    # Zuordnung meldet der Vergleich sie faelschlich als Drift.
+    unique_constraints: tuple[_BaselineIndex, ...] = ()
 
 
 def _metadata_reference_schema() -> dict[str, _MetadataTable]:
@@ -397,6 +403,15 @@ def _metadata_reference_schema() -> dict[str, _MetadataTable]:
             ),
             unique_columns=frozenset(col.name for col in table.columns if col.unique),
             primary_key=tuple(c.name for c in table.primary_key.columns),
+            unique_constraints=tuple(
+                _BaselineIndex(
+                    name=con.name,
+                    columns=tuple(c.name for c in con.columns),
+                    unique=True,
+                )
+                for con in table.constraints
+                if isinstance(con, UniqueConstraint) and con.name
+            ),
         )
     return schema
 
@@ -509,6 +524,28 @@ def _compare_schema_against_metadata(bind) -> _ComparisonResult:
                 idx_name not in expected_indexes
                 and idx_info["unique"]
                 and idx_info["columns"] in implicit_unique_columns
+            ):
+                del actual_indexes[idx_name]
+
+        # Benannte UniqueConstraints: PostgreSQL setzt jedes UNIQUE
+        # CONSTRAINT ueber einen gleichnamigen Backing-Index um, der in
+        # get_indexes() erscheint. SQLite tut das nicht -- dort entsteht ein
+        # sqlite_autoindex_*, das oben bereits ausgefiltert wird. Genau
+        # daher trat der Unterschied nur unter PostgreSQL auf.
+        #
+        # Ein solcher Index gilt als abgedeckt, wenn Name UND Spalten exakt
+        # einem UniqueConstraint aus db_schema.py entsprechen. Der Vergleich
+        # bleibt damit scharf: ein zusaetzlicher, nirgends deklarierter
+        # unique Index faellt weiterhin auf, und eine Abweichung in den
+        # Spalten ebenfalls.
+        constraint_columns_by_name = {
+            con.name: con.columns for con in expected_table.unique_constraints
+        }
+        for idx_name, idx_info in list(actual_indexes.items()):
+            if (
+                idx_name not in expected_indexes
+                and idx_info["unique"]
+                and idx_info["columns"] == constraint_columns_by_name.get(idx_name)
             ):
                 del actual_indexes[idx_name]
 
