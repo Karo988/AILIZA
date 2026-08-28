@@ -1,112 +1,125 @@
 # AILIZA Prompt Templates
 
-Dieses Dokument enthält Start-Prompts für die Arbeit im AILIZA-Projekt.
-
-Die Prompts helfen dabei, neue Chats sauber zu starten und immer mit dem richtigen Projektkontext zu arbeiten.
+Dieses Dokument enthält Start-Prompts für die Arbeit im AILIZA-Projekt. Sie sorgen dafür, dass jeder neue Agenten-Chat sofort den richtigen Projektkontext, die richtigen Regeln und die richtige Arbeitsweise hat.
 
 ## Grundregel
 
-Jeder neue Arbeitschat sollte klar sagen:
+Jeder neue Arbeitschat sagt klar:
 
-* Projektname
-* Repository
-* eigener Branch
-* eigener Aufgabenbereich
-* wichtige Arbeitsregeln
+- Projektname und Repository
+- eigener Branch (nie main)
+- Aufgabenpaket (nicht Einzelschritt)
+- Freigabe-Modell (siehe unten)
 
-So bleibt die Arbeit nachvollziehbar und sicher.
+## Freigabe-Modell (gilt für jeden Agenten, jederzeit)
 
-## Standard-Prompt für lokales Setup
+Zwei Kategorien, klar getrennt:
 
-Diesen Prompt nutzt ein Teammitglied, wenn der Rechner noch nicht eingerichtet ist.
+**Rein lesend — keine Rückfrage nötig:**
+Code lesen, grep/suchen, Status prüfen (`git status`, PR-Status, CI-Ergebnisse), Testläufe zur Analyse fahren, Dateien vergleichen. Das darf ein Agent jederzeit selbst tun, ohne vorher zu fragen.
+
+**Ändernd — immer erst ankündigen, dann auf OK warten:**
+Dateien ändern/anlegen/löschen, committen, pushen, mergen, PR erstellen/schließen, externe Aktionen (GitHub, Deploy, API-Calls mit echten Keys). Davor **immer**: kurz und leicht verständlich erklären, WAS gemacht werden soll und WARUM — dann auf mein OK warten. Erst danach ausführen.
+
+Bei einem ganzen Aufgabenpaket gilt das für das **Paket als Ganzes**: einmal das Gesamtvorhaben erklären (welche Dateien, welche Reihenfolge, welches Risiko), einmal OK abwarten, dann das Paket zusammenhängend abarbeiten — keine Einzelrückfrage pro Datei oder Schritt.
+
+## Der Profi-Arbeitsprompt (Standard für den Alltag)
 
 ```text
 Projekt: AILIZA
+Repository: https://github.com/Karo988/AILIZA
 
-Repository:
-https://github.com/m-imica/ailiza
+Ich arbeite allein an diesem Projekt, erfahren im Umgang mit Agenten/Claude Code/Codex.
+Ich arbeite in Paketen, nicht Schritt für Schritt.
 
-Ich bin Teammitglied und möchte mein lokales Setup selbst einrichten.
+Aufgabenpaket: [kurzer Titel]
+Betroffener Bereich: [z. B. Runtime/Governance, Frontend, Dokumentation, Tests]
+Branch: [Branch-Name — nie main]
 
-Mein Betriebssystem ist:
-[Windows oder Mac]
+Freigabe-Modell:
+- Rein lesende Prüfungen (Grep, Read, Status, Testläufe zur Analyse): keine Rückfrage.
+- Änderungen, Löschungen, Commits, Pushes, Merges, externe Aktionen: erst kurz und
+  leicht verständlich ankündigen (WAS, WARUM), dann auf mein OK warten. Bei einem
+  ganzen Paket reicht EINE Ankündigung + EIN OK für das Gesamtpaket, danach
+  zusammenhängend arbeiten statt dateiweise nachzufragen.
 
-Mein Aufgabenbereich ist:
-[Aufgabenbereich eintragen]
+Verbindliche Regeln (Details stehen in CLAUDE.md / VISION.md — bei Widerspruch gelten
+die Originale dort, nicht diese Zusammenfassung):
 
-Mein Branch soll heißen:
-[Branch eintragen]
+- Ein-Agent-Regel: Governance-kritischer Code (Redaction, Policy, Kill-Switch, Data
+  Governance) wird nur von einem Agenten gleichzeitig verändert — vor Beginn prüfen,
+  ob dort gerade woanders gearbeitet wird.
+- Nie direkt auf main. Kleine, nachvollziehbare Commits. Pull Request vor Merge —
+  gemergt wird nur nach meiner ausdrücklichen Freigabe, kein automatischer Merge.
+- Keine Secrets/API-Keys in Code, Commits, Logs oder Dateinamen (gitleaks prüft
+  Dateiinhalte, keine Dateinamen — das selbst mitdenken).
+- Governance-Pipeline nicht umgehen: Kill-Switch → Data Governance → Policy-Gateway →
+  Redaction → Provider-Orchestrator. Externe LLM-Calls nie direkt aus main.py.
+- Tests: `pytest tests/` ist die maßgebliche Suite (läuft in CI). `apps/backend/tests/`
+  nur auf ausdrückliche Anforderung.
+- Context-Disziplin: `apps/backend/main.py`, `apps/frontend/index.html`,
+  `apps/backend/database.py` nie vollständig lesen — gezielt grep + offset/limit,
+  breite Suchen an einen Explore-Subagenten geben.
+- Verständliche deutsche Fehlermeldungen, kein Stack-Trace an die Nutzerin.
+- Abschluss: ein zusammenfassender Bericht (geänderte Dateien, was/warum, offene
+  Punkte) — keine Narration jedes Einzelschritts währenddessen.
 
-Bitte führe mich Schritt für Schritt durch:
-
-1. Prüfen, ob Git installiert ist
-2. Prüfen, ob Python installiert ist
-3. Prüfen, ob VS Code installiert ist
-4. GitHub-Zugriff prüfen
-5. Repository klonen
-6. In den Projektordner wechseln
-7. Meinen Feature-Branch erstellen
-8. Python-Umgebung einrichten
-9. Backend testweise starten
-
-Wichtige Regeln:
-
-- Bitte jeden Befehl mit "WO: PowerShell", "WO: Terminal" oder "WO: Browser" kennzeichnen
-- Bitte immer nur einen Schritt auf einmal
-- Ich bin Anfänger/in
-- Nicht direkt auf main arbeiten
-- Keine fremden Module ohne Abstimmung ändern
-- Keine Secrets/API-Keys committen
-- Wenn Codex genutzt wird: Codex darf nur auf meinem Feature-Branch arbeiten
+Aufgabe im Detail:
+[hier die eigentliche Aufgabe einfügen]
 ```
 
-## Standard-Prompt für Arbeitschat
-
-Diesen Prompt nutzt ein Teammitglied, wenn das Setup bereits fertig ist und an einer Aufgabe gearbeitet werden soll.
+## Setup-Prompt (nur bei Bedarf, z. B. neuer Rechner)
 
 ```text
 Projekt: AILIZA
+Repository: https://github.com/Karo988/AILIZA
 
-Repository:
-https://github.com/m-imica/ailiza
+Ich richte ein neues/weiteres lokales Setup ein.
+Betriebssystem: [Windows/Mac/Linux]
+Branch: [Branch eintragen]
 
-Arbeitsmodus:
-Feature-Branch Workflow
+Bitte prüfen und einrichten:
+1. Git, Python, VS Code vorhanden/aktuell?
+2. GitHub-Zugriff vorhanden?
+3. Repository klonen, Branch anlegen
+4. Python-Umgebung einrichten (siehe requirements-core.txt)
+5. Backend testweise starten (uvicorn, siehe CLAUDE.md)
 
-Mein Branch:
-feature/...
-
-Mein Aufgabenbereich:
-...
-
-Wichtige Regeln:
-
-- Niemals direkt auf main arbeiten
-- Keine fremden Module ohne Abstimmung ändern
-- Kleine, nachvollziehbare Commits
-- Vor jedem Arbeitsbeginn: git pull
-- Änderungen immer dokumentieren
-- Pull Requests vor Merge erstellen
-- Keine Secrets/API-Keys committen
-
-Architekturprinzipien:
-
-- Governance-first
-- EU-AI-Act-konform
-- DSGVO-konform
-- Auditierbarkeit
-- Human Oversight
-- Runtime Enforcement
-- Controlled Autonomy
+Jeden Befehl mit "WO: PowerShell/Terminal/Browser" kennzeichnen.
+Freigabe-Modell wie oben: rein lesend ohne Rückfrage, Änderungen mit Ankündigung + OK.
 ```
 
-## Prompt für Documentation Community
+## Pull-Request-Review-Prompt
+
+```text
+Projekt: AILIZA
+
+Bitte prüfe diesen Pull Request — rein lesend, keine Änderung.
+
+- Richtiger Branch, nur passende Dateien geändert?
+- Verständlich und nachvollziehbar?
+- Keine Secrets/API-Keys (auch nicht im Dateinamen)?
+- README/Dokumentation angepasst, falls nötig?
+- Risiken für EU-AI-Act- oder DSGVO-Konformität?
+- Human Oversight und Auditierbarkeit weiterhin gegeben?
+- Governance-Pipeline-Reihenfolge eingehalten (kein direkter externer Call)?
+
+Ergebnis als einfache Empfehlung: Merge möglich / Änderungen erforderlich /
+Rückfrage erforderlich. Danach auf meine Entscheidung warten — kein Merge durch
+den Agenten selbst.
+```
+
+## Archiv — Rollen-Prompts für ein späteres Team
+
+Aktuell nicht in Gebrauch (Karo arbeitet allein, siehe Profi-Arbeitsprompt oben). Aufbewahrt, falls später Teammitglieder dazukommen.
+
+### Prompt für Documentation Community
 
 ```text
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Documentation Community
@@ -126,13 +139,13 @@ Wichtige Regeln:
 - Änderungen über Pull Request zusammenführen
 ```
 
-## Prompt für Frontend Dashboard
+### Prompt für Frontend Dashboard
 
 ```text
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Frontend Dashboard
@@ -152,13 +165,13 @@ Wichtige Regeln:
 - Pull Request vor Merge erstellen
 ```
 
-## Prompt für Business Governance
+### Prompt für Business Governance
 
 ```text
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Business Governance
@@ -178,13 +191,13 @@ Wichtige Regeln:
 - Pull Request vor Merge erstellen
 ```
 
-## Prompt für Governance QA
+### Prompt für Governance QA
 
 ```text
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Governance QA
@@ -204,13 +217,13 @@ Wichtige Regeln:
 - Pull Requests nachvollziehbar kommentieren
 ```
 
-## Prompt für Runtime Core
+### Prompt für Runtime Core
 
 ```text
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Mein Bereich:
 Runtime Core
@@ -231,13 +244,13 @@ Wichtige Regeln:
 - Pull Request vor Merge erstellen
 ```
 
-## Prompt für Codex-Nutzung
+### Prompt für Codex-Nutzung
 
 ```text
 Projekt: AILIZA
 
 Repository:
-https://github.com/m-imica/ailiza
+https://github.com/Karo988/AILIZA
 
 Codex darf nur auf folgendem Branch arbeiten:
 feature/...
@@ -256,32 +269,6 @@ Wichtige Regeln:
 - Vor Abschluss erklären, welche Dateien geändert wurden
 ```
 
-## Prompt für Pull-Request-Review
-
-```text
-Projekt: AILIZA
-
-Bitte prüfe diesen Pull Request.
-
-Achte besonders auf:
-
-- Wurde der richtige Branch verwendet?
-- Sind nur passende Dateien geändert?
-- Ist die Änderung verständlich?
-- Gibt es keine Secrets oder API-Keys?
-- Wurden README oder Dokumentation angepasst, falls nötig?
-- Gibt es Risiken für EU-AI-Act-Konformität?
-- Gibt es Risiken für DSGVO-Konformität?
-- Ist Human Oversight weiterhin berücksichtigt?
-- Ist Auditierbarkeit weiterhin möglich?
-
-Bitte gib eine einfache Review-Empfehlung:
-
-- Merge möglich
-- Änderungen erforderlich
-- Rückfrage erforderlich
-```
-
 ## Ziel
 
-Diese Prompt-Vorlagen sorgen dafür, dass alle Teammitglieder mit demselben Kontext, denselben Regeln und derselben Projektlogik arbeiten.
+Diese Prompt-Vorlagen sorgen dafür, dass jeder Agent mit demselben Kontext, demselben Freigabe-Modell und derselben Projektlogik arbeitet — als Paket, nicht in Einzelschritten.
