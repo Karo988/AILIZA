@@ -403,6 +403,7 @@ body{
         <div class="side-item" role="button" tabindex="0" onclick="showView('wissen',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📄</span><span>Vorlagen</span></div>
         <div class="side-item" role="button" tabindex="0" onclick="showView('skills',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">⚡</span><span>Skills</span></div>
         <div class="side-item" role="button" tabindex="0" onclick="showView('projects',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📁</span><span>Projekte</span><span class="side-count" id="proj-count">0</span></div>
+        <div class="side-item" role="button" tabindex="0" onclick="showView('memory-items',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🧠</span><span>Meine gespeicherten Infos</span></div>
       </div>
       <div id="proj-panel" style="padding:0 10px 8px 34px">
         <div id="proj-list" style="max-height:160px;overflow-y:auto"><div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine Projekte</div></div>
@@ -501,6 +502,13 @@ body{
         <div class="page-head"><div><div class="page-title">Projekte</div><div class="page-sub">Aufgaben verwalten und Chats zuordnen</div></div><button class="btn-primary" onclick="openProjModal()">＋ Neues Projekt</button></div>
         <div class="project-upload-status" id="project-upload-status" role="status" aria-live="polite"></div>
         <div class="grid" id="proj-grid"></div>
+      </div>
+    </div>
+    <div class="view" id="view-memory-items">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Meine gespeicherten Infos</div><div class="page-sub">Was AILIZA sich dauerhaft über dich gemerkt hat — hier ansehen, korrigieren oder löschen</div></div></div>
+        <div id="mem-items-msg" style="display:none;padding:8px 12px;border-radius:8px;margin-bottom:10px"></div>
+        <div class="grid" id="mem-items-grid"></div>
       </div>
     </div>
     <div class="view" id="view-skills">
@@ -1616,6 +1624,7 @@ function showView(name,el){
   if(el)el.classList.add("active");
   if(name==="status")loadStatus();
   if(name==="projects")renderProjects();
+  if(name==="memory-items")loadMemoryItems();
   if(name==="skills")renderSkills();
   if(name==="wissen")renderWissen();
   if(name==="domains")loadDomains();
@@ -2788,6 +2797,70 @@ function saveProject(){const name=document.getElementById("proj-name").value.tri
   serverCreateProject(p).then(created=>{p.serverId=created.id;p.version=created.version;saveProjects();}).catch(()=>{/* offline/nicht eingeloggt: bleibt lokal, Erst-Sync holt es spaeter nach */});}
 function openProjectChat(i){const p=projects[i];if(!p)return;saveCurrentChat();if(!p.chat_id){p.chat_id=createChatId(`project_${p.id}`);saveProjects()}currentChatId=p.chat_id;setActiveProject(p);localStorage.setItem(scopedKey("ailiza_current_chat_id"),currentChatId);chatHistory=JSON.parse(localStorage.getItem(getProjectChatStorageKey(p.chat_id))||"[]");context=chatHistory.map(m=>({role:m.role==="ai"?"assistant":m.role,content:m.content}));document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));document.getElementById("view-chat").classList.add("active");renderChat();renderPrivacyMemory();renderProjectList();renderRecent();document.getElementById("chat-input").focus()}
 function deleteProject(i){if(!confirm("Löschen?"))return;const p=projects[i];if(p?.chat_id)localStorage.removeItem(getProjectChatStorageKey(p.chat_id));if(p&&String(p.id)===String(activeProjectId)){setActiveProject(null);chatHistory=JSON.parse(localStorage.getItem(scopedKey("ailiza_chat"))||"[]");currentChatId=localStorage.getItem(scopedKey("ailiza_current_chat_id"))||null;renderChat()}if(p&&p.serverId)serverDeleteProject(p.serverId);if(p&&p.chat_id)serverDeleteChat(p.chat_id);projects.splice(i,1);saveProjects();renderProjects();renderProjectList()}
+
+// ── Persoenliche-Gedaechtnis-Uebersicht ("Meine gespeicherten Infos") ──────
+// Zeigt ausschliesslich, was der Server als eigene, aktive user_memory-
+// Eintraege liefert (GET /api/memory-items). Korrektur/Loeschung gehen
+// direkt gegen die neuen Endpunkte -- keine lokale Kopie ausserhalb dieser
+// Sitzung, kein Caching ueber den aktuellen Seitenaufruf hinaus.
+let memItemsCache=[];
+function memMsg(text,kind){
+  const el=document.getElementById("mem-items-msg");
+  if(!text){el.style.display="none";return;}
+  el.style.display="block";
+  el.style.background=kind==="ok"?"#E3F0EC":"#F7E7E2";
+  el.style.color=kind==="ok"?"#0E6B5A":"#8E3320";
+  el.textContent=text;
+}
+async function loadMemoryItems(){
+  const grid=document.getElementById("mem-items-grid");
+  grid.innerHTML='<div class="empty" style="grid-column:1/-1">Lädt…</div>';
+  memMsg("");
+  try{
+    const r=await fetch(`${API}/api/memory-items`,{headers:authHeaders()});
+    if(!r.ok){grid.innerHTML="";memMsg("Bitte zuerst anmelden.","err");return;}
+    const data=await r.json();
+    memItemsCache=data.items||[];
+    renderMemoryItems();
+  }catch(e){grid.innerHTML="";memMsg("Konnte gespeicherte Infos nicht laden.","err");}
+}
+function renderMemoryItems(){
+  const grid=document.getElementById("mem-items-grid");
+  if(!memItemsCache.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch nichts gespeichert.</div>';return;}
+  grid.innerHTML=memItemsCache.map(it=>`<div class="card" id="mem-item-${it.id}"><div class="card-h">${escapeHtml(it.title)}</div><div class="card-desc">${escapeHtml(it.content)}</div><div class="card-meta"><span class="meta-pill">${escapeHtml(it.category||"–")}</span><button class="meta-pill" onclick="editMemoryItem(${it.id})">✎ Bearbeiten</button><button class="meta-pill del" onclick="deleteMemoryItemUi(${it.id})">✕ Löschen</button></div></div>`).join("");
+}
+function editMemoryItem(id){
+  const it=memItemsCache.find(x=>x.id===id);
+  const card=document.getElementById(`mem-item-${id}`);
+  if(!it||!card)return;
+  card.innerHTML=`<input type="text" id="mem-edit-title-${id}" value="${escapeHtml(it.title)}" style="width:100%;margin-bottom:6px">
+    <textarea id="mem-edit-content-${id}" rows="3" style="width:100%;margin-bottom:6px">${escapeHtml(it.content)}</textarea>
+    <input type="text" id="mem-edit-category-${id}" value="${escapeHtml(it.category||"")}" placeholder="Kategorie" style="width:100%;margin-bottom:6px">
+    <div class="card-meta">
+      <button class="meta-pill" onclick="saveMemoryItemEdit(${id})">✓ Speichern</button>
+      <button class="meta-pill" onclick="renderMemoryItems()">Abbrechen</button>
+    </div>`;
+}
+async function saveMemoryItemEdit(id){
+  const title=document.getElementById(`mem-edit-title-${id}`).value.trim();
+  const content=document.getElementById(`mem-edit-content-${id}`).value.trim();
+  const category=document.getElementById(`mem-edit-category-${id}`).value.trim();
+  try{
+    const r=await fetch(`${API}/api/memory-items/${id}`,{method:"PATCH",headers:authHeaders(),body:JSON.stringify({title,content,category:category||null})});
+    if(!r.ok){const d=await r.json().catch(()=>({}));memMsg(d.detail||"Korrektur fehlgeschlagen.","err");return;}
+    memMsg("Gespeichert.","ok");
+    await loadMemoryItems();
+  }catch(e){memMsg("Korrektur fehlgeschlagen.","err");}
+}
+async function deleteMemoryItemUi(id){
+  if(!confirm("Diesen Eintrag wirklich löschen?"))return;
+  try{
+    const r=await fetch(`${API}/api/memory-items/${id}`,{method:"DELETE",headers:authHeaders()});
+    if(!r.ok){memMsg("Löschen fehlgeschlagen.","err");return;}
+    memItemsCache=memItemsCache.filter(x=>x.id!==id);
+    renderMemoryItems();
+  }catch(e){memMsg("Löschen fehlgeschlagen.","err");}
+}
 function renderProjects(){document.getElementById("proj-count").textContent=projects.length;const grid=document.getElementById("proj-grid");if(!projects.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Noch keine Projekte.</div>';return}grid.innerHTML=projects.map((p,i)=>`<div class="card" onclick="openProjectChat(${i})"><div class="card-h">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.desc||"")}</div><div class="card-meta"><span class="meta-pill ${p.prio==="Hoch"?"hi":""}">  ${escapeHtml(p.prio)}</span><button class="meta-pill del" onclick="event.stopPropagation();deleteProject(${i})">✕</button></div>${renderProjectFiles(p,i)}<div class="card-openchat">💬 Chat öffnen ›</div></div>`).join("")}
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}

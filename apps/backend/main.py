@@ -68,6 +68,7 @@ try:
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
+        list_active_memory_items_for_user, update_memory_item, delete_memory_item,
         export_user_data, delete_own_account_data,
     )
     from .auth.models import UserCreate, UserInDB
@@ -118,6 +119,7 @@ except ImportError:
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
+        list_active_memory_items_for_user, update_memory_item, delete_memory_item,
         export_user_data, delete_own_account_data,
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
         get_accessible_agent_run, get_approval_request,
@@ -4653,6 +4655,65 @@ def api_reject_memory_suggestion(
     except MemoryValidationError as exc:
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.") from exc
     return {"status": "rejected", "id": suggestion_id}
+
+
+# ── Persoenliche-Gedaechtnis-Uebersicht: eigene, bereits bestaetigte
+# user_memory-Eintraege ansehen/korrigieren/loeschen. Ergaenzt die Vorschlags-
+# Inbox oben (die nur *neue* Vorschlaege zeigt) und /api/me/export (reiner
+# DSGVO-Rohexport, keine gezielte Einzelaktion). company_memory ist hier
+# technisch ausgeschlossen (list_active_memory_items_for_user/update_/
+# delete_memory_item filtern zwingend auf scope="user_memory").
+@app.get("/api/memory-items")
+def api_list_memory_items(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    items = list_active_memory_items_for_user(user.user_id, user.tenant_id)
+    return {"items": items, "count": len(items)}
+
+
+class MemoryItemUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=300)
+    content: str | None = None
+    category: str | None = Field(default=None, max_length=64)
+
+    model_config = {"extra": "forbid"}
+
+
+@app.patch("/api/memory-items/{item_id}")
+def api_update_memory_item(
+    item_id: int,
+    payload: MemoryItemUpdate,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    try:
+        update_memory_item(
+            item_id, tenant_id=user.tenant_id, owner_user_id=user.user_id,
+            title=payload.title, content=payload.content, category=payload.category,
+        )
+    except MemoryValidationError as exc:
+        if "nicht gefunden" in str(exc):
+            raise HTTPException(status_code=404, detail="Eintrag nicht gefunden.") from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    write_audit_entry(action="memory_item.updated", metadata={"item_id": item_id, "user_id": user.user_id},
+                      tenant_id=user.tenant_id)
+    return {"status": "updated", "id": item_id}
+
+
+@app.delete("/api/memory-items/{item_id}")
+def api_delete_memory_item(
+    item_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    try:
+        delete_memory_item(item_id, tenant_id=user.tenant_id, owner_user_id=user.user_id)
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden.") from exc
+    write_audit_entry(action="memory_item.deleted", metadata={"item_id": item_id, "user_id": user.user_id},
+                      tenant_id=user.tenant_id)
+    return {"status": "deleted", "id": item_id}
 
 
 # ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ─────────

@@ -1697,6 +1697,63 @@ def list_active_memory_items_for_user(user_id: str, tenant_id: str = DEFAULT_TEN
     return [dict(r) for r in rows if r["expires_at"] is None or _as_aware(r["expires_at"]) > now]
 
 
+def update_memory_item(item_id: int, *, tenant_id: str, owner_user_id: str,
+                       title: str | None = None, content: str | None = None,
+                       category: str | None = None) -> None:
+    """Korrektur eines eigenen user_memory-Eintrags (Art. 16 DSGVO,
+    Berichtigungsrecht). WHERE-Klausel filtert direkt in der DB-Abfrage auf
+    scope/owner/tenant/status (TOCTOU-sicher, wie reject_memory_suggestion) --
+    company_memory und fremde Eintraege sind damit technisch ausgeschlossen,
+    nicht nur per Konvention. Einfache Ueberschreibung ohne Versionshistorie:
+    Zweck einer Korrektur ist, dass der falsche alte Wert nicht weiter
+    aufbewahrt wird (Datenminimierung, Art. 5 Abs. 1 lit. c DSGVO)."""
+    tenant_id = _require_tenant(tenant_id, funktion="update_memory_item")
+    if not owner_user_id:
+        raise MemoryValidationError("update_memory_item: owner_user_id fehlt.")
+    values: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+    if title is not None:
+        values["title"] = title
+    if content is not None:
+        if _contains_secret_content(content):
+            raise MemoryValidationError("Inhalt enthaelt ein erkanntes Secret -- Korrektur abgelehnt.")
+        values["content"] = content
+    if category is not None:
+        values["category"] = category
+    query = (
+        update(memory_items)
+        .where(memory_items.c.id == item_id)
+        .where(memory_items.c.scope == "user_memory")
+        .where(memory_items.c.owner_user_id == owner_user_id)
+        .where(memory_items.c.tenant_id == tenant_id)
+        .where(memory_items.c.status == "active")
+    )
+    with engine.begin() as conn:
+        result = conn.execute(query.values(**values))
+    if result.rowcount == 0:
+        raise MemoryValidationError("Eintrag nicht gefunden.")
+
+
+def delete_memory_item(item_id: int, *, tenant_id: str, owner_user_id: str) -> None:
+    """Soft-Delete eines eigenen user_memory-Eintrags (status='deleted'),
+    gleiches TOCTOU-sicheres WHERE-Muster wie update_memory_item(). Kein
+    Hard-Delete, passend zu _soft_delete_owned_memory_items()."""
+    tenant_id = _require_tenant(tenant_id, funktion="delete_memory_item")
+    if not owner_user_id:
+        raise MemoryValidationError("delete_memory_item: owner_user_id fehlt.")
+    query = (
+        update(memory_items)
+        .where(memory_items.c.id == item_id)
+        .where(memory_items.c.scope == "user_memory")
+        .where(memory_items.c.owner_user_id == owner_user_id)
+        .where(memory_items.c.tenant_id == tenant_id)
+        .where(memory_items.c.status == "active")
+    )
+    with engine.begin() as conn:
+        result = conn.execute(query.values(status="deleted", updated_at=datetime.now(timezone.utc)))
+    if result.rowcount == 0:
+        raise MemoryValidationError("Eintrag nicht gefunden.")
+
+
 def list_active_memory_items_for_org(tenant_id: str) -> list[dict[str, Any]]:
     """Nur company_memory desselben Mandanten, aktiv, nicht abgelaufen."""
     now = datetime.now(timezone.utc)
