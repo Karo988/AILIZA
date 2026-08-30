@@ -1,5 +1,11 @@
 # Offene Punkte (AILIZA) — Stand 2026-06-19
 
+> **HISTORISCH — Stand 19.06.2026, Basis vor allen Governance-Paketen.**
+> Dieses Dokument beschreibt einen überholten Zustand und wird **nicht**
+> fortgeschrieben. Aktuelle Wahrheitsquelle für den Umsetzungsstand ist
+> `docs/AILIZA_IMPLEMENTATION_STATUS.md` (nachgeprüft am 25.08.2026 gegen
+> `c19cc1d`). Der Inhalt bleibt als Nachweis des damaligen Stands erhalten.
+
 ## Erledigt in dieser Session
 - [x] Legacy-Gateway-Tests (test_gateway.py) gefixt — 42 bestanden
 - [x] CORS konfigurierbar via AILIZA_CORS_ORIGINS

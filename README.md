@@ -12,6 +12,16 @@ technische Abnahme und der genaue Nachweis stehen in
 `docs/AILIZA_ABLAUFPLAN_2026-08-20.md`. Eine Produktionsfreigabe ist damit
 nicht verbunden.
 
+Fuer neue Agenten-Arbeiten (Codex und Claude Code) gelten als kompakter
+Einstieg:
+
+- [`docs/AILIZA_HANDOFF_ENTWICKLUNG.md`](docs/AILIZA_HANDOFF_ENTWICKLUNG.md) — einziges Entwicklungs-Handoff
+- [`docs/AILIZA_HANDOFF_ANWENDER.md`](docs/AILIZA_HANDOFF_ANWENDER.md) — kontrolliert lernendes Anwendergedaechtnis
+- [`AGENTS.md`](AGENTS.md) — verbindliche Repository-Anweisungen fuer Codex
+- [`CLAUDE.md`](CLAUDE.md) — verbindliche Repository-Anweisungen fuer Claude Code
+- [`05_prompts/CODEX_TOKEN_KONTEXT_STATUS_PROMPT.md`](05_prompts/CODEX_TOKEN_KONTEXT_STATUS_PROMPT.md) — Modell-/Kontext-/Nutzungsregeln fuer Codex
+- [`05_prompts/CLAUDE_TOKEN_KONTEXT_STATUS_PROMPT.md`](05_prompts/CLAUDE_TOKEN_KONTEXT_STATUS_PROMPT.md) — Modell-/Kontext-/Nutzungsregeln fuer Claude Code
+
 ---
 
 ## Eingefrorene Basis
@@ -57,8 +67,8 @@ nicht verbunden.
 
 - [ ] Produktions-Bestandsprüfung der Memory-Invarianten ausführen (Workflow „Memory-Scope-Audit" manuell auslösen) — Voraussetzung, bevor die Anbindung des Memory-Kerns an den zentralen Permission-Evaluator (`apps/backend/permissions.py`) beginnt
 - [ ] Memory-Governance UI (`GET /memory/facts`, `DELETE /memory/facts/{id}`)
-- [ ] Freigabe-UI (`GET /admin/approvals` Frontend-Seite)
-- [ ] Fehlende Audit-Events (`provider.blocked`, `capability.blocked`, `memory.stored`, `memory.deleted`, `approval.granted`, `approval.rejected`)
+- [ ] Freigabe-UI (`GET /approvals` Frontend-Seite — README nannte bisher faelschlich `/admin/approvals`)
+- [ ] Fehlende Audit-Events: `provider.blocked`, `capability.blocked`, `memory.stored` (`approval.approved`/`approval.rejected` existieren bereits in `routers/approvals.py`; ob der Name auf `approval.granted` vereinheitlicht wird, ist offen — siehe `docs/AILIZA_HANDOFF_ENTWICKLUNG.md`, Abschnitt 4)
 - [ ] CORS Wildcard → explizite Origins (vor Produktion)
 - [ ] Externes Backupziel, Zeitplan, Alarmierung und verantwortliche Person festlegen
 - [ ] TLS-Terminierung (vor Produktion)

@@ -1,5 +1,21 @@
 # AILIZA — Projektkontext fuer Claude Code
 
+## Pflichtstart
+
+1. Lies zuerst `docs/AILIZA_HANDOFF_ENTWICKLUNG.md` — aktueller Einstieg fuer
+   Entwicklungs-Tasks (Kernpfad, offene Entscheidungen, Produktionssperren).
+2. Bei Arbeiten an persoenlichem Lernen, `user_memory`, Memory-Vorschlaegen
+   oder deren Oberflaeche zusaetzlich `docs/AILIZA_HANDOFF_ANWENDER.md` lesen.
+3. Modell-/Kontext-/Nutzungsregeln: `05_prompts/CLAUDE_TOKEN_KONTEXT_STATUS_PROMPT.md`.
+4. Historische Chats, `docs/archiv/` und alte Handovers (z. B.
+   `docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md`,
+   `docs/HANDOFF_DATENBANK_GEDAECHTNIS.md`) nur bei konkretem, belegtem Bedarf.
+5. Beende groessere Arbeitspakete mit der `AILIZA-STATUSKAPSEL` aus dem
+   Entwicklungs-Handoff.
+
+Codex arbeitet nach denselben zwei Handoffs, mit eigenem Einstieg in
+`AGENTS.md`.
+
 ## AILIZA Vision & Anforderungen
 
 **AILIZA** = DSGVO + EU AI Act konformer KI-Assistant fuer alle KMUs
