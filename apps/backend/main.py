@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 from fastapi import Body, FastAPI, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -742,6 +742,12 @@ class MemoryItemUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
     content: str | None = Field(default=None, min_length=1, max_length=8000)
     category: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def require_at_least_one_change(self) -> "MemoryItemUpdate":
+        if self.title is None and self.content is None and self.category is None:
+            raise ValueError("Mindestens ein Feld muss geaendert werden.")
+        return self
 
 
 class ToolSearchRequest(BaseModel):

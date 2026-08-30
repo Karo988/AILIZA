@@ -79,6 +79,20 @@ def test_update_own_item(client):
     assert r.json()["item"]["title"] == "Neuer Titel"
 
 
+def test_empty_update_returns_422_without_audit_entry(client):
+    from apps.backend.database import list_audit_entries
+
+    _make_user("alice")
+    item_id = _confirmed_item("alice")
+    r = client.patch(f"/api/memory-items/{item_id}", json={}, headers=_auth("alice"))
+    assert r.status_code == 422
+    entries = [
+        e for e in list_audit_entries(limit=50, tenant_id="default")
+        if e["action"] == "memory_item.updated"
+    ]
+    assert entries == []
+
+
 def test_update_foreign_item_returns_404(client):
     _make_user("alice")
     _make_user("bob")
