@@ -9,11 +9,11 @@ werden. Secrets, Zugangsdaten und Vertragsdokumente gehören nicht ins Repo.
 
 | Nachweis | Status | Einzutragender Beleg |
 |---|---|---|
-| Öffentliche Domain festgelegt | offen | Domain und verantwortliche Person |
+| Öffentliche Domain festgelegt | vorbereitet | `https://ailiza-1.onrender.com` — Live-Nachweis noch erforderlich |
 | TLS-Zertifikat gültig | offen | Prüfdatum und Zertifikatsaussteller |
 | HTTP→HTTPS und HSTS geprüft | offen | Testprotokoll; `AILIZA_FORCE_HTTPS=true` |
-| CORS ohne Wildcard | offen | Exakter Wert von `AILIZA_CORS_ORIGINS` |
-| Produktionsmodus aktiv | offen | `AILIZA_ENV=production` |
+| CORS ohne Wildcard | vorbereitet | `AILIZA_CORS_ORIGINS=https://ailiza-1.onrender.com` |
+| Produktionsmodus aktiv | vorbereitet | `AILIZA_ENV=production` in `render.yaml` |
 | Externe LLMs bewusst freigegeben | offen | Providerliste; sonst `false` belassen |
 | Externes verschlüsseltes Backupziel | offen | System/Region, keine Zugangsdaten |
 | Backupplan und Aufbewahrung | offen | Häufigkeit und Frist |

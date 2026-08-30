@@ -25,11 +25,11 @@ services:
       # https://ailiza-frontend.onrender.com
       # Mehrere Origins kommasepariert: https://ailiza.example.com,https://www.ailiza.example.com
       - key: AILIZA_CORS_ORIGINS
-        sync: false
+        value: "https://ailiza-1.onrender.com"
       # C1: AILIZA_FORCE_HTTPS=true aktiviert HTTP→HTTPS-Redirect + HSTS-Header.
       # Nur setzen, nachdem TLS auf Render verifiziert wurde (Render terminiert TLS selbst).
       - key: AILIZA_FORCE_HTTPS
-        value: "false"
+        value: "true"
       - key: AILIZA_SECRET_KEY
         sync: false
       # Eigener Schluessel NUR fuer die HMAC-Pseudonymisierung von
