@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 from fastapi import Body, FastAPI, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -68,6 +68,7 @@ try:
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
+        list_active_memory_items_for_user, update_memory_item, delete_memory_item,
         export_user_data, delete_own_account_data,
     )
     from .auth.models import UserCreate, UserInDB
@@ -118,6 +119,7 @@ except ImportError:
         get_user_settings, upsert_user_settings,
         decide_memory_storage, create_memory_suggestion, MemoryValidationError,
         list_memory_suggestions_for_user, confirm_memory_suggestion, reject_memory_suggestion,
+        list_active_memory_items_for_user, update_memory_item, delete_memory_item,
         export_user_data, delete_own_account_data,
         list_own_or_assigned_agent_runs, list_own_or_assigned_approvals,
         get_accessible_agent_run, get_approval_request,
@@ -734,6 +736,18 @@ async def generic_error_handler(_request: Request, _exc: Exception) -> JSONRespo
 class AuditLogCreate(BaseModel):
     action: str = Field(..., min_length=1, max_length=255)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MemoryItemUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    content: str | None = Field(default=None, min_length=1, max_length=8000)
+    category: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def require_at_least_one_change(self) -> "MemoryItemUpdate":
+        if self.title is None and self.content is None and self.category is None:
+            raise ValueError("Mindestens ein Feld muss geaendert werden.")
+        return self
 
 
 class ToolSearchRequest(BaseModel):
@@ -4653,6 +4667,60 @@ def api_reject_memory_suggestion(
     except MemoryValidationError as exc:
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden.") from exc
     return {"status": "rejected", "id": suggestion_id}
+
+
+# ── Persönliche-Gedächtnis-Übersicht ─────────────────────────────────────────
+# Eigener Endpunkt, bewusst NICHT /api/me/export wiederverwendet -- jener
+# bleibt der reine DSGVO-Rohexport (Art. 20). Hier: gezielte Ansicht/Korrektur/
+# Löschung EINES einzelnen memory_item, was es bisher nicht gab (nur
+# Alles-oder-nichts beim Konto-Löschen über delete_own_account_data()).
+@app.get("/api/memory-items")
+def api_list_memory_items(
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    items = list_active_memory_items_for_user(user.user_id, user.tenant_id)
+    return {"items": items, "count": len(items)}
+
+
+@app.patch("/api/memory-items/{item_id}")
+def api_update_memory_item(
+    item_id: int,
+    payload: MemoryItemUpdate,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    try:
+        item = update_memory_item(
+            item_id, tenant_id=user.tenant_id, owner_user_id=user.user_id,
+            title=payload.title, content=payload.content, category=payload.category,
+        )
+    except MemoryValidationError as exc:
+        detail = str(exc)
+        status_code = 422 if "Geheimnis" in detail else 404
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    write_audit_entry(
+        action="memory_item.updated", tenant_id=user.tenant_id,
+        metadata={"item_id": item_id, "user_id": user.user_id},
+    )
+    return {"status": "updated", "item": item}
+
+
+@app.delete("/api/memory-items/{item_id}")
+def api_delete_memory_item(
+    item_id: int,
+    token: TokenData | None = Depends(get_current_user),
+) -> dict[str, Any]:
+    user = _require_user(token)
+    try:
+        delete_memory_item(item_id, tenant_id=user.tenant_id, owner_user_id=user.user_id)
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden.") from exc
+    write_audit_entry(
+        action="memory_item.deleted", tenant_id=user.tenant_id,
+        metadata={"item_id": item_id, "user_id": user.user_id},
+    )
+    return {"status": "deleted", "id": item_id}
 
 
 # ── Block B Schritt 2: Export & Loeschung (Art. 20 / Art. 17 DSGVO) ─────────

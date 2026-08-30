@@ -417,6 +417,7 @@ body{
     <div class="side-section" style="border-top:1px solid var(--border,#e3e6dd);padding-top:8px">
       <div class="side-item" role="button" tabindex="0" id="nav-domains" style="display:none" onclick="showView('domains',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🏢</span><span>Bereiche &amp; Zugriffe</span></div>
       <div class="side-item" role="button" tabindex="0" id="nav-knowledge" style="display:none" onclick="showView('knowledge',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📚</span><span>Unternehmenswissen</span></div>
+      <div class="side-item" role="button" tabindex="0" id="nav-memory-overview" style="display:none" onclick="showView('memory-overview',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🧠</span><span>Meine gespeicherten Infos</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="showView('status',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🛡️</span><span>Datenschutz &amp; Kontrolle</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="toggleAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">👤</span><span>Hilfe &amp; Profil</span></div>
     </div>
@@ -521,6 +522,13 @@ body{
         <div class="page-head"><div><div class="page-title">Unternehmenswissen</div><div class="page-sub">Ihre Dokumente und die Ihres Fachbereichs</div></div></div>
         <div id="kn-msg" role="status" aria-live="polite" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:6px;font-size:13px"></div>
         <div id="kn-list" style="display:flex;flex-direction:column;gap:8px"><div style="font-size:13px;color:var(--text-muted)">Wird geladen…</div></div>
+      </div>
+    </div>
+    <div class="view" id="view-memory-overview">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Meine gespeicherten Infos</div><div class="page-sub">Was AILIZA sich über Sie merkt — ansehen, korrigieren, löschen</div></div></div>
+        <div id="mem-ov-msg" role="status" aria-live="polite" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:6px;font-size:13px"></div>
+        <div id="mem-ov-list" style="display:flex;flex-direction:column;gap:8px"><div style="font-size:13px;color:var(--text-muted)">Wird geladen…</div></div>
       </div>
     </div>
     <div class="view" id="view-status">
@@ -1577,6 +1585,7 @@ async function refreshAuthButton(){
         btn.textContent="Anmelden"; btn.onclick=openLoginModal;
         setDomainsNavVisible(false);
         setKnowledgeNavVisible(false);
+        setMemoryOverviewNavVisible(false);
         closeAccountMenu();
         const _li0=document.getElementById("account-logout-item"); if(_li0)_li0.style.display="none";
         addAiMessage("Anmeldung unvollstaendig: Es konnte kein eindeutiger Mandant ermittelt werden. Bitte melden Sie sich erneut an.",undefined);
@@ -1587,6 +1596,7 @@ async function refreshAuthButton(){
       btn.onclick=toggleAccountMenu;
       setDomainsNavVisible(true);
       setKnowledgeNavVisible(true);
+      setMemoryOverviewNavVisible(true);
       const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="block";
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
@@ -1597,6 +1607,7 @@ async function refreshAuthButton(){
   btn.onclick=openLoginModal;
   setDomainsNavVisible(false);
   setKnowledgeNavVisible(false);
+  setMemoryOverviewNavVisible(false);
   closeAccountMenu();
   const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="none";
 }
@@ -1620,6 +1631,7 @@ function showView(name,el){
   if(name==="wissen")renderWissen();
   if(name==="domains")loadDomains();
   if(name==="knowledge")loadKnowledge();
+  if(name==="memory-overview")loadMemoryOverview();
 }
 
 // ── Unternehmenswissen ──────────────────────────────────────────────────────
@@ -1646,6 +1658,10 @@ function knMsg(text,kind){
 
 function setKnowledgeNavVisible(on){
   const el=document.getElementById("nav-knowledge");
+  if(el)el.style.display=on?"flex":"none";
+}
+function setMemoryOverviewNavVisible(on){
+  const el=document.getElementById("nav-memory-overview");
   if(el)el.style.display=on?"flex":"none";
 }
 
@@ -1681,6 +1697,93 @@ async function loadKnowledge(){
       </div>
     </div>`;
   }).join("");
+}
+
+// ── Meine gespeicherten Infos ────────────────────────────────────────────────
+// Zeigt ausschliesslich die eigenen, aktiven user_memory-Eintraege (Server
+// filtert nach Owner/Tenant, GET /api/memory-items) -- keine Nachfilterung
+// hier, wie bei loadKnowledge().
+function memOvEsc(s){
+  return String(s==null?"":s).replace(/[&<>"']/g,c=>(
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function memOvMsg(text,kind){
+  const el=document.getElementById("mem-ov-msg");
+  if(!text){el.style.display="none";return;}
+  const ok=kind==="ok";
+  el.style.display="block";
+  el.style.background=ok?"#E3F0EC":"#F7E7E2";
+  el.style.color=ok?"#0E6B5A":"#8E3320";
+  el.textContent=text;
+}
+let _memOvItems=[];   // zuletzt geladene Eintraege, fuer memOvEdit() -- kein
+                       // Interpolieren von Freitext-Inhalt in onclick-Attribute
+                       // (anders als domain_code ist "content" beliebiger Text
+                       // und koennte Anfuehrungszeichen/Zeilenumbrueche enthalten).
+async function loadMemoryOverview(){
+  const box=document.getElementById("mem-ov-list");
+  memOvMsg("");
+  let rows;
+  try{
+    const r=await fetch(`${API}/api/memory-items`,{credentials:"same-origin",headers:authHeaders()});
+    if(r.status===401){box.innerHTML="";memOvMsg("Bitte melden Sie sich an.");return;}
+    if(!r.ok){box.innerHTML="";memOvMsg("Gespeicherte Infos konnten nicht geladen werden.");return;}
+    const data=await r.json();
+    rows=data.items||[];
+  }catch(e){box.innerHTML="";memOvMsg("Backend nicht erreichbar.");return;}
+  _memOvItems=rows;
+
+  if(!rows.length){
+    box.innerHTML='<div style="font-size:13px;color:var(--text-muted)">AILIZA hat sich bisher nichts Dauerhaftes gemerkt.</div>';
+    return;
+  }
+  box.innerHTML=rows.map(it=>{
+    const cat=it.category
+      ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#E3F0EC;color:#0E6B5A">${memOvEsc(it.category)}</span>`
+      : "";
+    return `<div style="border:1px solid var(--border,#e3e6dd);border-radius:8px;padding:10px 12px;background:var(--bg-elevated,#fff)">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline">
+        <div style="font-weight:600;flex:1 1 12rem">${memOvEsc(it.title)}</div>
+        ${cat}
+      </div>
+      <div style="font-size:13px;color:var(--text-soft);margin-top:4px;white-space:pre-wrap">${memOvEsc(it.content)}</div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn-ghost" style="font-size:12px" onclick="memOvEdit(${Number(it.id)})">Korrigieren</button>
+        <button class="btn-ghost" style="font-size:12px" onclick="memOvDelete(${Number(it.id)})">Löschen</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+async function memOvEdit(itemId){
+  const current=_memOvItems.find(it=>Number(it.id)===Number(itemId));
+  if(!current){memOvMsg("Eintrag nicht mehr vorhanden — Liste wird neu geladen.");loadMemoryOverview();return;}
+  const title=prompt("Titel:",current.title);
+  if(title===null)return;
+  const content=prompt("Inhalt:",current.content);
+  if(content===null)return;
+  if(!title.trim()||!content.trim()){memOvMsg("Titel und Inhalt dürfen nicht leer sein.");return;}
+  try{
+    const r=await fetch(`${API}/api/memory-items/${Number(itemId)}`,{
+      method:"PATCH",credentials:"same-origin",headers:authHeaders(),
+      body:JSON.stringify({title:title.trim(),content:content.trim()})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){memOvMsg(d.detail||"Korrektur nicht möglich.");return;}
+    memOvMsg("Eintrag korrigiert.","ok");
+    loadMemoryOverview();
+  }catch(e){memOvMsg("Backend nicht erreichbar.");}
+}
+async function memOvDelete(itemId){
+  if(!confirm("Diesen Eintrag wirklich löschen?"))return;
+  try{
+    const r=await fetch(`${API}/api/memory-items/${Number(itemId)}`,{
+      method:"DELETE",credentials:"same-origin",headers:authHeaders()
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){memOvMsg(d.detail||"Löschen nicht möglich.");return;}
+    memOvMsg("Eintrag gelöscht.","ok");
+    loadMemoryOverview();
+  }catch(e){memOvMsg("Backend nicht erreichbar.");}
 }
 
 async function knSetDomain(sourceId,current){
