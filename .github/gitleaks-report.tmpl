@@ -1,0 +1,28 @@
+{{- /*
+Bewusst reduzierte Fundausgabe fuer den CI-Job "secret-scan".
+
+Ausgegeben werden ausschliesslich Regel-ID, Datei, Zeile und Commit --
+genau das, was docs/AILIZA_PUSH_SICHERHEITSREGEL.md Abschnitt 2 zulaesst.
+
+Bewusst NICHT ausgegeben:
+  Secret / Match / Finding  -- der gefundene Wert, auch nicht gekuerzt
+  Author / Email            -- personenbezogene Daten. Ein CI-Protokoll ist
+                               fuer alle lesbar, die das Repository lesen
+                               duerfen; Name und E-Mail gehoeren dort nicht
+                               hinein.
+  Entropy / Fingerprint     -- fuer die Behebung nicht noetig.
+
+Der eingebaute --verbose-Ausdruck gibt Author und Email mit aus und ist
+deshalb hier durch diese Vorlage ersetzt.
+*/ -}}
+{{- if . }}
+Secret-Scan: {{ len . }} Fund/Funde. Der gefundene Wert wird bewusst nicht ausgegeben.
+{{ range . }}
+  Regel:  {{ .RuleID }}
+  Datei:  {{ .File }}:{{ .StartLine }}
+  Commit: {{ .Commit }}
+{{ end }}
+Vorgehen: docs/AILIZA_PUSH_SICHERHEITSREGEL.md, Abschnitt 6.
+Den Wert nirgends hinkopieren. Bei einem echten Schluessel: beim Anbieter
+zurueckziehen und neu ausstellen -- Loeschen aus dem Code genuegt nicht.
+{{- end }}

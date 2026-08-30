@@ -1,0 +1,193 @@
+# gitleaks-Konfiguration fuer AILIZA
+#
+# Zweck: Secret-Scan des neu zu uebertragenden Commit-Bereichs
+# (docs/AILIZA_PUSH_SICHERHEITSREGEL.md, Abschnitt 2 Pruefschritt 3 sowie
+# Abschnitt 3). Eingebunden im CI-Job "secret-scan" in
+# .github/workflows/ci.yml.
+#
+# Grundhaltung: lieber ein Fund zu viel als einer zu wenig. Abgeschwaecht
+# wird ausschliesslich die eine Regel, die nachweislich falsch-positiv
+# arbeitet -- und auch die nur in eindeutig als Test- oder
+# Nachweismaterial gekennzeichneten Pfaden.
+
+title = "AILIZA Secret-Scan"
+
+[extend]
+# Alle mitgelieferten Regeln bleiben aktiv, insbesondere die praezisen
+# anbieterspezifischen Regeln (AWS, GitHub, OpenAI, Anthropic, private
+# Schluessel usw.). Diese gelten AUSNAHMSLOS ueberall -- auch in
+# Testdateien. Ein echter Anbieter-Schluessel in einem Test ist ein
+# echter Fund und wird nicht unterdrueckt.
+#
+# WICHTIG: Der mitgelieferte Regelsatz deckt NICHT alle von AILIZA
+# genutzten Anbieter ab. Siehe den Abschnitt "Eigene Anbieterregeln"
+# unten -- eine frueher an dieser Stelle stehende Behauptung, gitleaks
+# bringe eine Groq-Regel mit, war falsch.
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Eigene Anbieterregeln -- Luecke im mitgelieferten Regelsatz
+#
+# Belegt am 26.08.2026 gegen gitleaks 8.28.0 (config/gitleaks.toml des
+# offiziellen Release): Regeln existieren fuer openai-api-key,
+# anthropic-api-key, anthropic-admin-api-key, github-pat (und weitere
+# github-*), aws-access-token. Es existiert KEINE Regel fuer Groq und
+# KEINE fuer OpenRouter -- beide werden von AILIZA produktiv genutzt
+# (apps/backend/registry/provider_registry.yaml, apps/backend/providers/).
+#
+# Ohne die folgenden Regeln haengt die Erkennung eines Groq- oder
+# OpenRouter-Schluessels allein an der Heuristik "generic-api-key". Das
+# reicht nachweislich nicht. Empirischer Beleg (Wegwerf-Repository,
+# gitleaks 8.28.0, nur Standardregeln):
+#
+#   Datei                        Inhalt                        Ergebnis
+#   apps/backend/a.py            GROQ_API_KEY = "gsk_<52>"     gefunden
+#   apps/backend/b.py            wert         = "gsk_<52>"     UEBERSEHEN
+#
+# Identischer Schluessel, identischer Pfad -- nur der Variablenname
+# unterscheidet sich. "generic-api-key" wertet den Bezeichner-Kontext mit
+# aus und faellt aus, sobald der Schluessel nicht wie ein Schluessel
+# benannt ist. Zusammen mit der Testpfad-Abschwaechung weiter unten
+# entstuenden daraus drei Luecken gleichzeitig.
+#
+# Die folgenden Regeln greifen am Schluesselformat selbst und sind damit
+# unabhaengig von Variablenname UND Pfad. Sie gelten ueberall, auch in
+# Testpfaden -- die Allowlist weiter unten ist ausdruecklich an die
+# Regel-ID "generic-api-key" gebunden und beruehrt sie nicht.
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "ailiza-groq-api-key"
+description = "Groq API key (kein Bestandteil des gitleaks-Standardregelsatzes)"
+# ACHTUNG -- KONSERVATIVE HEURISTIK, KEINE BELEGTE FORMATZUSAGE.
+# Belegt ist ausschliesslich das Praefix "gsk_"
+# (apps/backend/registry/provider_registry.yaml: "Render-Env:
+# GROQ_API_KEY=gsk_..." sowie die Groq-Dokumentation). Eine verbindliche
+# Laengen- oder Zeichensatzzusage von Groq liegt NICHT vor. Der Bereich
+# unten ist deshalb eine Abwaegung, keine Spezifikation: aendert Groq das
+# Format, kann diese Regel still falsch-negativ werden. Wer sich auf sie
+# verlaesst, muss das wissen.
+#
+# Zur Laenge im Einzelnen: eine fruehere Fassung verlangte genau 52
+# Zeichen. Diese Zahl stammte aus einem Beispielschluessel. Bei einem
+# abweichenden Format waere die Regel still falsch-negativ geworden --
+# genau so ausgefallen, wie sie es verhindern soll.
+#
+# Der Bereich 40-60 ist eine gemessene Abwaegung, kein Schaetzwert:
+# {20,100} zusammen mit `_` und `-` im Zeichensatz erzeugte 28 Treffer auf
+# synthetische Testkonstanten (gsk_test_..., mit Unterstrichen). Nur
+# alphanumerisch und mindestens 40 Zeichen trennt echte Schluessel davon,
+# ohne die Erkennung an eine exakte Laenge zu binden.
+# Kein fuehrendes \b: der real vorgefallene Schluessel steckte in einem
+# DATEINAMEN (".env" unmittelbar gefolgt von "gsk_..."). Dort scheitert
+# eine Wortgrenze am vorangehenden Buchstaben, und die Regel waere still
+# blind geblieben -- gemessen am 26.08.2026 gegen den Commit aus
+# 06_release/SECURITY_INCIDENT_2026-06-25.md.
+regex = '''gsk_[A-Za-z0-9]{40,60}\b'''
+keywords = ["gsk_"]
+entropy = 3.0
+
+[[rules]]
+id = "ailiza-openrouter-api-key"
+description = "OpenRouter API key (kein Bestandteil des gitleaks-Standardregelsatzes)"
+# Ebenfalls ohne fuehrendes \b -- gleiche Begruendung wie bei Groq.
+regex = '''sk-or-v1-[A-Fa-f0-9]{64}\b'''
+keywords = ["sk-or-v1-"]
+
+# ---------------------------------------------------------------------------
+# Einzige Abschwaechung: die Heuristik "generic-api-key" in Testpfaden.
+#
+# Belegte Ausgangslage -- Scan der vollstaendigen Historie (607 Commits) am
+# 26.08.2026: 180 Funde, davon 180 aus der Regel "generic-api-key". Keine
+# einzige anbieterspezifische Regel schlug an. Verteilung:
+#
+#   126  .secrets.baseline                (Baseline eines frueher genutzten
+#                                          Werkzeugs -- enthaelt Hashwerte,
+#                                          keine Klartext-Secrets)
+#    21  tests/                           (Redaction- und Governance-Tests --
+#                                          diese Tests MUESSEN
+#                                          schluesselaehnliche Zeichenketten
+#                                          enthalten, sonst pruefen sie nichts)
+#    20  apps/backend/tests/              (u.a. eine erkennbar synthetische
+#                                          Konstante mit "_test"-Praefix)
+#    13  docs/backend_live_test_report.md (Testprotokoll)
+#
+# Kein einziger Fund lag in Produktivcode.
+#
+# "generic-api-key" ist eine reine Entropie-Heuristik ohne Anbieterbezug.
+# Genau in den Tests, die die Redaction nachweisen, ist ein Treffer der
+# Normalfall und kein Sicherheitsereignis. Abschnitt 4 der
+# Push-Sicherheitsregel erlaubt ausdruecklich, klar gekennzeichnete
+# Testdaten als synthetisch zu behandeln.
+#
+# Warum als Regel-Allowlist und nicht als globale Allowlist mit
+# `targetRules`: beides wurde am 26.08.2026 gegen 8.28.0 gemessen.
+#
+#   Variante                                       tests/       Produktivpfad
+#   globale Allowlist, targetRules -> Regel aus
+#     useDefault ("generic-api-key")               NICHT        aktiv
+#                                                  unterdrueckt
+#   globale Allowlist, targetRules -> lokal per
+#     [[rules]] definierte Regel                   unterdrueckt aktiv
+#   globale Allowlist OHNE targetRules             unterdrueckt aktiv (aber
+#                                                                ALLE Regeln
+#                                                                in tests/ tot)
+#   Regel-Allowlist unter [[rules]] (gewaehlt)     unterdrueckt aktiv
+#
+# Praezisierung (korrigiert eine zu weit gefasste fruehere Aussage):
+# `targetRules` ist in 8.28.0 implementiert und funktioniert -- aber nur
+# fuer Regeln, die in DIESER Datei per [[rules]] definiert sind. Verweist
+# es auf eine Regel aus `[extend] useDefault = true` -- wie hier auf
+# "generic-api-key" --, bleibt die Allowlist wirkungslos. Beides am
+# 26.08.2026 gegeneinander gemessen. Der Fehlerfall faellt zur sicheren
+# Seite aus (mehr Funde), taugt aber nicht als Konfiguration.
+# Eine globale Allowlist ohne `targetRules` wuerde umgekehrt SAEMTLICHE
+# Regeln fuer den Pfad abschalten -- ein echter AWS-, GitHub-, Groq- oder
+# OpenRouter-Schluessel in einer Testdatei bliebe dann unentdeckt. Die
+# Bindung an genau eine Regel-ID ist deshalb der einzige tragfaehige
+# Schnitt.
+#
+# Bewusst NICHT getan: die Regel global abschalten oder eine
+# .gitleaksignore mit 180 Fingerabdruecken anlegen. Ersteres wuerde echte
+# Funde in Produktivcode verschlucken, Letzteres wuerde kuenftige Funde in
+# denselben Dateien stillschweigend mit abdecken.
+#
+# BEKANNTE GRENZE, nicht durch eine Regex behebbar: gitleaks prueft
+# ausschliesslich Datei-INHALTE, keine Dateinamen -- gemessen am
+# 26.08.2026 in beiden Modi (git und dir). Ein Schluessel im Dateinamen
+# bleibt unentdeckt. Das ist kein theoretischer Fall: genau so entstand
+# der Vorfall in 06_release/SECURITY_INCIDENT_2026-06-25.md (Schluessel im
+# Dateinamen, Platzhalter im Inhalt). Abgesichert bleibt das ueber
+# .gitignore (blockt .env-Varianten) und den Test
+# test_known_limitation_secret_in_filename_is_not_detected, der die Grenze
+# sichtbar haelt.
+#
+# VERBLEIBENDES RESTRISIKO, bewusst getragen und hier benannt: ein
+# hochentropischer Schluessel eines Anbieters, fuer den WEDER eine
+# gitleaks-Standardregel NOCH eine eigene Regel oben existiert, bliebe in
+# den unten gelisteten Pfaden unentdeckt. Fuer die vier heute genutzten
+# Anbieter (Groq, OpenAI, Anthropic, OpenRouter) besteht diese Luecke
+# nicht mehr. Wird ein weiterer Anbieter aufgenommen, ist zuerst zu
+# pruefen, ob gitleaks eine Regel dafuer mitbringt -- und falls nicht, hier
+# eine zu ergaenzen. tests/test_secret_scan_rules.py haelt genau das fest.
+#
+# Hinweis: die Pfadmuster sind repository-relativ. Der CI-Job nutzt beide
+# gitleaks-Modi; gemessen am 26.08.2026 gegen 8.28.0 greift die Allowlist
+# in beiden, sofern wie im Job als Scan-Wurzel "." uebergeben wird (Gegen-
+# probe: `gitleaks dir` ueber dieses Repository liefert 0 Funde, waehrend
+# ohne Allowlist allein .secrets.baseline 126 Treffer erzeugt). Eine
+# frueher an dieser Stelle stehende Behauptung, im `dir`-Modus greife die
+# Allowlist grundsaetzlich nicht, war damit falsch.
+# ---------------------------------------------------------------------------
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Entropie-Heuristik in eindeutigen Test- und Nachweispfaden"
+  paths = [
+    '''^tests/''',
+    '''^apps/backend/tests/''',
+    '''^apps/frontend/tests/''',
+    '''^docs/backend_live_test_report\.md$''',
+    '''^\.secrets\.baseline$''',
+  ]

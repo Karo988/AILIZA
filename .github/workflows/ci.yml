@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       AILIZA_DATABASE_URL: "sqlite:///:memory:"
       AILIZA_EXTERNAL_LLM_ENABLED: "false"
@@ -17,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Python 3.12
         uses: actions/setup-python@v5
@@ -28,8 +33,29 @@ jobs:
       - name: Abhängigkeiten installieren
         run: pip install -r apps/backend/requirements-core.txt pytest pytest-asyncio httpx bcrypt pyotp python-jose[cryptography]
 
+      # gitleaks wird hier gebraucht, damit tests/test_secret_scan_rules.py
+      # tatsaechlich laeuft. Ohne die Installation ueberspringt pytest diese
+      # Datei stillschweigend (skipif) -- der Lauf saehe gruen aus, obwohl
+      # die Scanner-Selbsttests nie ausgefuehrt wurden. Genau das verhindert
+      # der Anti-Skip-Schritt weiter unten.
+      - name: gitleaks installieren (fuer die Scanner-Selbsttests)
+        uses: ./.github/actions/install-gitleaks
+
       - name: Tests (Root)
         run: pytest tests/ -v --tb=short
+
+      # Gegenprobe: ein "skipped" bei den Scanner-Selbsttests ist ein
+      # Fehler, kein zulaessiges Ergebnis. Ein Scanner-Test, der nie laeuft,
+      # ist genauso wertlos wie ein Scanner, der nichts findet.
+      - name: Scanner-Selbsttests duerfen nicht uebersprungen werden
+        run: |
+          set -euo pipefail
+          out="$(pytest tests/test_secret_scan_rules.py -q --tb=short)"
+          echo "$out"
+          if echo "$out" | grep -qiE '[0-9]+ skipped'; then
+            echo "::error::Scanner-Selbsttests wurden uebersprungen -- gitleaks fehlt oder skipif greift faelschlich."
+            exit 1
+          fi
 
       # apps/backend/tests/ ist verwaist (kaputte Imports auf nicht mehr
       # existierende Module: compliance_auditor, KillSwitch, policy_engine,
@@ -38,6 +64,168 @@ jobs:
       # Deaktiviert statt geloescht -- separates Aufraeumen folgt spaeter.
       # - name: Tests (Backend, verwaist -- vorerst deaktiviert)
       #   run: PYTHONPATH=. pytest apps/backend/tests/ -v --tb=short
+
+  # Secret-Scan (docs/AILIZA_PUSH_SICHERHEITSREGEL.md, Abschnitt 3,
+  # Schutzschicht 3). Eigener Job, damit ein Fund sofort als Sicherheits-
+  # ereignis erkennbar ist und nicht in einem Testprotokoll untergeht.
+  #
+  # Geprueft wird der neu zu uebertragende COMMIT-BEREICH, nicht nur der
+  # aktuelle Dateistand: ein Secret, das in einem Zwischencommit hinzugefuegt
+  # und im naechsten wieder entfernt wurde, steht dauerhaft in der Historie
+  # und muss gefunden werden.
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Vollstaendige Historie -- ohne sie laesst sich der Commit-Bereich
+          # nicht aufloesen und der Scan wuerde stillschweigend zu wenig pruefen.
+          fetch-depth: 0
+          # Der Job liest nur; ein im Runner hinterlegtes Push-Token waere
+          # unnoetige Angriffsflaeche.
+          persist-credentials: false
+
+      - name: gitleaks installieren
+        uses: ./.github/actions/install-gitleaks
+
+      - name: Prüfbereich bestimmen
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Bei einem Pull Request ist github.sha der von GitHub erzeugte
+          # Merge-Commit, nicht der tatsaechliche Branch-Kopf. Fuer den
+          # Pruefbereich zaehlt der echte Kopf.
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FALLBACK_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          NULL_SHA="0000000000000000000000000000000000000000"
+
+          # Fail-closed: laesst sich der Bereich nicht sicher bestimmen
+          # (neuer Branch, Force-Push, fehlender Vorgaenger-Commit), wird die
+          # VOLLSTAENDIGE Historie geprueft -- lieber zu viel als zu wenig.
+          # -m ist sicherheitsrelevant und keine Feinheit: ohne dieses Flag
+          # zeigt `git log` fuer Merge-Commits gar keinen Diff, und ein
+          # Secret, das ERST bei einer Konfliktaufloesung entsteht, bleibt
+          # unentdeckt. Gemessen am 26.08.2026 gegen gitleaks 8.28.0:
+          #   --no-merges  -> nicht gefunden
+          #   (ohne Flag)  -> nicht gefunden
+          #   --cc         -> nicht gefunden
+          #   -m           -> GEFUNDEN
+          # Im Repository erzeugt -m keine zusaetzlichen Funde (0 vs. 0).
+          # Regressionstest: tests/test_secret_scan_rules.py.
+          MERGE_OPTS="-m"
+
+          if [ "$EVENT" = "pull_request" ] && [ -n "${BASE_SHA:-}" ] \
+             && [ -n "${PR_HEAD_SHA:-}" ] \
+             && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null \
+             && git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+            # Echter Merge-Base statt der Basis-Spitze: sonst wuerden bei
+            # zwischenzeitlich weitergelaufenem Zielbranch fremde Commits
+            # mitgeprueft oder eigene uebersehen.
+            MB="$(git merge-base "$BASE_SHA" "$PR_HEAD_SHA")"
+            LOG_OPTS="${MERGE_OPTS} ${MB}..${PR_HEAD_SHA}"
+            SCOPE="Pull Request: ${MB}..${PR_HEAD_SHA} (Merge-Base ermittelt, Merge-Diffs mit -m)"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$NULL_SHA" ] \
+             && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            LOG_OPTS="${MERGE_OPTS} ${BEFORE}..${FALLBACK_SHA}"
+            SCOPE="Push: ${BEFORE}..${FALLBACK_SHA} (Merge-Diffs mit -m)"
+          else
+            LOG_OPTS="--all ${MERGE_OPTS}"
+            SCOPE="Vollständige Historie (Bereich nicht eindeutig bestimmbar — fail-closed)"
+          fi
+
+          echo "log_opts=${LOG_OPTS}" >> "$GITHUB_OUTPUT"
+          echo "Prüfbereich: ${SCOPE}"
+          echo "### Secret-Scan — Prüfbereich" >> "$GITHUB_STEP_SUMMARY"
+          echo "${SCOPE}" >> "$GITHUB_STEP_SUMMARY"
+
+      # --redact schwaerzt den gefundenen Wert. Das allein genuegt nicht:
+      # der eingebaute --verbose-Ausdruck gibt zusaetzlich Author und Email
+      # aus -- personenbezogene Daten in einem Protokoll, das jede Person
+      # lesen kann, die das Repository lesen darf. Gemessen am 26.08.2026
+      # gegen 8.28.0. Deshalb kein --verbose, sondern eine eigene Vorlage,
+      # die ausschliesslich Regel, Datei, Zeile und Commit ausgibt
+      # (.github/gitleaks-report.tmpl).
+      #
+      # Hinweis: --report-template setzt das Format entgegen dem Hilfetext
+      # NICHT selbst; --report-format template muss mit angegeben werden,
+      # sonst bricht gitleaks mit "Unknown report format" ab.
+      #
+      # --exit-code 1 macht den Job bei einem Fund tatsaechlich rot. Kein
+      # continue-on-error, keine reine Warnung.
+      - name: Secret-Scan (Commit-Bereich)
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/gitleaks-range.txt"
+          status=0
+          gitleaks git \
+            --config .gitleaks.toml \
+            --log-opts "${{ steps.range.outputs.log_opts }}" \
+            --redact \
+            --no-banner \
+            --exit-code 1 \
+            --report-format template \
+            --report-template .github/gitleaks-report.tmpl \
+            --report-path "$report" || status=$?
+          if [ -s "$report" ]; then cat "$report"; fi
+          exit $status
+
+      # Zweiter Modus, bewusst zusaetzlich -- deckt den aktuellen Dateistand
+      # ab, unabhaengig davon, ueber welchen Commit-Weg ein Inhalt dorthin
+      # gelangt ist (Rebase, Cherry-Pick, Squash, manuelle Uebernahme).
+      #
+      # Korrektur zu einer frueheren Fassung dieses Kommentars: dort stand,
+      # der git-Modus koenne Merge-Aufloesungen grundsaetzlich nicht sehen
+      # und nur dieser Dateistand-Scan schliesse die Luecke. Das war falsch.
+      # Der git-Modus findet sie mit -m (siehe Schritt oben); umgekehrt
+      # verfehlt der Dateistand-Scan jedes Secret, das spaeter wieder
+      # geloescht wurde. Erst -m UND dieser Scan zusammen decken beide
+      # Richtungen ab -- der Dateistand-Scan allein haette die Kombination
+      # "in Merge-Aufloesung entstanden, spaeter geloescht" verfehlt.
+      - name: Secret-Scan (Dateistand)
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/gitleaks-dir.txt"
+          status=0
+          gitleaks dir \
+            --config .gitleaks.toml \
+            --redact \
+            --no-banner \
+            --exit-code 1 \
+            --report-format template \
+            --report-template .github/gitleaks-report.tmpl \
+            --report-path "$report" \
+            . || status=$?
+          if [ -s "$report" ]; then cat "$report"; fi
+          exit $status
+
+      # Dritter Scan, weil gitleaks eine belegte Luecke hat: es prueft
+      # ausschliesslich Datei-INHALTE, keine Pfadnamen -- gemessen am
+      # 26.08.2026 in beiden Modi. Genau so entstand der Vorfall in
+      # 06_release/SECURITY_INCIDENT_2026-06-25.md: der Schluessel stand im
+      # DATEINAMEN, der Inhalt war nur ein Platzhalter. Kein Regex-Wert
+      # haette das gefunden, weil der Pfad gar nicht erst gelesen wird.
+      #
+      # Das Skript nutzt dieselben Anbieterregeln aus .gitleaks.toml (eine
+      # Quelle, nicht zwei) und denselben Pruefbereich wie der Scan oben.
+      # Die Fundausgabe redigiert den Treffer IM PFAD -- der Wert steht
+      # sonst im Klartext im CI-Protokoll, das jede lesende Person sieht.
+      - name: Secret-Scan (Pfadnamen — gitleaks-Lücke)
+        run: |
+          set -euo pipefail
+          python3 scripts/scan_pfadnamen_auf_secrets.py \
+            --log-opts="${{ steps.range.outputs.log_opts }}"
+
+      # Kein Upload eines Fundberichts als Artefakt: der Bericht enthaelt
+      # Fundstellen und waere ein weiterer Ort, an dem sensible Treffer
+      # liegen. Regel, Datei und Zeile stehen bereits im Protokoll oben.
 
   frontend-quality:
     runs-on: ubuntu-latest
