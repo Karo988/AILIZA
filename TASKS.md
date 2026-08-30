@@ -1,5 +1,12 @@
 # AILIZA — Aufgaben-Board
 
+> **Historisch (Stand vor PR #91 ff., vor 26.08.2026):** Diese Datei
+> beschreibt den Arbeitsstand der Docker-Staging-/Block-B-Phase. Der
+> aktuelle Stand ist `docs/AILIZA_ABLAUFPLAN_2026-08-20.md` (lokale
+> technische Abnahme) und der laufende G0–G4-Ablaufplan. Diese Datei bleibt
+> als Verlaufsprotokoll erhalten, ist aber nicht mehr die Wahrheitsquelle
+> für offene Aufgaben.
+
 ## Fertig
 
 - [x] Block B (B0–B8b): Requirements, Testmodus-Banner, Static-Whitelist,
