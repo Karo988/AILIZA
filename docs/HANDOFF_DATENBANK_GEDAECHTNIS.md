@@ -1,7 +1,10 @@
 # AILIZA — Übergabe-Dokument: Datenbank & Gedächtnis
 
+> **Historischer Detailstand.** Nicht als Einstieg für neue Tasks verwenden.
+> Aktueller Einstieg: `docs/AILIZA_HANDOFF_ENTWICKLUNG.md`. Für persönliches
+> Lernen zusätzlich `docs/AILIZA_HANDOFF_ANWENDER.md` lesen.
+
 Stand: 30.07.2026 · Für den nächsten Agenten oder PC-Wechsel.
-**Bitte diese Datei zuerst lesen.**
 
 ---
 
