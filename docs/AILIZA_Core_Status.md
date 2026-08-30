@@ -1,5 +1,11 @@
 # AILIZA Core — Status & Readiness
 
+> **HISTORISCH — Stand 24.06.2026, Basis Branch `claude/adoring-lamport-c1zs8h`.**
+> Dieses Dokument beschreibt einen überholten Zustand und wird **nicht**
+> fortgeschrieben. Aktuelle Wahrheitsquelle für den Umsetzungsstand ist
+> `docs/AILIZA_IMPLEMENTATION_STATUS.md` (nachgeprüft am 25.08.2026 gegen
+> `c19cc1d`). Der Inhalt bleibt als Nachweis des damaligen Stands erhalten.
+
 **Stand:** 24.06.2026
 **Branch:** claude/adoring-lamport-c1zs8h
 

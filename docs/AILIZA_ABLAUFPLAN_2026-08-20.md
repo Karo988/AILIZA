@@ -1,5 +1,16 @@
 # AILIZA – Ablaufplan und technische Abnahme
 
+> **HISTORISCH — Stand 20.08.2026, Basis Commit `e07f09c`.**
+> Dieses Dokument beschreibt einen überholten Zustand und wird **nicht**
+> fortgeschrieben. Aktuelle Wahrheitsquelle für den Umsetzungsstand ist
+> `docs/AILIZA_IMPLEMENTATION_STATUS.md` (nachgeprüft am 25.08.2026 gegen
+> `c19cc1d`). Der Inhalt bleibt als Nachweis des damaligen Stands erhalten.
+> Seither sind acht Pull Requests gemergt (#99–#105, #108). Der Alembic-Head
+> ist von `f9a3c61e07b2` auf `b6d2f4a09e13` gewandert, das darin genannte
+> `1 xfailed` existiert nicht mehr, und die Sandbox-Aussage zu `AppData` ist
+> durch den verwalteten Arbeitsordner aus PR #108 überholt. Die dortige
+> Abnahme ist auf dem aktuellen Stand zu wiederholen.
+
 Stand: 20.08.2026
 Basis-Commit: `e07f09cf5b3e72417d6ac05d755a4d495a0b68d6`
 

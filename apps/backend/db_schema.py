@@ -647,8 +647,8 @@ business_domains = Table(
     Column("description", Text, nullable=True),
     Column("category", String(64), nullable=True),
     # normal | high | confidential -- schraenkt zusaetzlich ein, erweitert nie.
-    Column("sensitivity_level", String(32), nullable=False, default="normal"),
-    Column("is_system_domain", Integer, nullable=False, default=0),
+    Column("sensitivity_level", String(32), nullable=False, default="normal", server_default="normal"),
+    Column("is_system_domain", Integer, nullable=False, default=0, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     CheckConstraint("sensitivity_level IN ('normal','high','confidential')",
@@ -664,7 +664,7 @@ tenant_business_domains = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("tenant_id", String(64), nullable=False),
     Column("domain_id", Integer, ForeignKey("business_domains.id"), nullable=False),
-    Column("is_enabled", Integer, nullable=False, default=0),
+    Column("is_enabled", Integer, nullable=False, default=0, server_default="0"),
     Column("enabled_by", String(64), nullable=True),
     Column("enabled_at", DateTime(timezone=True), nullable=True),
     Column("disabled_by", String(64), nullable=True),
@@ -672,7 +672,7 @@ tenant_business_domains = Table(
     # Begruendungspflicht: NOT NULL allein genuegt nicht -- eine leere oder
     # nur aus Leerraum bestehende Angabe waere keine Begruendung.
     Column("reason", Text, nullable=False),
-    Column("version", Integer, nullable=False, default=1),
+    Column("version", Integer, nullable=False, default=1, server_default="1"),
     UniqueConstraint("tenant_id", "domain_id", name="uq_tenant_domain"),
     CheckConstraint("is_enabled IN (0,1)", name="ck_tbd_enabled"),
     CheckConstraint("LENGTH(TRIM(reason)) >= 3", name="ck_tbd_reason_not_blank"),
@@ -698,8 +698,8 @@ user_domain_memberships = Table(
     Column("revoked_at", DateTime(timezone=True), nullable=True),
     Column("revoked_by", String(64), nullable=True),
     Column("revocation_reason", Text, nullable=True),
-    Column("is_active", Integer, nullable=False, default=1),
-    Column("version", Integer, nullable=False, default=1),
+    Column("is_active", Integer, nullable=False, default=1, server_default="1"),
+    Column("version", Integer, nullable=False, default=1, server_default="1"),
     CheckConstraint(
         "role_in_domain IN ('viewer','contributor','reviewer','domain_manager')",
         name="ck_udm_role"),
@@ -736,11 +736,11 @@ domain_role_permissions = Table(
     # domain.view | content.read | content.create | content.update |
     # content.approve | content.export | action.execute | membership.manage
     Column("action", String(64), nullable=False),
-    Column("allowed", Integer, nullable=False, default=0),
+    Column("allowed", Integer, nullable=False, default=0, server_default="0"),
     Column("granted_by", String(64), nullable=True),
     Column("granted_at", DateTime(timezone=True), nullable=True),
     Column("reason", Text, nullable=False),
-    Column("version", Integer, nullable=False, default=1),
+    Column("version", Integer, nullable=False, default=1, server_default="1"),
     UniqueConstraint("tenant_id", "domain_id", "role_in_domain", "action",
                      name="uq_domain_role_action"),
     CheckConstraint(

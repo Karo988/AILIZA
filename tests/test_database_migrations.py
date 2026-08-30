@@ -560,3 +560,285 @@ def test_baseline_migration_0001_table_set_is_pinned():
         "Revisions-ID von Migration 0001 darf sich nicht aendern -- "
         "bereits referenziert (u.a. alembic_adopt.py, bestehende Tests)."
     )
+
+
+# ── 8. Schema-Drift-Schutz (Issue #79) ───────────────────────────────────────
+#
+# Abgrenzung zu Test 1: jener prueft nur die Menge der Tabellennamen. Hier
+# wird das REALE Schema nach `alembic upgrade head` vollstaendig gegen
+# metadata_obj aus db_schema.py geprueft -- Spalten, Nullability,
+# normalisierte Typen, Server-Defaults, Primaerschluessel und Indizes.
+#
+# Zweck: eine Aenderung an db_schema.py ohne zugehoerige Migration (oder
+# umgekehrt) muss rot werden, statt erst in der Produktion aufzufallen.
+# Geprueft wird gegen BEIDE produktiv unterstuetzten Dialekte.
+
+pg_only = pytest.mark.skipif(
+    not os.getenv("AILIZA_TEST_POSTGRES_ADMIN_URL"),
+    reason="AILIZA_TEST_POSTGRES_ADMIN_URL nicht gesetzt (echte PostgreSQL-Instanz noetig)",
+)
+
+
+def _drift_errors(database_url: str) -> list[str]:
+    """Migriert `database_url` auf head und gibt die Drift-Abweichungen zurueck."""
+    import sqlalchemy as sa
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend.alembic_adopt import check_schema_matches_metadata
+
+    proc = _run_alembic("upgrade", "head", database_url=database_url)
+    assert proc.returncode == 0, f"alembic upgrade head fehlgeschlagen:\n{proc.stderr}"
+
+    engine = sa.create_engine(database_url)
+    try:
+        return list(check_schema_matches_metadata(engine).errors)
+    finally:
+        engine.dispose()
+
+
+def test_head_schema_matches_metadata_sqlite(tmp_path):
+    errors = _drift_errors(f"sqlite:///{tmp_path / 'drift.db'}")
+    assert errors == [], (
+        "Schema-Drift zwischen db_schema.py und den Migrationen (SQLite):\n  - "
+        + "\n  - ".join(errors)
+    )
+
+
+@pg_only
+def test_head_schema_matches_metadata_postgres():
+    import sqlalchemy as sa
+
+    admin_url = os.environ["AILIZA_TEST_POSTGRES_ADMIN_URL"]
+    db_name = "ailiza_schema_drift_test"
+    admin = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as con:
+            con.execute(sa.text(f"DROP DATABASE IF EXISTS {db_name}"))
+            con.execute(sa.text(f"CREATE DATABASE {db_name}"))
+    finally:
+        admin.dispose()
+
+    target = admin_url.rsplit("/", 1)[0] + "/" + db_name
+    errors = _drift_errors(target)
+    assert errors == [], (
+        "Schema-Drift zwischen db_schema.py und den Migrationen (PostgreSQL):\n  - "
+        + "\n  - ".join(errors)
+    )
+
+
+def test_drift_check_detects_injected_column(tmp_path):
+    """Gegenprobe: die Pruefung muss echten Drift auch tatsaechlich finden.
+
+    Ohne diesen Test koennte check_schema_matches_metadata() stillschweigend
+    immer "ok" liefern und die beiden Tests oben waeren wertlos.
+    """
+    import sqlalchemy as sa
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend import alembic_adopt
+    from apps.backend.db_schema import metadata_obj
+
+    db_url = f"sqlite:///{tmp_path / 'gegenprobe.db'}"
+    proc = _run_alembic("upgrade", "head", database_url=db_url)
+    assert proc.returncode == 0, proc.stderr
+
+    table = metadata_obj.tables["users"]
+    injected = sa.Column("drift_probe_spalte", sa.String(16), nullable=True)
+    table.append_column(injected)
+    try:
+        engine = sa.create_engine(db_url)
+        try:
+            errors = alembic_adopt.check_schema_matches_metadata(engine).errors
+        finally:
+            engine.dispose()
+    finally:
+        table._columns.remove(injected)
+
+    assert any("drift_probe_spalte" in e for e in errors), (
+        "Eine nur in db_schema.py vorhandene Spalte wurde NICHT als Drift "
+        f"erkannt -- die Pruefung ist wirkungslos. Gemeldet: {errors}"
+    )
+
+    # Nach dem Zuruecknehmen muss wieder alles sauber sein -- sonst haette
+    # die Gegenprobe den Zustand fuer nachfolgende Tests beschaedigt.
+    engine = sa.create_engine(db_url)
+    try:
+        assert alembic_adopt.check_schema_matches_metadata(engine).ok
+    finally:
+        engine.dispose()
+
+
+def test_drift_check_still_flags_undeclared_unique_index(tmp_path):
+    """Gegenprobe zur UniqueConstraint-Zuordnung.
+
+    Benannte UniqueConstraints werden bewusst nicht mehr als Drift
+    gemeldet: PostgreSQL legt zu jedem UNIQUE CONSTRAINT einen
+    gleichnamigen Backing-Index an, der in `inspector.get_indexes()`
+    auftaucht, in `metadata_obj` aber unter `table.constraints` statt
+    `table.indexes` steht. Ohne diese Zuordnung meldete die Pruefung
+    `uq_tenant_domain` und `uq_domain_role_action` faelschlich als Drift --
+    aber nur unter PostgreSQL, weil SQLite dafuer ein
+    `sqlite_autoindex_*` anlegt, das ohnehin ausgefiltert wird.
+
+    Dieser Test stellt sicher, dass die Zuordnung eng bleibt: ein unique
+    Index, der in db_schema.py NIRGENDS deklariert ist -- weder als Index
+    noch als UniqueConstraint -- muss weiterhin auffallen. Sonst waere aus
+    der Korrektur eine Blindstelle geworden.
+    """
+    import sqlalchemy as sa
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend import alembic_adopt
+
+    db_url = f"sqlite:///{tmp_path / 'unique_gegenprobe.db'}"
+    proc = _run_alembic("upgrade", "head", database_url=db_url)
+    assert proc.returncode == 0, proc.stderr
+
+    engine = sa.create_engine(db_url)
+    try:
+        # Ausgangslage sauber -- sonst sagt der Test nichts aus.
+        assert alembic_adopt.check_schema_matches_metadata(engine).ok
+
+        # Ein unique Index direkt in der Datenbank, ohne jede Entsprechung
+        # in db_schema.py.
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                "CREATE UNIQUE INDEX uq_nirgends_deklariert "
+                "ON tenant_business_domains (tenant_id, domain_id, is_enabled)"
+            ))
+
+        errors = alembic_adopt.check_schema_matches_metadata(engine).errors
+        assert any("uq_nirgends_deklariert" in e for e in errors), (
+            "Ein nirgends deklarierter unique Index wurde NICHT als Drift "
+            f"gemeldet -- die UniqueConstraint-Zuordnung ist zu weit. "
+            f"Gemeldet: {errors}"
+        )
+
+        with engine.begin() as conn:
+            conn.execute(sa.text("DROP INDEX uq_nirgends_deklariert"))
+        assert alembic_adopt.check_schema_matches_metadata(engine).ok
+    finally:
+        engine.dispose()
+
+
+def test_drift_check_flags_missing_unique_constraint(tmp_path):
+    """Ein in db_schema.py deklarierter, in der Datenbank fehlender
+    UniqueConstraint muss auffallen.
+
+    Die Zuordnung von Constraint-Backing-Indizes ist eine Einbahnstrasse:
+    sie entfernt Eintraege aus der Ist-Liste, ergaenzt aber nie die
+    Soll-Liste. Ohne einen eigenstaendigen Constraint-Vergleich koennte
+    eine Migration, die `uq_tenant_domain` schlicht vergisst, unbemerkt
+    durchgehen -- die Pruefung meldete vor dieser Ergaenzung "ok".
+    """
+    import re
+    import sqlalchemy as sa
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend import alembic_adopt
+
+    db_url = f"sqlite:///{tmp_path / 'fehlender_constraint.db'}"
+    proc = _run_alembic("upgrade", "head", database_url=db_url)
+    assert proc.returncode == 0, proc.stderr
+
+    engine = sa.create_engine(db_url)
+    try:
+        assert alembic_adopt.check_schema_matches_metadata(engine).ok
+
+        # Tabelle ohne den UNIQUE-Constraint neu aufbauen, sonst alles
+        # unveraendert -- inklusive des regulaeren Index, damit wirklich
+        # nur der Constraint fehlt.
+        with engine.begin() as conn:
+            ddl = conn.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE name='tenant_business_domains'"
+            ).fetchone()[0]
+            ohne = re.sub(
+                r",?\s*CONSTRAINT uq_tenant_domain UNIQUE \([^)]*\)", "", ddl)
+            assert "uq_tenant_domain" not in ohne, "Constraint nicht entfernt"
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            conn.exec_driver_sql(
+                ohne.replace("tenant_business_domains", "tbd_ohne_uc", 1))
+            conn.exec_driver_sql(
+                "INSERT INTO tbd_ohne_uc SELECT * FROM tenant_business_domains")
+            conn.exec_driver_sql("DROP TABLE tenant_business_domains")
+            conn.exec_driver_sql(
+                "ALTER TABLE tbd_ohne_uc RENAME TO tenant_business_domains")
+            conn.exec_driver_sql(
+                "CREATE INDEX ix_tenant_business_domains_tenant "
+                "ON tenant_business_domains (tenant_id, is_enabled)")
+
+        errors = alembic_adopt.check_schema_matches_metadata(engine).errors
+        assert any("uq_tenant_domain" in e for e in errors), (
+            "Ein fehlender UniqueConstraint wurde NICHT gemeldet -- die "
+            f"Eindeutigkeitsregel koennte unbemerkt verlorengehen. "
+            f"Gemeldet: {errors}"
+        )
+    finally:
+        engine.dispose()
+
+
+def test_named_unique_constraints_are_known_to_the_check():
+    """Die Zuordnung greift nur bei Name UND Spalten.
+
+    Belegt zugleich, dass die beiden real betroffenen Constraints
+    tatsaechlich aus metadata_obj gelesen werden -- ohne echte
+    PostgreSQL-Instanz nachvollziehbar.
+    """
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend import alembic_adopt
+
+    schema = alembic_adopt._metadata_reference_schema()
+
+    erwartet = {
+        "tenant_business_domains": ("uq_tenant_domain", ("tenant_id", "domain_id")),
+        "domain_role_permissions": (
+            "uq_domain_role_action",
+            ("tenant_id", "domain_id", "role_in_domain", "action"),
+        ),
+    }
+    for tabelle, (name, spalten) in erwartet.items():
+        constraints = {c.name: c.columns for c in schema[tabelle].unique_constraints}
+        assert name in constraints, (
+            f"{tabelle}: UniqueConstraint {name} wird nicht aus metadata_obj "
+            f"gelesen. Gefunden: {sorted(constraints)}"
+        )
+        assert constraints[name] == spalten, (
+            f"{tabelle}.{name}: Spalten weichen ab -- erwartet {spalten}, "
+            f"gelesen {constraints[name]}"
+        )
+
+
+@pytest.mark.parametrize("reflected,expected", [
+    # SQLite-Schreibweisen
+    ("DATETIME", "TIMESTAMP"), ("INTEGER", "INTEGER"),
+    ("VARCHAR(64)", "VARCHAR(64)"), ("TEXT", "TEXT"),
+    ("JSON", "JSON"), ("FLOAT", "FLOAT"),
+    # PostgreSQL-Schreibweisen fuer dieselben SQLAlchemy-Typen
+    ("TIMESTAMP WITH TIME ZONE", "TIMESTAMP"),
+    ("TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP"),
+    ("BIGINT", "INTEGER"), ("CHARACTER VARYING(64)", "VARCHAR(64)"),
+    ("JSONB", "JSON"), ("DOUBLE PRECISION", "FLOAT"),
+])
+def test_type_normalisation_is_dialect_independent(reflected, expected):
+    """Die Typ-Normalform muss fuer SQLite und PostgreSQL dasselbe liefern.
+
+    Der SQLite-Testlauf sieht die PostgreSQL-Schreibweisen nie -- ohne diesen
+    Test faellt ein Fehler darin erst im postgres-audit-Job auf.
+    """
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend.alembic_adopt import _normalise_type
+
+    assert _normalise_type(reflected) == expected
+
+
+@pytest.mark.parametrize("reflected,expected", [
+    ("'normal'", "normal"),                        # SQLite
+    ("'normal'::character varying", "normal"),     # PostgreSQL
+    ("0", "0"), ("'0'", "0"), ("(0)", "0"),
+    (None, None),
+])
+def test_server_default_normalisation_is_dialect_independent(reflected, expected):
+    sys.path.insert(0, str(REPO_ROOT))
+    from apps.backend.alembic_adopt import _normalise_server_default
+
+    assert _normalise_server_default(reflected) == expected
