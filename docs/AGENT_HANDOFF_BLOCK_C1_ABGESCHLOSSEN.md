@@ -1,5 +1,9 @@
 # AILIZA Agent-Handoff: Block C — Stand nach C1 + C2 + C3 + C4
 
+> **Historischer Detailstand.** Nicht als Einstieg fuer neue Tasks verwenden.
+> Aktueller Einstieg: `docs/AILIZA_HANDOFF_ENTWICKLUNG.md`. Fuer persoenliches
+> Lernen zusaetzlich `docs/AILIZA_HANDOFF_ANWENDER.md` lesen.
+
 **Status:** PR #48 (Schema), PR #49 (TXT/Markdown-Ingestion) und PR #50 (lokale Suche) sind **gemergt**. Block C4 (interne Wissensquellen im Chat mit Quellenanzeige) ist implementiert, 1034/1034 Tests grün, PR wird als nächstes erstellt.
 
 **Zielgruppe:** Karo selbst (Priorisierung) und/oder nächster Agent (für Block C5/Websuche, jeweils erst nach expliziter Freigabe).
