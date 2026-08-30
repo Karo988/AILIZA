@@ -21,6 +21,9 @@ Einstieg:
 - [`CLAUDE.md`](CLAUDE.md) — verbindliche Repository-Anweisungen fuer Claude Code
 - [`05_prompts/CODEX_TOKEN_KONTEXT_STATUS_PROMPT.md`](05_prompts/CODEX_TOKEN_KONTEXT_STATUS_PROMPT.md) — Modell-/Kontext-/Nutzungsregeln fuer Codex
 - [`05_prompts/CLAUDE_TOKEN_KONTEXT_STATUS_PROMPT.md`](05_prompts/CLAUDE_TOKEN_KONTEXT_STATUS_PROMPT.md) — Modell-/Kontext-/Nutzungsregeln fuer Claude Code
+- [`docs/LINKS.md`](docs/LINKS.md) — geprüfte Einstiege, Betrieb und historische Dokumente
+- [`docs/SCHEMA_KONFLIKTBERICHT.md`](docs/SCHEMA_KONFLIKTBERICHT.md) — verbindlicher technischer Schema-Stand
+- [`docs/PRODUKTIONSFREIGABE_CHECKLISTE.md`](docs/PRODUKTIONSFREIGABE_CHECKLISTE.md) — Phasen 5–6 mit Nachweisen und Owner-Feldern
 
 ---
 

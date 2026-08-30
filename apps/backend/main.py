@@ -670,7 +670,7 @@ from fastapi import Depends, UploadFile, File, Response
 _CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _CSRF_PROTECTED_PREFIXES = (
     "/auth/logout", "/auth/register", "/auth/totp", "/admin/", "/skills/propose",
-    "/agent/run", "/feedback", "/documents/", "/messenger/",
+    "/agent/run", "/approvals/", "/feedback", "/documents/", "/messenger/",
 )
 
 

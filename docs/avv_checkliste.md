@@ -1,6 +1,13 @@
 # AVV-Checkliste — Groq & Anthropic
 **AILIZA | Stand: 2026-06-19 | DSGVO Art. 28**
 
+> **Wichtiger Statushinweis (30.08.2026):** Anbieterbedingungen, Regionen,
+> Aufbewahrung und DPA-Texte sind zeitabhängig. Die nachfolgenden Angaben aus
+> Juni 2026 sind eine Arbeitsgrundlage, kein aktueller Vertragsnachweis. Vor
+> Produktion müssen sie anhand der dann gültigen offiziellen Unterlagen durch
+> eine verantwortliche Person erneut geprüft und dokumentiert werden. Bis
+> dahin bleiben externe Provider technisch deaktiviert.
+
 ---
 
 ## Was ist ein AVV?

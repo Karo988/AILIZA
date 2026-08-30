@@ -418,6 +418,7 @@ body{
       <div class="side-item" role="button" tabindex="0" id="nav-domains" style="display:none" onclick="showView('domains',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🏢</span><span>Bereiche &amp; Zugriffe</span></div>
       <div class="side-item" role="button" tabindex="0" id="nav-knowledge" style="display:none" onclick="showView('knowledge',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">📚</span><span>Unternehmenswissen</span></div>
       <div class="side-item" role="button" tabindex="0" id="nav-memory-overview" style="display:none" onclick="showView('memory-overview',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🧠</span><span>Meine gespeicherten Infos</span></div>
+      <div class="side-item" role="button" tabindex="0" id="nav-approvals" style="display:none" onclick="showView('approvals',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">✅</span><span>Freigaben</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="showView('status',this);closeSidebar()" onkeydown="navKey(event,this)"><span class="side-ic">🛡️</span><span>Datenschutz &amp; Kontrolle</span></div>
       <div class="side-item" role="button" tabindex="0" onclick="toggleAccountMenu()" onkeydown="navKey(event,this)"><span class="side-ic">👤</span><span>Hilfe &amp; Profil</span></div>
     </div>
@@ -529,6 +530,13 @@ body{
         <div class="page-head"><div><div class="page-title">Meine gespeicherten Infos</div><div class="page-sub">Was AILIZA sich über Sie merkt — ansehen, korrigieren, löschen</div></div></div>
         <div id="mem-ov-msg" role="status" aria-live="polite" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:6px;font-size:13px"></div>
         <div id="mem-ov-list" style="display:flex;flex-direction:column;gap:8px"><div style="font-size:13px;color:var(--text-muted)">Wird geladen…</div></div>
+      </div>
+    </div>
+    <div class="view" id="view-approvals">
+      <div class="page-wrap">
+        <div class="page-head"><div><div class="page-title">Freigaben</div><div class="page-sub">Nur eigene oder Ihnen ausdrücklich zugewiesene Vorgänge</div></div><button class="btn-ghost" onclick="loadApprovals()">Aktualisieren</button></div>
+        <div id="approval-ui-msg" role="status" aria-live="polite" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:6px;font-size:13px"></div>
+        <div id="approval-ui-list" style="display:flex;flex-direction:column;gap:8px"><div style="font-size:13px;color:var(--text-muted)">Wird geladen…</div></div>
       </div>
     </div>
     <div class="view" id="view-status">
@@ -1564,6 +1572,10 @@ function setDomainsNavVisible(on){
   const el=document.getElementById("nav-domains");
   if(el)el.style.display=on?"flex":"none";
 }
+function setApprovalsNavVisible(on){
+  const el=document.getElementById("nav-approvals");
+  if(el)el.style.display=on?"flex":"none";
+}
 async function refreshAuthButton(){
   const btn=document.getElementById("topbar-auth-btn");
   if(!btn)return;
@@ -1586,6 +1598,7 @@ async function refreshAuthButton(){
         setDomainsNavVisible(false);
         setKnowledgeNavVisible(false);
         setMemoryOverviewNavVisible(false);
+        setApprovalsNavVisible(false);
         closeAccountMenu();
         const _li0=document.getElementById("account-logout-item"); if(_li0)_li0.style.display="none";
         addAiMessage("Anmeldung unvollstaendig: Es konnte kein eindeutiger Mandant ermittelt werden. Bitte melden Sie sich erneut an.",undefined);
@@ -1597,6 +1610,7 @@ async function refreshAuthButton(){
       setDomainsNavVisible(true);
       setKnowledgeNavVisible(true);
       setMemoryOverviewNavVisible(true);
+      setApprovalsNavVisible(true);
       const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="block";
       if(!_projectsSynced){_projectsSynced=true;_chatsSynced=true;syncAllOnLogin();}  // Erst-Sync (einmal/Session)
       return;
@@ -1608,6 +1622,7 @@ async function refreshAuthButton(){
   setDomainsNavVisible(false);
   setKnowledgeNavVisible(false);
   setMemoryOverviewNavVisible(false);
+  setApprovalsNavVisible(false);
   closeAccountMenu();
   const _li=document.getElementById("account-logout-item"); if(_li)_li.style.display="none";
 }
@@ -1632,6 +1647,53 @@ function showView(name,el){
   if(name==="domains")loadDomains();
   if(name==="knowledge")loadKnowledge();
   if(name==="memory-overview")loadMemoryOverview();
+  if(name==="approvals")loadApprovals();
+}
+
+// ── Freigabeoberflaeche ────────────────────────────────────────────────────
+// Der Browser filtert nicht nach Tenant, Owner oder Zuweisung. Er zeigt nur
+// die bereits serverseitig gefilterte /approvals-Antwort und rendert bewusst
+// keine input_params, damit moeglicher Freitext nicht unnoetig offengelegt wird.
+function approvalUiMsg(text,kind){
+  const el=document.getElementById("approval-ui-msg");
+  if(!text){el.style.display="none";return;}
+  const ok=kind==="ok";
+  el.style.display="block";
+  el.style.background=ok?"#E3F0EC":"#F7E7E2";
+  el.style.color=ok?"#0E6B5A":"#8E3320";
+  el.textContent=text;
+}
+async function loadApprovals(){
+  const box=document.getElementById("approval-ui-list");
+  approvalUiMsg("");
+  try{
+    const r=await fetch(`${API}/approvals?status=pending`,{credentials:"same-origin",headers:authHeaders()});
+    if(r.status===401){box.innerHTML="";approvalUiMsg("Bitte melden Sie sich an.");return;}
+    if(!r.ok){box.innerHTML="";approvalUiMsg("Freigaben konnten nicht geladen werden.");return;}
+    const rows=await r.json();
+    if(!Array.isArray(rows)||!rows.length){box.innerHTML='<div style="font-size:13px;color:var(--text-muted)">Keine offenen Freigaben.</div>';return;}
+    box.innerHTML=rows.map(a=>`<div style="border:1px solid var(--border,#e3e6dd);border-radius:8px;padding:12px;background:var(--bg-elevated,#fff)">
+      <div style="display:flex;gap:8px;align-items:baseline"><strong style="flex:1">${memOvEsc(a.tool||"Vorgang")}</strong><span style="font-size:11px;color:var(--text-muted)">${memOvEsc(a.risk_level||"")}</span></div>
+      <div style="font-size:12px;color:var(--text-soft);margin-top:5px">${memOvEsc(a.risk_reason||"Prüfung erforderlich")}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:5px">Vorgang #${Number(a.id)} · ${memOvEsc(a.created_at||"")}</div>
+      <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-primary" onclick="decideApproval(${Number(a.id)},'approve')">Freigeben</button><button class="btn-ghost" onclick="decideApproval(${Number(a.id)},'reject')">Ablehnen</button></div>
+    </div>`).join("");
+  }catch(e){box.innerHTML="";approvalUiMsg("Backend nicht erreichbar.");}
+}
+async function decideApproval(approvalId,decision){
+  const verb=decision==="approve"?"freigeben":"ablehnen";
+  if(!confirm(`Vorgang #${Number(approvalId)} wirklich ${verb}?`))return;
+  const note=prompt("Optionale kurze Begründung (keine vertraulichen Inhalte):","");
+  if(note===null)return;
+  try{
+    const r=await fetch(`${API}/approvals/${Number(approvalId)}/${decision}`,{
+      method:"POST",credentials:"same-origin",headers:authHeaders(),body:JSON.stringify({note:note.trim()})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){approvalUiMsg(d.detail||"Entscheidung nicht möglich.");return;}
+    approvalUiMsg(decision==="approve"?"Freigabe erteilt.":"Vorgang abgelehnt.","ok");
+    loadApprovals();
+  }catch(e){approvalUiMsg("Backend nicht erreichbar.");}
 }
 
 // ── Unternehmenswissen ──────────────────────────────────────────────────────

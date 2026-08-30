@@ -10,6 +10,12 @@ services:
     # Sperre. Siehe DEPLOY_RENDER.md.
     startCommand: uvicorn apps.backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # Render-Service ist Produktion: deaktiviert Debug-/Testpfade und
+      # aktiviert die produktionsspezifischen Sicherheitsprüfungen.
+      - key: AILIZA_ENV
+        value: "production"
+      - key: AILIZA_TEST_MODE
+        value: "false"
       - key: AILIZA_EXTERNAL_LLM_ENABLED
         value: "false"
       - key: AILIZA_DEBUG

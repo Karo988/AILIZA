@@ -28,7 +28,7 @@ Render liest `render.yaml` automatisch aus dem Repository.
 | **Branch** | `main` |
 | **Root Directory** | *(leer lassen — Repo-Root)* |
 | **Runtime** | Python 3 |
-| **Build Command** | `pip install -r apps/backend/requirements.txt` |
+| **Build Command** | `pip install -r apps/backend/requirements-core.txt` |
 | **Start Command** | `python -m uvicorn apps.backend.main:app --host 0.0.0.0 --port $PORT` |
 
 > **Wichtig:** `$PORT` wird von Render automatisch gesetzt — nicht hart kodieren!
@@ -56,9 +56,12 @@ Unter **Environment → Add Environment Variable** folgende Keys eintragen:
 
 | Variable | Wert |
 |---|---|
-| `AILIZA_EXTERNAL_LLM_ENABLED` | `true` |
+| `AILIZA_EXTERNAL_LLM_ENABLED` | `false` *(erst nach dokumentierter Provider-/AVV-Freigabe aktivieren)* |
+| `AILIZA_ENV` | `production` |
 | `AILIZA_SECRET_KEY` | *(zufälliges Secret, min. 32 Zeichen)* |
 | `GROQ_API_KEY` | `gsk_...` *(von console.groq.com)* |
+| `AILIZA_CORS_ORIGINS` | *(exakte öffentliche Frontend-Adresse, niemals `*`)* |
+| `AILIZA_FORCE_HTTPS` | `true` *(erst nach verifiziertem Render-TLS aktivieren)* |
 
 #### Empfohlen (Fallback-Provider)
 
@@ -97,9 +100,6 @@ Nach erfolgreichem Deploy wird eine URL angezeigt, z.B.:
 ```bash
 # Health Check
 curl https://ailiza-backend.onrender.com/health
-
-# Provider-Status
-curl https://ailiza-backend.onrender.com/api/debug/provider-test
 
 # Chat-Anfrage
 curl -X POST https://ailiza-backend.onrender.com/agent/run \
@@ -144,12 +144,14 @@ Nur Provider mit gesetztem API-Key werden versucht.
 
 ### "ModuleNotFoundError: No module named '...'"
 
-Build Command prüfen: `pip install -r apps/backend/requirements.txt`  
+Build Command prüfen: `pip install -r apps/backend/requirements-core.txt`
 Root Directory muss **leer** (Repo-Root) sein, nicht `apps/backend`.
 
 ### "AILIZA_EXTERNAL_LLM_ENABLED nicht gesetzt"
 
-Environment Variable `AILIZA_EXTERNAL_LLM_ENABLED=true` im Render-Dashboard setzen.
+Für einen rein lokalen/fail-closed Betrieb
+`AILIZA_EXTERNAL_LLM_ENABLED=false` setzen. Erst nach dokumentierter
+Provider-, AVV/DPA- und Transferfreigabe bewusst auf `true` ändern.
 
 ### Groq 403 / "Zugriff verweigert"
 
@@ -159,8 +161,10 @@ Environment Variable `AILIZA_EXTERNAL_LLM_ENABLED=true` im Render-Dashboard setz
 
 ### "all_providers_failed"
 
-Mindestens einen gültigen API-Key setzen. Provider-Status:  
-`GET /api/debug/provider-test`
+Mindestens einen gültigen API-Key setzen. Der Debug-Provider-Endpunkt ist in
+Produktion absichtlich nicht registriert. Providerfehler deshalb über
+minimierte Betriebsmetriken und Audit-Ereignisse untersuchen, niemals durch
+einen öffentlich erreichbaren Debug-Endpunkt.
 
 ### Port-Fehler / Service antwortet nicht
 
