@@ -5,7 +5,9 @@ def _valid_env() -> dict[str, str]:
     return {
         "AILIZA_ENV": "production",
         "AILIZA_TEST_MODE": "false",
-        "AILIZA_FORCE_HTTPS": "true",
+        "RENDER": "true",
+        "AILIZA_FORCE_HTTPS": "false",
+        "AILIZA_HSTS_ENABLED": "true",
         "AILIZA_CORS_ORIGINS": "https://ailiza.example.com",
         "AILIZA_SECRET_KEY": "j" * 32,
         "AILIZA_LOG_HMAC_KEY": "h" * 32,
@@ -19,7 +21,10 @@ def test_valid_fail_closed_configuration_passes_without_provider_key():
 
 
 def test_wildcard_and_http_origins_are_rejected():
-    for origins in ("*", "", "http://ailiza.example.com"):
+    for origins in (
+        "*", "", "http://ailiza.example.com", "https://ailiza.example.com/", "https://ailiza.example.com/path",
+        "https://ailiza.example.com?query=1", "https://user@ailiza.example.com",
+    ):
         env = _valid_env()
         env["AILIZA_CORS_ORIGINS"] = origins
         result = {name: ok for name, ok, _ in evaluate(env)}
@@ -41,3 +46,21 @@ def test_sqlite_is_not_accepted_as_production_database():
     env["AILIZA_DATABASE_URL"] = "sqlite:////data/ailiza.db"
     result = {name: ok for name, ok, _ in evaluate(env)}
     assert result["production_database"] is False
+
+
+def test_postgres_url_requires_host_and_database_name():
+    for database_url in ("postgresql:///ailiza", "postgresql://example.invalid", "postgresql://example.invalid/#fragment"):
+        env = _valid_env()
+        env["AILIZA_DATABASE_URL"] = database_url
+        result = {name: ok for name, ok, _ in evaluate(env)}
+        assert result["production_database"] is False
+
+
+def test_non_render_environment_requires_application_https_redirect():
+    env = _valid_env()
+    env.pop("RENDER")
+    result = {name: ok for name, ok, _ in evaluate(env)}
+    assert result["https_enforced"] is False
+    env["AILIZA_FORCE_HTTPS"] = "true"
+    result = {name: ok for name, ok, _ in evaluate(env)}
+    assert result["https_enforced"] is True

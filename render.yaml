@@ -26,9 +26,12 @@ services:
       # Mehrere Origins kommasepariert: https://ailiza.example.com,https://www.ailiza.example.com
       - key: AILIZA_CORS_ORIGINS
         value: "https://ailiza-1.onrender.com"
-      # C1: AILIZA_FORCE_HTTPS=true aktiviert HTTP→HTTPS-Redirect + HSTS-Header.
-      # Nur setzen, nachdem TLS auf Render verifiziert wurde (Render terminiert TLS selbst).
+      # Render terminiert TLS und leitet HTTP bereits am Edge auf HTTPS um.
+      # Ein zusaetzlicher App-Redirect wuerde den internen HTTP-Hop erneut
+      # umleiten. HSTS wird deshalb getrennt durch die Anwendung gesetzt.
       - key: AILIZA_FORCE_HTTPS
+        value: "false"
+      - key: AILIZA_HSTS_ENABLED
         value: "true"
       - key: AILIZA_SECRET_KEY
         sync: false

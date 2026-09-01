@@ -281,11 +281,6 @@ body{
 .field input:focus,.field textarea:focus,.field select:focus{border-color:var(--accent)}
 .modal-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text-soft);padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer}
-.key-pop{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;box-shadow:0 4px 20px rgba(0,0,0,.08);z-index:50;display:none;width:280px}
-.key-pop.open{display:block}
-.key-pop label{font-size:11px;color:var(--text-muted);margin-bottom:4px;display:block}
-.key-pop input{width:100%;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;outline:none;font-family:inherit}
-.key-pop-actions{display:flex;gap:6px;margin-top:8px;justify-content:flex-end}
 .skill-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
 .skill-tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s}
 .skill-tile:hover{border-color:var(--accent)}
@@ -475,25 +470,6 @@ body{
             <button class="tool-btn" id="tool-auto" onclick="toggleTool('auto')">⚡ Autonom</button>
             <button class="tool-btn" id="tool-chat-upload" onclick="document.getElementById('chat-file-input').click()" title="Textdatei einlesen (wird geprüft, bevor der Inhalt ins Eingabefeld übernommen wird)">📎 Datei</button>
             <input type="file" id="chat-file-input" accept=".pdf,.docx,.xlsx,.txt,.csv,.md,.html,.htm,.rtf,.json,.xml,.yaml,.yml,.sql,.js,.ts,.py,.css,.php" style="display:none" onchange="handleChatFileUpload(event)">
-            <div class="dev-controls" style="display:none">
-              <button class="tool-btn" onclick="toggleKeyPop(event)">🔑 API-Key</button>
-              <div class="tool-sep"></div>
-              <select class="tool-select" id="provider-sel" onchange="updateModels()">
-                <option value="groq">Groq (kostenlos)</option>
-                <option value="anthropic">Anthropic Claude</option>
-                <option value="openai">OpenAI</option>
-                <option value="mistral">Mistral</option>
-              </select>
-              <select class="tool-select" id="model-sel"></select>
-            </div>
-          </div>
-          <div class="key-pop" id="key-pop">
-            <label>API-Key für <span id="key-pop-provider">Groq</span>:</label>
-            <input type="password" id="key-pop-input" placeholder="gsk_... oder sk-...">
-            <div class="key-pop-actions">
-              <button class="btn-ghost" onclick="toggleKeyPop()">Abbrechen</button>
-              <button class="btn-primary" onclick="saveKey()">Speichern</button>
-            </div>
           </div>
         </div>
       </div>
@@ -921,7 +897,6 @@ const API = "";
   window.setInterval(update, 500);
 })();
 
-const MODELS={groq:["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768"],anthropic:["claude-haiku-4-5","claude-sonnet-4-6"],openai:["gpt-4o-mini","gpt-4o"],mistral:["mistral-small-latest","mistral-large-latest"]};
 const SKILLS=[
   {ic:"📧",n:"E-Mail schreiben",d:"Professionelle E-Mail",p:"Schreibe eine professionelle E-Mail: "},
   {ic:"📝",n:"Zusammenfassen",d:"Text zusammenfassen",p:"Fasse zusammen: "},
@@ -956,6 +931,14 @@ const _LEGACY_STORAGE_BASES=["ailiza_chat","ailiza_chat_list","ailiza_chat_meta"
   "ailiza_folders","ailiza_tools"];
 function _isLegacyPerChatMessageKey(key){
   return key.startsWith("ailiza_chat_") && key!=="ailiza_chat_list" && key!=="ailiza_chat_meta";
+}
+function purgeUnsafeLegacyProviderKeys(){
+  // Das alte, versteckte Entwicklerfeld speicherte Provider-Schluessel im
+  // Browser, obwohl das Backend sie nie nutzte. Solche Credentials duerfen
+  // weder migriert noch wiederhergestellt werden und werden einmalig entfernt.
+  for(const key of Object.keys(localStorage)){
+    if(key.startsWith("ailiza_key_"))localStorage.removeItem(key);
+  }
 }
 function migrateLegacyKeysToQuarantine(){
   // Idempotent: entfernt den Alt-Schluessel nach dem Verschieben, daher laeuft
@@ -1555,9 +1538,10 @@ async function init(){
   const days=Math.max(0,Math.round((new Date("2026-08-02")-new Date())/86400000));
   document.getElementById("deadline-pill").textContent=days+" Tage bis EU AI Act";
   document.getElementById("m-days").textContent=days;
-  migrateLegacyKeysToQuarantine();   // einmalig: Alt-Daten in Quarantaene, NIE loeschen
+  purgeUnsafeLegacyProviderKeys();   // tote Klartext-Credentials sicher entfernen
+  migrateLegacyKeysToQuarantine();   // fachliche Alt-Daten in Quarantaene verschieben
   await refreshAuthButton();         // ERST Auth-Status feststellen ...
-  loadActiveProjectFromStorage();updateModels();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderContextBar();renderPrivacyMemory();checkStatus();
+  loadActiveProjectFromStorage();renderRecent();renderProjects();renderProjectList();renderFolders();renderSkills();renderTools();loadHistory();updateChatProjectLabel();renderContextBar();renderPrivacyMemory();checkStatus();
   setInterval(checkStatus,15000);
   // Keepalive: alle 4 Minuten pingen damit Render-Server nicht einschläft
   setInterval(()=>fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)}).catch(()=>{}),240000);
@@ -1992,14 +1976,6 @@ async function domAssign(code){
     box.style.display="none";domToggleMembers(code);
   }catch(e){domMsg("Backend nicht erreichbar.");}
 }
-function updateModels(){
-  const p=document.getElementById("provider-sel").value;
-  document.getElementById("model-sel").innerHTML=MODELS[p].map(m=>`<option>${m}</option>`).join("");
-  document.getElementById("key-pop-provider").textContent=p.charAt(0).toUpperCase()+p.slice(1);
-  document.getElementById("key-pop-input").value=localStorage.getItem("ailiza_key_"+p)||"";
-}
-function toggleKeyPop(e){if(e)e.stopPropagation();document.getElementById("key-pop").classList.toggle("open")}
-function saveKey(){const p=document.getElementById("provider-sel").value;const k=document.getElementById("key-pop-input").value.trim();if(k)localStorage.setItem("ailiza_key_"+p,k);toggleKeyPop()}
 function toggleTool(n){tools[n]=!tools[n];localStorage.setItem(scopedKey("ailiza_tools"),JSON.stringify(tools));renderTools()}
 function renderTools(){document.getElementById("tool-search").classList.toggle("active",tools.search);document.getElementById("tool-auto").classList.toggle("active",tools.auto)}
 function escapeHtml(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
@@ -2957,8 +2933,6 @@ function renderProjects(){document.getElementById("proj-count").textContent=proj
 function renderProjectList(){const el=document.getElementById("proj-list");if(!projects.length){el.innerHTML='<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">Noch keine</div>';return}el.innerHTML=projects.slice(-8).map(p=>{const i=projects.indexOf(p);return`<div class="side-list-item${String(p.id)===String(activeProjectId)?" active":""}" onclick="openProjectChat(${i});closeSidebar()"><span class="dot"></span><span class="side-list-text">${escapeHtml(p.name)}</span></div>`}).join("")}
 async function checkStatus(){const b=document.getElementById("conn-status");b.textContent="○ Verbinde…";b.className="status-dot status-off";try{const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(18000)});if(r.ok){b.textContent="● System aktiv";b.className="status-dot status-ok"}else{b.textContent="○ Verbindung verzögert";b.className="status-dot status-off"}}catch{b.textContent="○ Offline";b.className="status-dot status-off"}}
 async function loadStatus(){try{const[ar,ap]=await Promise.all([fetch(`${API}/agent/runs`).then(r=>r.json()),fetch(`${API}/approvals`).then(r=>r.json())]);const runs=Array.isArray(ar)?ar:[];const apprs=Array.isArray(ap)?ap:[];document.getElementById("m-runs").textContent=runs.length;document.getElementById("m-appr").textContent=apprs.length;document.getElementById("runs-list").innerHTML=runs.length?runs.slice(0,10).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--surface-2);font-size:12px;display:flex;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:${r.status==="completed"?"var(--accent)":"var(--warn)"};margin-top:5px;flex-shrink:0"></span><span style="flex:1">${(r.task||"").slice(0,80)}</span><span style="color:var(--text-muted);font-size:11px">${r.status}</span></div>`).join(""):'<div class="empty">Keine Runs</div>'}catch{}}
-document.addEventListener("click",e=>{const pop=document.getElementById("key-pop");if(pop.classList.contains("open")&&!pop.contains(e.target)&&!e.target.closest("button[onclick*='toggleKeyPop']"))pop.classList.remove("open")});
-
 // ── Wissensbibliothek ──
 const WISSEN=[
   // E-Mail & Kommunikation

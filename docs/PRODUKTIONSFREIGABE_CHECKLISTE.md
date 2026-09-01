@@ -1,6 +1,6 @@
 # AILIZA — Produktionsfreigabe Phasen 5–6
 
-Stand: 30.08.2026
+Stand: 31.08.2026
 
 Status: Vorlage. Kein ausgefülltes Feld darf ohne Beleg als erledigt markiert
 werden. Secrets, Zugangsdaten und Vertragsdokumente gehören nicht ins Repo.
@@ -9,10 +9,10 @@ werden. Secrets, Zugangsdaten und Vertragsdokumente gehören nicht ins Repo.
 
 | Nachweis | Status | Einzutragender Beleg |
 |---|---|---|
-| Öffentliche Domain festgelegt | vorbereitet | `https://ailiza-1.onrender.com` — Live-Nachweis noch erforderlich |
-| TLS-Zertifikat gültig | offen | Prüfdatum und Zertifikatsaussteller |
-| HTTP→HTTPS und HSTS geprüft | offen | Testprotokoll; `AILIZA_FORCE_HTTPS=true` |
-| CORS ohne Wildcard | vorbereitet | `AILIZA_CORS_ORIGINS=https://ailiza-1.onrender.com` |
+| Öffentliche Domain festgelegt | live erreichbar | `https://ailiza-1.onrender.com/health`, HTTP 200 am 31.08.2026 |
+| TLS-Zertifikat gültig | teilweise belegt | TLS-Verifikation durch `curl` und HTTP 200 am 31.08.2026; Aussteller noch protokollieren |
+| HTTP→HTTPS am Render-Edge und HSTS geprüft | blockiert | Redirect 301 bestanden; HSTS-Header am 31.08.2026 noch nicht vorhanden |
+| CORS ohne Wildcard | blockiert | Vorlage ist restriktiv; Live-System antwortete am 31.08.2026 noch mit `access-control-allow-origin: *` |
 | Produktionsmodus aktiv | vorbereitet | `AILIZA_ENV=production` in `render.yaml` |
 | Externe LLMs bewusst freigegeben | offen | Providerliste; sonst `false` belassen |
 | Externes verschlüsseltes Backupziel | offen | System/Region, keine Zugangsdaten |
@@ -26,6 +26,22 @@ Empfohlener Mindestplan: tägliches verschlüsseltes Backup, getrenntes externes
 Ziel, automatische Fehleralarmierung und vierteljährlicher Restore-Test. RPO
 und RTO bleiben Owner-Entscheidungen und müssen vor Produktion eingetragen
 werden.
+
+### Live-Pruefung vom 31.08.2026
+
+Oeffentliche, nicht authentifizierte Pruefung gegen die oben genannte Domain:
+
+- `http://.../health` leitete mit HTTP 301 exakt auf die HTTPS-URL um;
+- `https://.../health` antwortete mit HTTP 200 und dem erwarteten
+  Service-Status;
+- der HTTPS-Response enthielt noch keinen `Strict-Transport-Security`-Header;
+- erlaubte und absichtlich falsche Praefix-Origin erhielten beide noch
+  `access-control-allow-origin: *`.
+
+Ergebnis: Der aktuell deployte Stand ist **nicht produktionsfreigegeben**.
+Nach Deployment des geprueften Kandidaten muessen HSTS und beide
+CORS-Gegenproben wiederholt werden; erst die restriktive Antwort darf das Gate
+schliessen.
 
 ## Phase 6 — Geschäftliche Abnahme
 

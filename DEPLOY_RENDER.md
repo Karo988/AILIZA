@@ -59,16 +59,26 @@ Unter **Environment → Add Environment Variable** folgende Keys eintragen:
 | `AILIZA_EXTERNAL_LLM_ENABLED` | `false` *(erst nach dokumentierter Provider-/AVV-Freigabe aktivieren)* |
 | `AILIZA_ENV` | `production` |
 | `AILIZA_SECRET_KEY` | *(zufälliges Secret, min. 32 Zeichen)* |
-| `GROQ_API_KEY` | `gsk_...` *(von console.groq.com)* |
 | `AILIZA_CORS_ORIGINS` | *(exakte öffentliche Frontend-Adresse, niemals `*`)* |
-| `AILIZA_FORCE_HTTPS` | `true` *(erst nach verifiziertem Render-TLS aktivieren)* |
+| `AILIZA_FORCE_HTTPS` | `false` *(Render terminiert TLS und leitet HTTP am Edge um)* |
+| `AILIZA_HSTS_ENABLED` | `true` |
 
-#### Empfohlen (Fallback-Provider)
+Render stellt zur Laufzeit `RENDER=true` bereit. Der technische Preflight
+wertet dies als plattformverwaltete TLS-Terminierung. Die App darf auf Render
+keinen eigenen HTTPS-Redirect erzwingen, weil der interne Hop vom Render-Edge
+zur App absichtlich HTTP ist. HSTS bleibt davon getrennt aktiv.
+
+#### Erst nach dokumentierter Provider-Freigabe
 
 | Variable | Wert |
 |---|---|
+| `GROQ_API_KEY` | *(als Secret im Render-Dashboard; nur bei freigegebenem Groq-Betrieb)* |
 | `OPENAI_API_KEY` | `sk-...` *(von platform.openai.com)* |
 | `ANTHROPIC_API_KEY` | `sk-ant-...` *(von console.anthropic.com)* |
+
+Provider-Keys nie in Dateien, Screenshots, Logs oder Browser-Speicher
+uebernehmen. `AILIZA_EXTERNAL_LLM_ENABLED` bleibt bis zur fachlichen Freigabe
+auf `false`, auch wenn ein Key bereits sicher hinterlegt wurde.
 
 #### Optional
 

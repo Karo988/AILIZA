@@ -16,6 +16,38 @@ def _true(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes"}
 
 
+def _is_exact_https_origin(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.hostname)
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.path
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+def _is_postgres_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"postgresql", "postgresql+psycopg"}
+        and bool(parsed.hostname)
+        and bool(parsed.path.strip("/"))
+        and not parsed.fragment
+    )
+
+
 def evaluate(env: dict[str, str]) -> list[tuple[str, bool, str]]:
     results: list[tuple[str, bool, str]] = []
 
@@ -23,15 +55,16 @@ def evaluate(env: dict[str, str]) -> list[tuple[str, bool, str]]:
                     "AILIZA_ENV muss production sein"))
     results.append(("test_mode_disabled", not _true(env.get("AILIZA_TEST_MODE")),
                     "AILIZA_TEST_MODE darf nicht aktiv sein"))
-    results.append(("https_enforced", _true(env.get("AILIZA_FORCE_HTTPS")),
-                    "AILIZA_FORCE_HTTPS muss true sein"))
+    render_managed_tls = _true(env.get("RENDER"))
+    application_redirect = _true(env.get("AILIZA_FORCE_HTTPS"))
+    results.append(("https_enforced", render_managed_tls or application_redirect,
+                    "Render-TLS oder anwendungseigener HTTPS-Redirect muss aktiv sein"))
+    results.append(("hsts_enabled", _true(env.get("AILIZA_HSTS_ENABLED")) or application_redirect,
+                    "HSTS muss explizit aktiviert sein"))
 
     raw_origins = env.get("AILIZA_CORS_ORIGINS", "")
     origins = [item.strip() for item in raw_origins.split(",") if item.strip()]
-    origins_ok = bool(origins) and "*" not in origins and all(
-        urlparse(origin).scheme == "https" and bool(urlparse(origin).netloc)
-        for origin in origins
-    )
+    origins_ok = bool(origins) and "*" not in origins and all(_is_exact_https_origin(origin) for origin in origins)
     results.append(("cors_explicit_https", origins_ok,
                     "mindestens eine exakte HTTPS-Origin, keine Wildcard"))
 
@@ -41,11 +74,11 @@ def evaluate(env: dict[str, str]) -> list[tuple[str, bool, str]]:
                     "AILIZA_LOG_HMAC_KEY muss separat gesetzt sein"))
 
     database_url = env.get("AILIZA_DATABASE_URL", "")
-    results.append(("production_database", database_url.startswith(("postgresql://", "postgresql+psycopg://")),
+    results.append(("production_database", _is_postgres_url(database_url),
                     "Produktionsdatenbank muss PostgreSQL sein"))
 
     external_enabled = _true(env.get("AILIZA_EXTERNAL_LLM_ENABLED"))
-    provider_key_present = any(env.get(name, "") for name in (
+    provider_key_present = any(env.get(name, "").strip() for name in (
         "GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"
     ))
     results.append(("provider_configuration", (not external_enabled) or provider_key_present,

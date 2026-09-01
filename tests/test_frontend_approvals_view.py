@@ -22,3 +22,17 @@ def test_approval_navigation_is_hidden_without_login():
     assert 'id="nav-approvals" style="display:none"' in HTML
     assert "setApprovalsNavVisible(false)" in HTML
     assert "setApprovalsNavVisible(true)" in HTML
+
+
+def test_legacy_provider_key_input_is_removed_and_existing_values_are_purged():
+    assert 'class="dev-controls"' not in HTML
+    assert 'id="key-pop"' not in HTML
+    assert "function saveKey" not in HTML
+    assert 'localStorage.setItem("ailiza_key_' not in HTML
+    purge = HTML.split("function purgeUnsafeLegacyProviderKeys()", 1)[1].split(
+        "function migrateLegacyKeysToQuarantine()", 1
+    )[0]
+    assert 'key.startsWith("ailiza_key_")' in purge
+    assert "localStorage.removeItem(key)" in purge
+    init = HTML.split("async function init()", 1)[1].split("async function refreshAuthButton()", 1)[0]
+    assert init.index("purgeUnsafeLegacyProviderKeys();") < init.index("await refreshAuthButton();")
