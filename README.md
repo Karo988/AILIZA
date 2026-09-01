@@ -49,7 +49,7 @@ Einstieg:
 - [x] Kill-Switch (`AILIZA_EXTERNAL_LLM_ENABLED`)
 - [x] Governance-Pipeline (Klassifikation → Policy → Redaction → Orchestrator)
 - [x] Provider-Profil-System (`ProviderProfile`, `avv_signed`, `transfer_basis`)
-- [x] Capability-Registry (`check_capability()`, 11 Capabilities, fail-closed)
+- [x] Capability-Registry (`check_capability()`, 12 Capabilities, fail-closed)
 - [x] Tool-Gateway (`guarded_tool_call()`)
 - [x] Audit-Vault Stufe 1 (append-only, sanitized, paginiert)
 - [x] Audit-Vault Stufe 2 (SHA-256 Hash-Chain, `verify_audit_chain()`)
@@ -70,11 +70,11 @@ Einstieg:
 
 - [ ] Produktions-Bestandsprüfung der Memory-Invarianten ausführen (Workflow „Memory-Scope-Audit" manuell auslösen) — Voraussetzung, bevor die Anbindung des Memory-Kerns an den zentralen Permission-Evaluator (`apps/backend/permissions.py`) beginnt
 - [ ] Memory-Governance UI (`GET /memory/facts`, `DELETE /memory/facts/{id}`)
-- [ ] Freigabe-UI (`GET /approvals` Frontend-Seite — README nannte bisher faelschlich `/admin/approvals`)
+- [x] Freigabe-UI (`GET /approvals`, serverseitig tenant-/owner-/zuweisungsgefiltert)
 - [ ] Fehlende Audit-Events: `provider.blocked`, `capability.blocked`, `memory.stored` (`approval.approved`/`approval.rejected` existieren bereits in `routers/approvals.py`; ob der Name auf `approval.granted` vereinheitlicht wird, ist offen — siehe `docs/AILIZA_HANDOFF_ENTWICKLUNG.md`, Abschnitt 4)
-- [ ] CORS Wildcard → explizite Origins (vor Produktion)
+- [x] CORS in der Render-Vorlage auf eine explizite HTTPS-Origin begrenzt; Live-Nachweis bleibt Produktions-Gate
 - [ ] Externes Backupziel, Zeitplan, Alarmierung und verantwortliche Person festlegen
-- [ ] TLS-Terminierung (vor Produktion)
+- [ ] Render-TLS/HTTP→HTTPS und HSTS am Live-System nachweisen (Konfiguration vorbereitet)
 
 ---
 
@@ -90,7 +90,9 @@ Die folgenden Module und Aktionen sind **permanent gesperrt** bis zur expliziten
 - Tools mit Training auf Kundendaten
 - Tools ohne Löschkonzept
 - Unkontrollierte Websuche
-- Alle Provider (Groq, Anthropic, Tavily) — je kein AVV unterzeichnet
+- Externe Provider fuer echte Kundendaten ohne aktuellen, organisationsbezogenen
+  AVV/DPA- und Transfernachweis. Die technischen `ProviderProfile`-Werte sind
+  nur eine Betreiber-Konfiguration und ersetzen keinen Vertragsnachweis.
 
 ---
 
