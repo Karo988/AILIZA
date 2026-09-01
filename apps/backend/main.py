@@ -493,10 +493,14 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-# HSTS + HTTP→HTTPS-Redirect (C1): nur aktiv wenn AILIZA_FORCE_HTTPS=true.
-# Render terminiert TLS selbst — intern läuft HTTP, daher standardmäßig off.
-# In Produktion: AILIZA_FORCE_HTTPS=true setzen (nach TLS-Setup verifizieren).
+# HTTP→HTTPS-Redirect nur fuer Betriebsumgebungen, in denen die Anwendung
+# selbst TLS erkennt. Render terminiert TLS am Edge und leitet intern per HTTP
+# weiter; dort muss der Redirect aus bleiben, HSTS kann aber separat gesetzt
+# werden.
 _force_https = os.getenv("AILIZA_FORCE_HTTPS", "false").lower() in ("1", "true", "yes")
+_hsts_enabled = _force_https or os.getenv("AILIZA_HSTS_ENABLED", "false").lower() in (
+    "1", "true", "yes",
+)
 
 if _force_https:
     from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -512,7 +516,7 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: _StarletteRequest, call_next):
         response: _StarletteResponse = await call_next(request)
-        if _force_https:
+        if _hsts_enabled:
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains"
             )
@@ -670,8 +674,30 @@ from fastapi import Depends, UploadFile, File, Response
 _CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _CSRF_PROTECTED_PREFIXES = (
     "/auth/logout", "/auth/register", "/auth/totp", "/admin/", "/skills/propose",
-    "/agent/run", "/feedback", "/documents/", "/messenger/",
+    "/agent/run", "/approvals/", "/feedback", "/documents/", "/messenger/",
 )
+
+
+def _normalized_web_origin(value: str, *, allow_path: bool = False) -> tuple[str, str, int] | None:
+    """Normalisiert eine HTTP(S)-Origin fuer einen exakten Vergleich.
+
+    Konfigurierte Origins und Origin-Header duerfen keinen Pfad, Query oder
+    Fragment tragen. Beim Referer ist ein Pfad zulaessig; verglichen wird nur
+    dessen Origin. Ungueltige Ports/Userinfo werden fail-closed verworfen.
+    """
+    try:
+        parsed = urlparse((value or "").strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    if not allow_path and (parsed.path or parsed.params or parsed.query or parsed.fragment):
+        return None
+    effective_port = port or (443 if parsed.scheme.lower() == "https" else 80)
+    return parsed.scheme.lower(), parsed.hostname.lower(), effective_port
 
 
 @app.middleware("http")
@@ -697,13 +723,22 @@ async def csrf_origin_check(request: Request, call_next):
             referer = request.headers.get("referer", "")
             allowed = os.getenv("AILIZA_CORS_ORIGINS", "*")
 
-            if allowed != "*":
-                allowed_origins = [o.strip() for o in allowed.split(",") if o.strip()]
-                source = origin or referer
-                if source and not any(source.startswith(o) for o in allowed_origins):
+            production = os.getenv("AILIZA_ENV", "development").lower() == "production"
+            if allowed != "*" or production:
+                allowed_origins = {
+                    normalized
+                    for item in allowed.split(",")
+                    if (normalized := _normalized_web_origin(item)) is not None
+                }
+                source = (
+                    _normalized_web_origin(origin)
+                    if origin
+                    else _normalized_web_origin(referer, allow_path=True)
+                )
+                if source is None or source not in allowed_origins:
                     write_audit_entry(
                         action="security.csrf_blocked",
-                        metadata={"path": path, "origin": origin or referer},
+                        metadata={"path": path, "source_present": bool(origin or referer)},
                     )
                     return JSONResponse(
                         status_code=403,

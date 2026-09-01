@@ -10,6 +10,12 @@ services:
     # Sperre. Siehe DEPLOY_RENDER.md.
     startCommand: uvicorn apps.backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # Render-Service ist Produktion: deaktiviert Debug-/Testpfade und
+      # aktiviert die produktionsspezifischen Sicherheitsprüfungen.
+      - key: AILIZA_ENV
+        value: "production"
+      - key: AILIZA_TEST_MODE
+        value: "false"
       - key: AILIZA_EXTERNAL_LLM_ENABLED
         value: "false"
       - key: AILIZA_DEBUG
@@ -19,11 +25,14 @@ services:
       # https://ailiza-frontend.onrender.com
       # Mehrere Origins kommasepariert: https://ailiza.example.com,https://www.ailiza.example.com
       - key: AILIZA_CORS_ORIGINS
-        sync: false
-      # C1: AILIZA_FORCE_HTTPS=true aktiviert HTTP→HTTPS-Redirect + HSTS-Header.
-      # Nur setzen, nachdem TLS auf Render verifiziert wurde (Render terminiert TLS selbst).
+        value: "https://ailiza-1.onrender.com"
+      # Render terminiert TLS und leitet HTTP bereits am Edge auf HTTPS um.
+      # Ein zusaetzlicher App-Redirect wuerde den internen HTTP-Hop erneut
+      # umleiten. HSTS wird deshalb getrennt durch die Anwendung gesetzt.
       - key: AILIZA_FORCE_HTTPS
         value: "false"
+      - key: AILIZA_HSTS_ENABLED
+        value: "true"
       - key: AILIZA_SECRET_KEY
         sync: false
       # Eigener Schluessel NUR fuer die HMAC-Pseudonymisierung von
