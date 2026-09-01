@@ -105,9 +105,7 @@ REGELKONFORM (NEU - Redaction v2):
     assert "mailto:" not in result.redacted_text, "Markdown-Links sollten bereinigt sein"
 
     print("\n✅ ALLE REGELKONFORMITÄTS-CHECKS BESTANDEN")
-    return result
 
 
 if __name__ == "__main__":
-    result = test_amun_brief_with_redaction_v2()
-    print(f"\n🎯 Final Level: {result.level.value}")
+    test_amun_brief_with_redaction_v2()

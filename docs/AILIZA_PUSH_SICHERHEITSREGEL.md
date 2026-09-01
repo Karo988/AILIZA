@@ -272,12 +272,12 @@ Diese Liste ist im Repository überprüfbar.
 |---|---|---|
 | Secret-Scanner (gitleaks) | **vorhanden** | `.github/workflows/ci.yml`, Job **`secret-scan`**; Konfiguration `.gitleaks.toml`; Version fest auf 8.28.0 gepinnt |
 | Secret-Scan in der CI | **vorhanden** | Job `secret-scan`, läuft bei jedem Push und bei jedem Pull Request (`--exit-code 1`, kein `continue-on-error`) |
-| Scan des Commit-Bereichs statt nur des Dateistands | **vorhanden** | Schritt „Prüfbereich bestimmen" im Job `secret-scan`: Push `before..sha`, Pull Request `merge-base(base, head)..head` über `pull_request.head.sha`; bei nicht eindeutig bestimmbarem Bereich fail-closed auf die vollständige Historie |
+| Scan des Commit-Bereichs statt nur des Dateistands | **vorhanden** | `scripts/determine_secret_scan_range.py` im Job `secret-scan`: Push `before..sha`, neuer Nicht-Default-Branch `merge-base(origin/default, head)..head`, Pull Request `merge-base(base, head)..head` über `pull_request.head.sha`; bei nicht eindeutig bestimmbarem Bereich fail-closed auf die vollständige Historie; echte Git-Graphen in `tests/test_ci_secret_scan_scope.py` |
 | Zusätzlicher Dateistand-Scan | **vorhanden** | Schritt „Secret-Scan (Dateistand)". Gemessen am 26.08.2026 gegen 8.28.0: ein Secret, das ausschließlich bei einer Merge-Konfliktauflösung entsteht, findet der `git`-Modus **nicht** — auch nicht mit `--log-opts --all`. Erst beide Modi zusammen decken sowohl diesen Fall als auch „hinzugefügt und wieder gelöscht" ab. Regressionstest: `tests/test_secret_scan_rules.py` |
 | Erkennungsregeln für alle genutzten Anbieter | **vorhanden** | gitleaks 8.28.0 bringt **keine** Groq- und **keine** OpenRouter-Regel mit (geprüft gegen `config/gitleaks.toml` des Release). Beide sind in `.gitleaks.toml` als eigene Regeln ergänzt. `tests/test_secret_scan_rules.py` schlägt fehl, sobald ein Anbieter in `provider_registry.yaml` auftaucht, dessen Abdeckung ungeklärt ist |
 | Fundausgabe ohne Klartextwert **und ohne personenbezogene Daten** | **vorhanden** | `--redact` plus eigene Vorlage `.github/gitleaks-report.tmpl` (nur Regel, Datei, Zeile, Commit). Gemessen: der eingebaute `--verbose`-Ausdruck gibt zusätzlich `Author` und `Email` aus und wird deshalb **nicht** verwendet. Kein Upload eines Fundberichts als Artefakt |
 | Integritätsprüfung des Scanners selbst | **vorhanden** | `.github/actions/install-gitleaks`: SHA-256-Prüfung des Downloads **vor** dem Ausführbarmachen, Version zusätzlich zur Laufzeit bestätigt, Installation ohne `sudo` nach `RUNNER_TEMP` |
-| Selbsttests des Scanners | **vorhanden** | `tests/test_secret_scan_rules.py` (10 Tests). Laufen im Job `test`, in dem gitleaks eigens installiert wird; ein Anti-Skip-Schritt macht ein stilles Überspringen zum Fehler |
+| Selbsttests des Scanners | **vorhanden** | `tests/test_secret_scan_rules.py` (12 Tests). Laufen im Job `test`, in dem gitleaks eigens installiert wird; ein Anti-Skip-Schritt macht ein stilles Überspringen zum Fehler |
 | Scan der **Pfadnamen** | **vorhanden** | `scripts/scan_pfadnamen_auf_secrets.py`, Schritt „Secret-Scan (Pfadnamen)" im Job `secret-scan`. Schliesst eine belegte gitleaks-Grenze: gitleaks prüft ausschliesslich Datei-**Inhalte**, keine Pfadnamen (gemessen am 26.08.2026 in beiden Modi). Genau so entstand der Vorfall vom 25.06.2026 — Schlüssel im Dateinamen, Platzhalter im Inhalt. Der Treffer wird **im Pfad redigiert** ausgegeben, da der Pfad hier selbst der Fundort ist. Tests: `tests/test_scan_pfadnamen.py` |
 | Anleitung für den lokalen Scan | **vorhanden** | `docs/SECRET_SCAN_LOKAL.md` |
 | Verschlüsseltes lokales Backup | **vorhanden** | `scripts/ailiza_backup.py`, AES-256-GCM; Tests in `tests/test_ailiza_backup.py` |
@@ -288,10 +288,10 @@ Diese Liste ist im Repository überprüfbar.
 | `.env` von der Versionierung ausgeschlossen | **vorhanden, mit benannten Ausnahmen** | `.gitignore` blockiert `.env`. Getrackt und ausdrücklich freigegeben sind die zwei öffentlichen Vorlagen `.env.example` und `apps/frontend/.env.example` — beide ohne Schlüsselwerte. Eine dritte `.env`-Variante gibt es nicht. |
 | Governance-Integritätsprüfung (Gate 10) | **vorhanden** | `apps/backend/config_integrity.py`, `governance_integrity.json` |
 
-**Zum Prüfumfang des Jobs `test`:** Er führt ausschließlich `pytest tests/`
-aus. Die zweite Suite unter `apps/backend/tests/` ist in `ci.yml`
-auskommentiert und läuft **nicht** mit. Wer sich auf „CI ist grün" beruft,
-bezieht sich damit auf `tests/`, nicht auf den gesamten Testbestand.
+**Zum Prüfumfang des Jobs `test`:** Er führt sowohl `pytest tests/` als auch
+`pytest apps/backend/tests/` aus. Ein grüner Test-Job bezieht sich damit auf
+beide im Repository vorhandenen Python-Testsammlungen. Scanner-Selbsttests
+erhalten zusaetzlich ihre eigene Anti-Skip-Gegenprobe.
 
 **Nicht belegt und daher nicht als vorhanden zu bezeichnen:**
 
