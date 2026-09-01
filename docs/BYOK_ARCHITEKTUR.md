@@ -1,13 +1,13 @@
 # AILIZA — BYOK-Architektur (Bring Your Own Key)
 
-Stand: 31.08.2026. **Reiner Architekturentwurf, nicht umgesetzt.** Keine der
+Stand: 01.09.2026. **Reiner Architekturentwurf, nicht umgesetzt.** Keine der
 hier beschriebenen Tabellen, Endpunkte oder UI-Elemente existiert im Code.
 Jede Aussage unten ist entweder **VERIFIZIERT** (gegen den echten Code
 geprüft) oder **VORSCHLAG** (Entwurf, noch nicht entschieden). Technische
 Profilwerte sind kein Beleg fuer einen tatsaechlich abgeschlossenen Vertrag.
-Verifizierte Codeaussagen beziehen sich auf den gemeinsamen Basis-Commit
-`e591053`; nach einem Rebase muessen sie erneut gegen den dann aktuellen
-Stand geprueft werden.
+Verifizierte Codeaussagen wurden nach dem Merge von PR #117 gegen den
+gemeinsamen `main`-Commit `15ec1b5` erneut geprueft. Nach jeder weiteren
+Aktualisierung des Zielbranches ist diese Pruefung zu wiederholen.
 
 ## 1. Ziel
 
@@ -30,16 +30,13 @@ keine Umsetzung der beschriebenen Tabellen oder APIs.
   Organisation und ist kein aktueller Vertragsnachweis):
   Groq `False`, OpenAI `True`, Anthropic `True`, OpenRouter `False`,
   Lokal (Fast-Path) `True`.
-- **Sicherheitsrelevanter Fund im Basis-Commit:**
-  `apps/frontend/index.html` enthält ein
-  verstecktes Entwicklerfeld (`class="dev-controls" style="display:none"`)
-  mit `saveKey()`, das einen eingegebenen Key unverschlüsselt in
-  `localStorage` unter `ailiza_key_<provider>` ablegt. Dieser Wert wird
-  vom Provider-Orchestrator **nirgends gelesen** (Volltextsuche über
-  `apps/backend/` ergibt null Treffer) — totes, aber unsicheres Feld.
-  **Muss vor jeder BYOK-Einführung entfernt und aus bestehendem
-  Browser-Speicher bereinigt werden**, nicht erst danach. Diese Doku-PR
-  erledigt die Bereinigung ausdruecklich nicht.
+- **Sicherheitsvoraussetzung durch PR #117 erledigt:** Das zuvor versteckte
+  Entwicklerfeld mit `saveKey()` und Klartextablage unter
+  `ailiza_key_<provider>` ist entfernt. `purgeUnsafeLegacyProviderKeys()`
+  loescht beim Frontend-Start noch vorhandene Altwerte. Der
+  Provider-Orchestrator liest weiterhin keine Browser-Credentials; eine
+  Volltextsuche ueber `apps/backend/` ergibt null Treffer fuer `ailiza_key_`.
+  Das ist eine Bereinigung des toten Legacy-Pfads, noch keine BYOK-Implementierung.
 - Der Orchestrator hat `tenant_id` im Ausführungskontext verfügbar, nutzt
   sie aber nicht zur Schlüsselauswahl. Groq/OpenAI/Anthropic-Adapter lesen
   ausschließlich globale Umgebungsvariablen (`GROQ_API_KEY` etc.).
@@ -230,10 +227,8 @@ getrennten KEK wertlos, Restore mit korrektem KEK funktioniert dokumentiert.
 
 ## 11. Vorgeschlagene Arbeitspakete (Reihenfolge)
 
-1. Unsicheren `localStorage`-Key-Pfad entfernen (eigenständig, unabhängig
-   vom Rest — sollte nicht auf den restlichen BYOK-Umbau warten). Wird dieses
-   Arbeitspaket vor der Doku gemergt, ist Abschnitt 2 beim Rebase als
-   historischer Basisbefund/statusmaessig zu aktualisieren.
+1. **Erledigt mit PR #117:** unsicheren `localStorage`-Key-Pfad entfernen und
+   vorhandene `ailiza_key_*`-Altwerte beim Frontend-Start bereinigen.
 2. Die drei Owner-Entscheidungen aus Abschnitt 12 dokumentieren.
 3. Credential-Bedrohungsmodell und Zustandsautomat abnehmen.
 4. Tabellen, Constraints + Alembic-Migration.
