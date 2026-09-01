@@ -72,11 +72,16 @@ def test_empty_database_migrates_to_current_schema(tmp_path):
     for expected in ("business_domains", "tenant_business_domains",
                      "user_domain_memberships", "domain_role_permissions"):
         assert expected in tables, f"Tabelle {expected} fehlt nach Bereichs-Migration"
+    for expected in ("component_evidence", "evaluation_runs", "component_approvals",
+                     "tenant_governance_settings", "budget_policies",
+                     "budget_reservations", "cost_events", "component_activations"):
+        assert expected in tables, f"Tabelle {expected} fehlt nach Board-Migration"
     # Tatsaechlich ermittelte Tabellenzahl, gegen eine frische Migration
     # verifiziert: 27 Basis-Tabellen + model_candidates + routing_decisions
     # + customers + alembic_version = 31, dazu die vier Tabellen der
-    # Bereichsfreischaltung (d4a1f7b93c20) = 35.
-    assert len(tables) == 35, f"Unerwartete Tabellenzahl nach Bereichs-Migration: {len(tables)}"
+    # Bereichsfreischaltung (d4a1f7b93c20) = 35, plus acht Tabellen des
+    # Komponenten-Boards (c31a9f4d82e7) = 43.
+    assert len(tables) == 43, f"Unerwartete Tabellenzahl nach Board-Migration: {len(tables)}"
 
 
 # ── 1b. Import vs. Datenbankstart sind sauber getrennt ───────────────────────

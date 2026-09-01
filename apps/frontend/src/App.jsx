@@ -3,6 +3,7 @@ import "./App.css"
 import DashboardCard from "./components/DashboardCard"
 import LoginPage from "./components/LoginPage"
 import AgentChat from "./components/AgentChat"
+import ComponentsBoard from "./components/ComponentsBoard"
 import { getSession, logout, apiFetch } from "./api"
 
 function App() {
@@ -65,7 +66,7 @@ function App() {
     return <LoginPage onLogin={handleLogin} />
   }
 
-  const pages = ["Dashboard", "Governance", "Audit", "Agenten", "Einstellungen"]
+  const pages = ["Dashboard", "Bausteine", "Governance", "Audit", "Agenten", "Einstellungen"]
 
   const dashboardData = [
     { title: "Frontend", value: "Online", detail: "Vite UI aktiv", color: "blue" },
@@ -92,6 +93,7 @@ function App() {
   }
 
   function renderPage() {
+    if (activePage === "Bausteine") return <ComponentsBoard />
     if (activePage === "Dashboard") {
       return (
         <>

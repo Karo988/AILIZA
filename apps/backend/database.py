@@ -2843,6 +2843,25 @@ def create_model_candidate(provider: str, model_id: str, *,
             "create_model_candidate: created_by ist Pflicht "
             "(Grundlage der Selbstfreigabe-Pruefung)."
         )
+    try:
+        from .component_integrity import candidate_hash, provider_profile_hash as hash_provider_profile
+        from .providers.provider_profiles import get_profile
+    except ImportError:  # pragma: no cover
+        from component_integrity import candidate_hash, provider_profile_hash as hash_provider_profile  # type: ignore
+        from providers.provider_profiles import get_profile  # type: ignore
+    candidate_values = {
+        "provider": provider, "model_id": model_id,
+        "modalities": list(modalities), "capabilities": list(capabilities),
+        "context_window": context_window, "regions": list(regions or []),
+        "benchmark_version": "unbenchmarked",
+        "evidence_urls": list(evidence_urls or []),
+    }
+    profile = get_profile(provider)
+    profile_version = profile.profile_version if profile else "unprofiled"
+    profile_hash = hash_provider_profile(profile if profile else {
+        "provider_id": provider, "profile_version": profile_version,
+    })
+    object_hash = candidate_hash(candidate_values)
     now = _now_utc()
     with engine.begin() as conn:
         conn.execute(insert(model_candidates).values(
@@ -2852,6 +2871,9 @@ def create_model_candidate(provider: str, model_id: str, *,
             status="candidate", benchmark_version="unbenchmarked",
             evidence_urls=list(evidence_urls or []),
             created_by=created_by,
+            candidate_object_hash=object_hash,
+            provider_profile_version=profile_version,
+            provider_profile_hash=profile_hash,
             created_at=now, updated_at=now,
         ))
     return {
@@ -2859,6 +2881,9 @@ def create_model_candidate(provider: str, model_id: str, *,
         "modalities": modalities, "capabilities": capabilities,
         "context_window": context_window, "regions": regions or [],
         "created_by": created_by,
+        "candidate_object_hash": object_hash,
+        "provider_profile_version": profile_version,
+        "provider_profile_hash": profile_hash,
         "created_at": now, "updated_at": now,
     }
 

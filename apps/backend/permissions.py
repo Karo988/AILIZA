@@ -243,7 +243,10 @@ def evaluate_permission(
                 "SELF_APPROVAL_NOT_ALLOWED",
                 "Eine selbst eingebrachte Modellfreigabe darf nicht von derselben Person erteilt werden.",
             )
-        if role >= Role.MANAGER and role != Role.DSB:
+        # Explicit allow-list: IntEnum ordering is not authorization.  DSB is
+        # numerically above ADMIN for legacy UI purposes but intentionally has
+        # no model-approval write permission.
+        if role in {Role.MANAGER, Role.ADMIN}:
             return _allow("ORG_ROLE")
         write_audit_entry(
             action="model.approval.denied",
