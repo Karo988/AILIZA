@@ -3997,7 +3997,7 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=64)
     password: str = Field(..., min_length=12)
-    role: str = Field(default="user", pattern="^(user|manager|admin|dsb)$")
+    role: str = Field(default="user", pattern="^(user|audit_viewer|manager|admin|dsb)$")
     tenant_id: str = Field(default=DEFAULT_TENANT_ID)
 
     @field_validator("password")

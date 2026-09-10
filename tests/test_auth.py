@@ -44,17 +44,28 @@ def test_short_secret_raises():
 
 
 # ── RBAC / Role ───────────────────────────────────────────────────────────────
-def test_role_ordering():
-    from apps.backend.auth.rbac import Role
-    assert Role.USER < Role.MANAGER < Role.ADMIN < Role.DSB
+def test_role_permissions_are_explicit_and_non_linear():
+    from apps.backend.auth.rbac import Role, role_allows
+
+    assert role_allows(Role.MANAGER, Role.USER)
+    assert role_allows(Role.ADMIN, Role.MANAGER)
+    assert role_allows(Role.ADMIN, Role.AUDIT_VIEWER)
+    assert role_allows(Role.DSB, Role.AUDIT_VIEWER)
+    assert not role_allows(Role.DSB, Role.USER)
+    assert not role_allows(Role.DSB, Role.MANAGER)
+    assert not role_allows(Role.DSB, Role.ADMIN)
+    assert not role_allows(Role.AUDIT_VIEWER, Role.USER)
+    assert not role_allows(Role.AUDIT_VIEWER, Role.ADMIN)
 
 
 def test_role_from_str():
     from apps.backend.auth.rbac import Role
     assert Role.from_str("admin") == Role.ADMIN
     assert Role.from_str("MANAGER") == Role.MANAGER
-    assert Role.from_str("unknown") == Role.USER
-
+    assert Role.from_str("audit_viewer") == Role.AUDIT_VIEWER
+    with pytest.raises(ValueError):
+        Role.from_str("unknown")
+    assert Role.try_from_str("unknown") is None
 
 # ── UserInDB / password hashing ───────────────────────────────────────────────
 def test_password_hash_and_verify():

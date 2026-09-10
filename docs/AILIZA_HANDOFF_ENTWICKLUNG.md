@@ -1,6 +1,6 @@
 # AILIZA — Entwicklungs-Handoff
 
-Stand: 30.08.2026
+Stand: 07.09.2026
 
 **Status:** Aktueller Einstieg fuer neue Entwicklungs-Tasks, fuer Codex
 (`AGENTS.md`) und Claude Code (`CLAUDE.md`) gleichermassen.
@@ -21,10 +21,11 @@ konkreten Bedarf gelesen.
 
 ## 1. Produktstatus
 
-AILIZA ist lokal technisch abgenommen, aber noch nicht fuer den echten
-Produktionsbetrieb freigegeben. Der unveraenderte lokale Checkout bestand am
-30.08.2026 die vollstaendige Suite mit 2325 bestandenen und 14 uebersprungenen
-Tests. Fuer Windows war ein beschreibbarer pytest-Tempordner erforderlich.
+AILIZA ist nicht fuer den echten Produktionsbetrieb freigegeben. Der zuletzt
+dokumentierte unveraenderte lokale Checkout bestand am 30.08.2026 die
+vollstaendige Suite mit 2325 bestandenen und 14 uebersprungenen Tests. Dieser
+Nachweis ist historisch und ersetzt keine aktuelle Paketpruefung. Fuer Windows
+war ein beschreibbarer pytest-Tempordner erforderlich.
 
 Der alte Groq-Key ist widerrufen und wird nicht weiter bearbeitet. Der neue
 Key liegt als geschuetzte Render-Umgebungsvariable vor. Keine
@@ -32,21 +33,22 @@ History-Neuschreibung und keine Branch-Loeschung allein wegen des alten Keys.
 
 ## 2. Verbindlicher Kernpfad
 
-1. PR #109, #110, #111 und #112 nacheinander mergen; nach jedem Merge CI
-   abwarten.
-2. PR #114 separat pruefen und mergen; konkurrierende Memory-Uebersichten nicht
-   doppelt uebernehmen.
-3. PR #87 auf Ueberholung durch spaetere Memory-Arbeit pruefen. Fuer PR #106
-   und #107 ist noch offen, ob sie zum Produktions-Kernpfad oder zu einer
-   spaeteren Ausbaustufe gehoeren.
-4. Audit-Ereignisse vereinheitlichen und vervollstaendigen.
-5. Admin-Freigabeoberflaeche fuer die vorhandene `/approvals`-API bauen.
-6. Dokumentation konsolidieren.
-7. Produktions-Memory-Audit gegen die echte Datenbank ausfuehren.
-8. Erst nach dokumentiertem Audit-Exit 0 den Memory-Kern an den zentralen
-   Permission-Evaluator anbinden.
-9. TLS, CORS, externer Backupbetrieb, Monitoring, Wiederherstellungstest und
-   geschaeftliche Abnahme abschliessen.
+1. Verbindliche Governance-Grundlage ist
+   `AILIZA-PRODUCTION-FINAL-v4.5` mit SHA-256
+   `6c2d5e0b7300a392e0d7f78958be9a1d730a121ef29b5482eb86037e36981f9f`.
+   Die lokal gepruefte Datei liegt ausserhalb dieses Produkt-Checkouts unter
+   `C:\Users\karof\Documents\ChatGPT\AILIZA\steuerung\AILIZA_PRODUKTIONSPLAN_FINAL_v4.5.md`.
+2. Naechster und einziger freigegebener Aufbauschritt ist `BOOTSTRAP-001` im
+   Modus `MANUAL_BUILD` unter
+   `C:\Users\karof\AppData\Local\AILIZA\agent-runtime`.
+3. Der gleichnamige Ordner im aeusseren AILIZA-Projekt ist kein zulaessiges
+   BOOTSTRAP-Ziel. Vorhandene historische Inbox-/Ergebnisdateien darin duerfen
+   nicht geloescht oder als Runtime-Kandidat verwendet werden.
+4. Bis `BOOTSTRAP_VERIFIED` sind Produktentwicklung, alte PR-Mergefolgen,
+   Dispatcher-Autostart, Pilot-/Produktionsbetrieb und Break Glass nicht der
+   naechste Arbeitsschritt.
+5. Die fruehere Reihenfolge mit PR #109 bis #114 bleibt historischer Kontext
+   und darf nicht als aktueller Startauftrag ausgefuehrt werden.
 
 ## 3. Verifizierte technische Tatsachen
 
@@ -58,14 +60,31 @@ History-Neuschreibung und keine Branch-Loeschung allein wegen des alten Keys.
 - Neue externe Provider oder Tools bleiben bis zu dokumentierter Freigabe
   fail-closed.
 
+### DSB-001 und BASIS-V1-002
+
+- Owner-Entscheidung DSB-001: DSB besitzt ausschliesslich Kontroll- und
+  Leserechte und darf keine normalen USER-, MANAGER- oder ADMIN-Schreibrechte
+  erben.
+- Der lokale Kandidat BASIS-V1-002 ersetzt den sicherheitskritischen
+  IntEnum-Mindestrollenvergleich durch eine explizite Rollenmatrix. DSB darf
+  darin nur DSB- und AUDIT_VIEWER-Kontrollpfade nutzen.
+- Der konkrete bisherige Angriffspfad, mit einem DSB-Token ueber
+  `/auth/register` neue `admin`- oder `dsb`-Konten anzulegen, muss mit HTTP 403
+  und ohne angelegten Nutzer enden.
+- `audit_viewer` ist eine gueltige provisionierbare Rolle, darf Audit-Lesepfade
+  nutzen und erbt keine normalen USER- oder Admin-Schreibrechte.
+- Break Glass ist nicht Teil von BASIS-V1-002. Ohne ein spaeteres vollstaendig
+  freigegebenes Break-Glass-Paket bleiben alle DSB-Schreibaktionen fail-closed.
+
 ## 4. Offene Entscheidungen — nicht eigenmaechtig festlegen
 
 - Audit-Vokabular: Spezifikation nennt `approval.granted`, aktueller Code
   verwendet teilweise `approval.approved`. Der verbindliche Name ist noch zu
   entscheiden.
 - PR #106 und #107: Kernpfad oder spaetere Ausbaustufe.
-- Dokumentationsautoritaet: welche Datei beziehungsweise Dokumentengruppe die
-  verbindliche Regelquelle ist.
+- Ausserhalb der in v4.5 eindeutig geregelten Governance-, Aufbau- und
+  Produktionsreihenfolge ist noch offen, welche Dokumentengruppe die
+  verbindliche Detailregelquelle bildet.
 - Dokumentationsbaum: Root-Ordner `00_masterplan/` bis `06_release/` oder eine
   konsolidierte Struktur unter `docs/`.
 
@@ -101,11 +120,15 @@ verifizierbarer PR pro Paket.
 
 ## 7. Umgang mit widerspruechlichen Quellen
 
-Die verbindliche Regelquelle und der endgueltige Dokumentationsbaum sind noch
-offen. Deshalb gilt bis zur Entscheidung:
+Fuer Governance, Aufbaureihenfolge und Produktionsfreigaben gilt der in
+Abschnitt 2 bezeichnete Produktionsplan v4.5. Der endgueltige
+Dokumentationsbaum und technische Detailautoritaeten ausserhalb dieses Scopes
+sind noch offen. Deshalb gilt bis zur Entscheidung:
 
 - Code und gruene Tests belegen den technischen Ist-Zustand, entscheiden aber
   keine offene Produkt- oder Governance-Frage.
+- Bei einem Widerspruch zur geregelten Governance-, Aufbau- oder
+  Produktionsreihenfolge hat Produktionsplan v4.5 Vorrang.
 - Bei widerspruechlichen fachlichen Regeln nicht selbst auswaehlen, sondern den
   Konflikt kurz mit beiden Fundstellen melden und eine Loesung empfehlen.
 - `docs/AGENT_HANDOFF_BLOCK_C1_ABGESCHLOSSEN.md` und
