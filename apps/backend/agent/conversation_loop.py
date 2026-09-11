@@ -29,7 +29,10 @@ def _build_system_message(agent, custom_system=None):
     return f"{base}\n\n{custom_system}" if custom_system else base
 
 def _agent_loop(agent, messages, system_message, task_id, stream_callback=None):
-    from .tool_executor import execute_tool_call
+    # Alle Tool-Aufrufe muessen den zentralen, fail-closed Gatewaypfad
+    # durchlaufen. Der alte lokale Executor konnte Policy/Approval/Audit
+    # umgehen.
+    from ..gateway import guarded_tool_call
     from .api_client import call_llm_api
     api_call_count = 0
     final_response = ""
@@ -50,7 +53,15 @@ def _agent_loop(agent, messages, system_message, task_id, stream_callback=None):
                 tool_args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
             except json.JSONDecodeError:
                 tool_args = {}
-            tool_result = execute_tool_call(agent=agent, tool_name=tool_name, tool_args=tool_args, task_id=task_id, tool_call_id=tool_call.get("id",""))
+            try:
+                gateway_result = guarded_tool_call(tool_name, tool_args)
+                tool_result = json.dumps(gateway_result, ensure_ascii=False)
+            except Exception as exc:
+                # Kein Fallback auf direkte Callable-Ausfuehrung.
+                tool_result = json.dumps(
+                    {"error": f"Gateway blockiert Tool-Aufruf: {str(exc)[:200]}"},
+                    ensure_ascii=False,
+                )
             messages.append({"role": "tool", "tool_call_id": tool_call.get("id",""), "content": str(tool_result)})
     else:
         final_response = "Maximale Anzahl an Schritten erreicht. Bitte formuliere deine Anfrage neu."
