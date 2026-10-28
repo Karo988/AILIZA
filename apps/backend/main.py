@@ -2394,6 +2394,26 @@ def _ask_llm_directly(
         return None, "internal_error", [f"Unerwarteter Fehler: {_etype}"]
 
 
+_INTERNER_ABSCHLUSSTEXT = "Agent run completed"
+
+
+def _keine_antwort_meldung(error_code: str | None, suche_geplant: bool) -> str:
+    """Verstaendliche Antwort, wenn weder Suche noch KI ein Ergebnis liefern.
+
+    Ersetzt den internen Status "Agent run completed", der sonst als Antwort
+    in der Oberflaeche erschien. Enthaelt keine Nutzerinhalte.
+    """
+    grund = MESSAGES.get(error_code or "", "") or (
+        "Ich konnte gerade keine Antwort erzeugen, weil keine KI erreichbar ist."
+    )
+    if suche_geplant:
+        grund += (
+            " Fuer aktuelle Informationen (z. B. Wetter oder Nachrichten) ist "
+            "ausserdem die Websuche noch nicht eingerichtet."
+        )
+    return grund
+
+
 def _test_mode_fields(provider: str | None, model: str | None) -> dict[str, Any] | None:
     """
     V-8 (Freigabe Stufe 1, P-A): JEDE Antwort im Testmodus muss sichtbar
@@ -3110,8 +3130,17 @@ def _run_agent_core(
             result["message"] = search_text
             if error_code:
                 result["llm_notice"] = MESSAGES.get(error_code, "")
-    elif not result.get("steps"):
-        # Kein Tool geplant (Schreibaufgabe, Übersetzung etc.) → LLM direkt
+    elif not result.get("steps") or (
+        all(s.get("tool") == "search" for s in result["steps"])
+        and result.get("message") == _INTERNER_ABSCHLUSSTEXT
+    ):
+        # Kein Suchergebnis: entweder kein Tool geplant (Schreibaufgabe,
+        # Uebersetzung etc.) oder NUR eine Suche, die nichts lieferte (z. B.
+        # Websuche nicht eingerichtet) → LLM direkt, ueber dieselbe Pipeline.
+        # Frueher blieb im zweiten Fall der interne Status "Agent run
+        # completed" als Antwort stehen. Entwuerfe und andere Tools bleiben
+        # bewusst ausgenommen: dort wartet ein Schritt auf Freigabe.
+        _suche_geplant = bool(result.get("steps"))
         answer, error_code, provider_errors = _ask_llm_directly(
             effective_task, governance_context=_llm_kontext,
         )
@@ -3122,6 +3151,8 @@ def _run_agent_core(
                 result["llm_notice"] = MESSAGES.get(error_code, "")
             if provider_errors:
                 result["provider_errors"] = provider_errors
+            if result.get("message") in (None, "", _INTERNER_ABSCHLUSSTEXT):
+                result["message"] = _keine_antwort_meldung(error_code, _suche_geplant)
 
     # Ausgangspruefung VOR der Wiedereinsetzung (Paket D). Frueher stand hier
     # ein direkter reinsert()-Aufruf: die Providerantwort ging ungeprueft in
